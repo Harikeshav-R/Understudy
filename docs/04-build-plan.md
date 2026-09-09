@@ -71,7 +71,7 @@ or the parallelism is fictional.
 
 **0.1** Initialise the repository. `uv init`, Python 3.12, `pyproject.toml` with the
 dependency groups: `core` (pydantic, httpx, structlog, tenacity, pyyaml, typer),
-`agent` (langgraph, langchain-anthropic, anthropic), `k8s` (kubernetes), `db` (psycopg[binary],
+`agent` (langgraph, langchain-openai, openai), `k8s` (kubernetes), `db` (psycopg[binary],
 sqlalchemy, pgvector), `formal` (z3-solver), `obs` (prometheus-client), `dev` (pytest,
 pytest-asyncio, pytest-cov, ruff, mypy, import-linter, detect-secrets, pre-commit).
 
@@ -386,7 +386,7 @@ not repaired.
 prior value). Never ask the LLM for the inverse.
 
 **B3.5** `playbook/`: signature text construction (failure class + top error fingerprints +
-affected service + deploy proximity), embeddings via the Anthropic-compatible embedding
+affected service + deploy proximity), embeddings via the OpenRouter-compatible embedding
 path configured in `common`, pgvector cosine retrieval top-k=3, then an LLM confirmation
 call that must answer with a single retained id or none. The retained playbook enters as one
 extra candidate with `origin="playbook"` (ADR-019).
