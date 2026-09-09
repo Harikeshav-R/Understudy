@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Operating Instructions for Agents & Contributors
+    url: https://github.com/Harikeshav-R/Understudy/blob/main/AGENTS.md
+    about: Please read AGENTS.md before opening issues or writing code.
+  - name: Build Plan Checklist
+    url: https://github.com/Harikeshav-R/Understudy/blob/main/CHECKLIST.md
+    about: Track progress against the phased build plan.
