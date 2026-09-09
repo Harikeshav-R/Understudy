@@ -1,0 +1,35 @@
+name: Feature Request
+description: Propose a new feature, improvement, or enhancement to Understudy
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature proposals must be evaluated against the architectural constraints in `docs/01-decisions.md` (ADR-001 through ADR-033).
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: What would you like Understudy to do?
+      placeholder: Provide a clear and concise summary of the proposed feature...
+    validations:
+      required: true
+  - type: textarea
+    id: rationale
+    attributes:
+      label: Motivation and Use Case
+      description: Why is this needed and what problem does it solve?
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraint & ADR Compatibility
+      description: How does this fit with ADR-001 (Zero cloud spend), ADR-003 (18GB RAM budget), and the P0/P1 cut line?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any alternative designs or workarounds you considered.

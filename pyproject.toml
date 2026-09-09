@@ -1,0 +1,194 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "understudy"
+version = "0.1.0"
+description = "Incident-response agent that rehearses remediations on live production twins before production actuation"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = { text = "MIT" }
+authors = [
+    { name = "Understudy Contributors" },
+]
+dependencies = [
+    "pydantic>=2.7.0",
+    "httpx>=0.27.0",
+    "structlog>=24.1.0",
+    "tenacity>=8.3.0",
+    "pyyaml>=6.0.1",
+    "typer>=0.12.0",
+]
+
+[project.scripts]
+ust = "understudy.cli:app"
+
+[project.optional-dependencies]
+core = [
+    "pydantic>=2.7.0",
+    "httpx>=0.27.0",
+    "structlog>=24.1.0",
+    "tenacity>=8.3.0",
+    "pyyaml>=6.0.1",
+    "typer>=0.12.0",
+]
+agent = [
+    "langgraph>=0.2.0",
+    "langchain-anthropic>=0.1.0",
+    "anthropic>=0.25.0",
+]
+k8s = [
+    "kubernetes>=30.1.0",
+]
+db = [
+    "psycopg[binary]>=3.1.18",
+    "sqlalchemy>=2.0.30",
+    "pgvector>=0.2.5",
+]
+formal = [
+    "z3-solver>=4.13.0",
+]
+obs = [
+    "prometheus-client>=0.20.0",
+]
+dev = [
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "import-linter>=2.0",
+    "detect-secrets>=1.5.0",
+    "pre-commit>=3.7.0",
+    "types-pyyaml>=6.0.12",
+]
+
+[dependency-groups]
+core = [
+    "pydantic>=2.7.0",
+    "httpx>=0.27.0",
+    "structlog>=24.1.0",
+    "tenacity>=8.3.0",
+    "pyyaml>=6.0.1",
+    "typer>=0.12.0",
+]
+agent = [
+    "langgraph>=0.2.0",
+    "langchain-anthropic>=0.1.0",
+    "anthropic>=0.25.0",
+]
+k8s = [
+    "kubernetes>=30.1.0",
+]
+db = [
+    "psycopg[binary]>=3.1.18",
+    "sqlalchemy>=2.0.30",
+    "pgvector>=0.2.5",
+]
+formal = [
+    "z3-solver>=4.13.0",
+]
+obs = [
+    "prometheus-client>=0.20.0",
+]
+dev = [
+    {include-group = "core"},
+    {include-group = "agent"},
+    {include-group = "k8s"},
+    {include-group = "db"},
+    {include-group = "formal"},
+    {include-group = "obs"},
+    "pytest>=8.2.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "import-linter>=2.0",
+    "detect-secrets>=1.5.0",
+    "pre-commit>=3.7.0",
+    "types-pyyaml>=6.0.12",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/understudy"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+include = ["src/**/*.py", "src/**/*.pyi", "tests/**/*.py", "tests/**/*.pyi"]
+
+[tool.ruff.lint]
+select = [
+    "E",      # pycodestyle errors
+    "W",      # pycodestyle warnings
+    "F",      # pyflakes
+    "I",      # isort
+    "B",      # flake8-bugbear
+    "C4",     # flake8-comprehensions
+    "UP",     # pyupgrade
+    "ARG",    # flake8-unused-arguments
+    "SIM",    # flake8-simplify
+    "TCH",    # flake8-type-checking
+    "PTH",    # flake8-use-pathlib
+    "RUF",    # Ruff-specific rules
+]
+ignore = []
+
+[tool.ruff.lint.isort]
+known-first-party = ["understudy"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+packages = ["understudy"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = "-ra -q --strict-markers"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "integration: integration tests requiring running cluster/services (deselect with '-m \"not integration\"')",
+    "e2e: end-to-end tests requiring full cluster (deselect with '-m \"not e2e\"')",
+]
+
+[tool.coverage.run]
+source = ["understudy"]
+branch = true
+omit = [
+    "tests/*",
+]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+    "if __name__ == .__main__.:",
+]
+
+[tool.importlinter]
+root_package = "understudy"
+
