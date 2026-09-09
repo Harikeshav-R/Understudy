@@ -10,7 +10,7 @@ from typing import TextIO
 from understudy.common.config import get_settings
 
 REQUIRED_SECRETS = [
-    ("ANTHROPIC_API_KEY", "anthropic_api_key"),
+    ("OPENROUTER_API_KEY", "openrouter_api_key"),
     ("GITHUB_TOKEN", "github_token"),
     ("SLACK_BOT_TOKEN", "slack_bot_token"),
     ("PAGERDUTY_ROUTING_KEY", "pagerduty_routing_key"),

@@ -7,6 +7,7 @@ import pytest
 from understudy.common import ConfigError
 from understudy.common.config import (
     Settings,
+    _read_env_file,
     get_settings,
     load_settings,
     reset_settings,
@@ -22,6 +23,9 @@ def test_default_config_loading() -> None:
     assert settings.cluster.prod_namespace == "ust-prod"
     assert settings.scoring.recovery_weight == 0.40
     assert settings.endpoints.mirror_gateway == "http://localhost:8080"
+    assert settings.llm_model == "anthropic/claude-3.5-sonnet"
+    assert settings.embedding_model == "text-embedding-3-small"
+    assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
 
 
 def test_singleton_get_settings() -> None:
@@ -47,7 +51,9 @@ def test_local_config_override(tmp_path: Path) -> None:
 def test_env_file_and_os_env_override(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
-        "UNDERSTUDY_LOG_LEVEL=DEBUG\nANTHROPIC_API_KEY=test-ant-key\nGITHUB_TOKEN=test-gh-token\n"
+        "UNDERSTUDY_LOG_LEVEL=DEBUG\nOPENROUTER_API_KEY=test-or-key\nGITHUB_TOKEN=test-gh-token\n"
+        "UNDERSTUDY_LLM_MODEL=openai/gpt-4o\nUNDERSTUDY_EMBEDDING_MODEL=text-embedding-3-large\n"
+        "UNDERSTUDY_OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n"
     )
 
     monkeypatch.setenv("UNDERSTUDY_LOG_LEVEL", "WARNING")
@@ -70,7 +76,10 @@ def test_env_file_and_os_env_override(tmp_path: Path, monkeypatch: pytest.Monkey
     assert settings.role == "twin"
     assert settings.candidate_count == 4
     assert settings.env == "staging"
-    assert settings.secrets.anthropic_api_key == "test-ant-key"
+    assert settings.llm_model == "openai/gpt-4o"
+    assert settings.embedding_model == "text-embedding-3-large"
+    assert settings.openrouter_base_url == "https://openrouter.ai/api/v1"
+    assert settings.secrets.openrouter_api_key == "test-or-key"
     assert settings.secrets.github_token == "test-gh-token"
     assert settings.secrets.slack_bot_token == "xoxb-test"
 
@@ -105,6 +114,12 @@ def test_env_file_read_exception(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(Path, "read_text", mock_read_text)
     with pytest.raises(ConfigError, match=r"Failed to read \.env file"):
         load_settings(env_file_path=env_file)
+
+
+def test_nonexistent_env_file_returns_empty(tmp_path: Path) -> None:
+    nonexistent = tmp_path / "does_not_exist.env"
+    vars_dict = _read_env_file(nonexistent)
+    assert vars_dict == {}
 
 
 def test_env_file_with_comments_and_empty_lines(tmp_path: Path) -> None:

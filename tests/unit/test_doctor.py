@@ -96,14 +96,14 @@ def test_check_docker_memory(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_check_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     reset_settings()
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    res_missing = check_secret("ANTHROPIC_API_KEY", "anthropic_api_key", required=True)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    res_missing = check_secret("OPENROUTER_API_KEY", "openrouter_api_key", required=True)
     assert res_missing.passed is False
     assert "not set" in res_missing.message
 
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     reset_settings()
-    res_set = check_secret("ANTHROPIC_API_KEY", "anthropic_api_key", required=True)
+    res_set = check_secret("OPENROUTER_API_KEY", "openrouter_api_key", required=True)
     assert res_set.passed is True
     assert "configured" in res_set.message
 
@@ -120,7 +120,7 @@ def test_run_doctor_all_passed(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(subprocess, "run", mock_run)
 
     for env_name in [
-        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
         "GITHUB_TOKEN",
         "SLACK_BOT_TOKEN",
         "PAGERDUTY_ROUTING_KEY",
@@ -139,7 +139,7 @@ def test_run_doctor_failures(monkeypatch: pytest.MonkeyPatch) -> None:
     # Missing all tools and secrets
     monkeypatch.setattr(shutil, "which", lambda _cmd: None)
     for env_name in [
-        "ANTHROPIC_API_KEY",
+        "OPENROUTER_API_KEY",
         "GITHUB_TOKEN",
         "SLACK_BOT_TOKEN",
         "PAGERDUTY_ROUTING_KEY",

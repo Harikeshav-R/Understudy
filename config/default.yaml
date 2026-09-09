@@ -4,6 +4,9 @@ candidate_count: 3
 actuation_enabled: true
 fault_injection_enabled: false
 role: "agent"
+llm_model: "anthropic/claude-3.5-sonnet"
+embedding_model: "text-embedding-3-small"
+openrouter_base_url: "https://openrouter.ai/api/v1"
 
 timeouts:
   fork_seconds: 120

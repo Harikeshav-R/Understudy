@@ -69,7 +69,7 @@ class SecretSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    anthropic_api_key: str | None = None
+    openrouter_api_key: str | None = None
     github_token: str | None = None
     github_repo: str = "Harikeshav-R/Understudy"
     slack_bot_token: str | None = None
@@ -93,6 +93,9 @@ class Settings(BaseModel):
     actuation_enabled: bool = True
     fault_injection_enabled: bool = False
     role: str = "agent"
+    llm_model: str = "anthropic/claude-3.5-sonnet"
+    embedding_model: str = "text-embedding-3-small"
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
 
     timeouts: TimeoutSettings = TimeoutSettings()
     cluster: ClusterSettings = ClusterSettings()
@@ -198,11 +201,17 @@ def load_settings(
         ].lower() in ("true", "1", "yes")
     if "UNDERSTUDY_ROLE" in env_lookup:
         data["role"] = env_lookup["UNDERSTUDY_ROLE"]
+    if "UNDERSTUDY_LLM_MODEL" in env_lookup:
+        data["llm_model"] = env_lookup["UNDERSTUDY_LLM_MODEL"]
+    if "UNDERSTUDY_EMBEDDING_MODEL" in env_lookup:
+        data["embedding_model"] = env_lookup["UNDERSTUDY_EMBEDDING_MODEL"]
+    if "UNDERSTUDY_OPENROUTER_BASE_URL" in env_lookup:
+        data["openrouter_base_url"] = env_lookup["UNDERSTUDY_OPENROUTER_BASE_URL"]
 
     # Secrets
     secrets_data = data.setdefault("secrets", {})
     secret_keys = {
-        "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "OPENROUTER_API_KEY": "openrouter_api_key",
         "GITHUB_TOKEN": "github_token",
         "GITHUB_REPO": "github_repo",
         "SLACK_BOT_TOKEN": "slack_bot_token",
