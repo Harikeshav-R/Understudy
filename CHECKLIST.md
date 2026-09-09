@@ -56,18 +56,18 @@ Both people, one sitting. Nothing else starts until Checkpoint 0 is green.
 
 - [x] 0.1 Repo init: `uv`, Python 3.12, `pyproject.toml` with all dependency groups
 - [x] 0.2 `docs/` and `AGENTS.md` and this file committed before any source
-- [ ] 0.3 `contracts/` written in full per architecture §2.4, frozen, annotated
-- [ ] 0.3a Round-trip test for every contract model
-- [ ] 0.4 `common/`: Settings, structlog logger, Clock (+FrozenClock), id generators, error hierarchy, retry
-- [ ] 0.5 `api.py` Protocol stubs for **every** component in architecture §2.3
-- [ ] 0.6 `fakes.py` deterministic fake for every Protocol
-- [ ] 0.7 Tooling: pre-commit, Makefile, import-linter contracts, GitHub Actions
-- [ ] 0.8 `ust doctor` preflight
+- [x] 0.3 `contracts/` written in full per architecture §2.4, frozen, annotated
+- [x] 0.3a Round-trip test for every contract model
+- [x] 0.4 `common/`: Settings, structlog logger, Clock (+FrozenClock), id generators, error hierarchy, retry
+- [x] 0.5 `api.py` Protocol stubs for **every** component in architecture §2.3
+- [x] 0.6 `fakes.py` deterministic fake for every Protocol
+- [x] 0.7 Tooling: pre-commit, Makefile, import-linter contracts, GitHub Actions
+- [x] 0.8 `ust doctor` preflight
 
 **Checkpoint 0**
-- [ ] `make check` — ruff ok, mypy --strict clean, import-linter contracts kept, coverage 100%
+- [x] `make check` — ruff ok, mypy --strict clean, import-linter contracts kept, coverage 100%
 - [ ] `ust doctor` exits 0 with all preflight lines OK
-- [ ] Every Protocol importable; graph deps constructible entirely from fakes
+- [x] Every Protocol importable; graph deps constructible entirely from fakes
 - [ ] CI green on a real PR (not on a local run)
 
 **Gate:** both people can now open files the other will never touch. If that is not true,

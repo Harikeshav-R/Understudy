@@ -23,5 +23,15 @@ def version() -> None:
     typer.echo("understudy 0.1.0")
 
 
+@app.command()
+def doctor() -> None:
+    """Run environment preflight checks (Python 3.12, tools, Docker RAM, secrets)."""
+    from understudy.doctor import run_doctor
+
+    code = run_doctor()
+    if code != 0:
+        raise typer.Exit(code=code)
+
+
 if __name__ == "__main__":
     app()
