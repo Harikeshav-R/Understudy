@@ -54,7 +54,7 @@ Copy this block into the PR body for each step. All seven or the step is not don
 
 Both people, one sitting. Nothing else starts until Checkpoint 0 is green.
 
-- [ ] 0.1 Repo init: `uv`, Python 3.12, `pyproject.toml` with all dependency groups
+- [x] 0.1 Repo init: `uv`, Python 3.12, `pyproject.toml` with all dependency groups
 - [x] 0.2 `docs/` and `AGENTS.md` and this file committed before any source
 - [ ] 0.3 `contracts/` written in full per architecture §2.4, frozen, annotated
 - [ ] 0.3a Round-trip test for every contract model
