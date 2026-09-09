@@ -1,8 +1,9 @@
 """Tests for Protocol definitions across all components."""
 
-from datetime import UTC, datetime
 import inspect
+from datetime import UTC, datetime
 from typing import cast
+
 import pytest
 
 from understudy.actuator.api import Actuator
@@ -52,7 +53,7 @@ def test_all_protocols_are_protocols() -> None:
 
 def test_orchestrator_function_stubs() -> None:
     """Verify that function stubs raise NotImplementedError."""
-    deps = cast(Deps, object())
+    deps = cast("Deps", object())
     with pytest.raises(NotImplementedError):
         build_graph(deps)
 
