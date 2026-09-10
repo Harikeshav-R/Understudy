@@ -56,6 +56,9 @@ services = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
     "psycopg[binary,pool]>=3.1.18",
+    "structlog>=24.1.0",
+    "httpx>=0.27.0",
+    "prometheus-client>=0.20.0",
 ]
 dev = [
     "pytest>=8.2.0",
@@ -101,6 +104,9 @@ services = [
     "fastapi>=0.111.0",
     "uvicorn[standard]>=0.30.0",
     "psycopg[binary,pool]>=3.1.18",
+    "structlog>=24.1.0",
+    "httpx>=0.27.0",
+    "prometheus-client>=0.20.0",
 ]
 dev = [
     {include-group = "core"},

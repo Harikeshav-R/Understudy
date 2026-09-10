@@ -1493,7 +1493,10 @@ obs = [
 ]
 services = [
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "prometheus-client" },
     { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1555,7 +1558,10 @@ obs = [
 ]
 services = [
     { name = "fastapi" },
+    { name = "httpx" },
+    { name = "prometheus-client" },
     { name = "psycopg", extra = ["binary", "pool"] },
+    { name = "structlog" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -1565,6 +1571,7 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'services'", specifier = ">=0.111.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "httpx", marker = "extra == 'core'", specifier = ">=0.27.0" },
+    { name = "httpx", marker = "extra == 'services'", specifier = ">=0.27.0" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "kubernetes", marker = "extra == 'k8s'", specifier = ">=30.1.0" },
     { name = "langchain-openai", marker = "extra == 'agent'", specifier = ">=0.1.0" },
@@ -1574,6 +1581,7 @@ requires-dist = [
     { name = "pgvector", marker = "extra == 'db'", specifier = ">=0.2.5" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.7.0" },
     { name = "prometheus-client", marker = "extra == 'obs'", specifier = ">=0.20.0" },
+    { name = "prometheus-client", marker = "extra == 'services'", specifier = ">=0.20.0" },
     { name = "psycopg", extras = ["binary"], marker = "extra == 'db'", specifier = ">=3.1.18" },
     { name = "psycopg", extras = ["binary", "pool"], marker = "extra == 'services'", specifier = ">=3.1.18" },
     { name = "pydantic", specifier = ">=2.7.0" },
@@ -1587,6 +1595,7 @@ requires-dist = [
     { name = "sqlalchemy", marker = "extra == 'db'", specifier = ">=2.0.30" },
     { name = "structlog", specifier = ">=24.1.0" },
     { name = "structlog", marker = "extra == 'core'", specifier = ">=24.1.0" },
+    { name = "structlog", marker = "extra == 'services'", specifier = ">=24.1.0" },
     { name = "tenacity", specifier = ">=8.3.0" },
     { name = "tenacity", marker = "extra == 'core'", specifier = ">=8.3.0" },
     { name = "typer", specifier = ">=0.12.0" },
@@ -1650,7 +1659,10 @@ k8s = [{ name = "kubernetes", specifier = ">=30.1.0" }]
 obs = [{ name = "prometheus-client", specifier = ">=0.20.0" }]
 services = [
     { name = "fastapi", specifier = ">=0.111.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "prometheus-client", specifier = ">=0.20.0" },
     { name = "psycopg", extras = ["binary", "pool"], specifier = ">=3.1.18" },
+    { name = "structlog", specifier = ">=24.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
 ]
 

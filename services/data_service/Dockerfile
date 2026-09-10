@@ -18,9 +18,8 @@ RUN uv export --only-group services --no-hashes -o requirements.txt && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copy source code
-COPY src/ /app/src/
 COPY services/ /app/services/
-ENV PYTHONPATH="/app/src:/app"
+ENV PYTHONPATH="/app"
 
 EXPOSE 8000
 
