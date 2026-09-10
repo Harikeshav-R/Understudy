@@ -13,7 +13,7 @@ def get_default_conninfo() -> str:
     """Return the database connection string from environment."""
     return os.getenv(
         "DATABASE_URL",
-        "postgresql://postgres:postgres@localhost:5432/ust_prod",
+        "postgresql://postgres@localhost:5432/ust_prod",
     )
 
 

@@ -27,7 +27,7 @@ bootstrap:
 check: lint typecheck
 	uv run python scripts/check_mocks.py
 	uv run lint-imports
-	uv run pytest --cov=understudy --cov=services --cov-branch --cov-fail-under=100
+	uv run pytest tests/unit --cov=understudy --cov=services --cov-branch --cov-fail-under=100
 
 fmt:
 	uv run ruff format .
@@ -41,7 +41,7 @@ typecheck:
 	uv run mypy --strict src tests services
 
 test:
-	uv run pytest --cov=understudy --cov=services --cov-branch --cov-fail-under=100
+	uv run pytest tests/unit --cov=understudy --cov=services --cov-branch --cov-fail-under=100
 
 check-int:
 	uv run pytest -m integration tests/integration

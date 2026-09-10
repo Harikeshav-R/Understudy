@@ -36,7 +36,7 @@ spec:
             - name: UNDERSTUDY_ROLE
               value: "prod"
             - name: DATABASE_URL
-              value: "postgresql://postgres:postgres@prod-postgres:5432/ust_prod"
+              value: "postgresql://postgres@prod-postgres:5432/ust_prod"
             - name: POLL_INTERVAL_SECONDS
               value: "1.0"
           resources:

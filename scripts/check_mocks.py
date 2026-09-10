@@ -10,9 +10,9 @@ exists without a row, or a row without a marker.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 MOCKED_PATTERN = re.compile(r"#\s*MOCKED:\s*(.+)")
 
@@ -77,9 +77,7 @@ def _module_matches_file(reg_mod: str, file_path: str) -> bool:
     return file_path == reg_mod.replace(".", "/") + ".py"
 
 
-def check_parity(
-    repo_root: Path, mocks_file: Path | None = None
-) -> tuple[bool, list[str]]:
+def check_parity(repo_root: Path, mocks_file: Path | None = None) -> tuple[bool, list[str]]:
     """Verify exact parity between code markers and MOCKS.md table rows."""
     registry_file = mocks_file or (repo_root / "docs" / "MOCKS.md")
     src_dir = repo_root / "src"
