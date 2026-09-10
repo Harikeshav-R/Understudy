@@ -45,6 +45,38 @@ async def test_reachability_probes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_items_no_auth_header_forwards_empty_credential(
+    client: httpx.AsyncClient,
+) -> None:
+    """A request with no Authorization header must not be treated as authenticated: the
+    header must not default to a valid credential (the reported auth-bypass bug)."""
+    mock_http = AsyncMock()
+    app.state.http_client = mock_http
+    mock_http.get.return_value = httpx.Response(401, json={"detail": "Missing Authorization"})
+
+    resp = await client.get("/api/items")
+    assert resp.status_code == 401
+
+    forwarded_headers = mock_http.get.call_args.kwargs["headers"]
+    assert forwarded_headers["Authorization"] == ""
+
+
+@pytest.mark.asyncio
+async def test_create_item_no_auth_header_forwards_empty_credential(
+    client: httpx.AsyncClient,
+) -> None:
+    mock_http = AsyncMock()
+    app.state.http_client = mock_http
+    mock_http.get.return_value = httpx.Response(401, json={"detail": "Missing Authorization"})
+
+    resp = await client.post("/api/items", json={"name": "x"})
+    assert resp.status_code == 401
+
+    forwarded_headers = mock_http.get.call_args.kwargs["headers"]
+    assert forwarded_headers["Authorization"] == ""
+
+
+@pytest.mark.asyncio
 async def test_get_items_success(client: httpx.AsyncClient) -> None:
     mock_http = AsyncMock()
     app.state.http_client = mock_http

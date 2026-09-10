@@ -47,7 +47,7 @@ async def check_auth_reachability() -> bool:
         client: httpx.AsyncClient = app.state.http_client
         resp = await client.get(f"{AUTH_SERVICE_URL}/healthz")
         return resp.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -58,7 +58,7 @@ async def check_data_reachability() -> bool:
         client: httpx.AsyncClient = app.state.http_client
         resp = await client.get(f"{DATA_SERVICE_URL}/healthz")
         return resp.status_code == 200
-    except Exception:
+    except httpx.HTTPError:
         return False
 
 
@@ -67,7 +67,7 @@ setup_health_routes(app, [check_auth_reachability, check_data_reachability])
 
 @app.get("/api/items", tags=["Items"])
 async def get_items(
-    authorization: str | None = Header(default="Bearer valid-token"),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Validate user token with auth-service and retrieve item catalogue from data-service."""
     check_twin_outbound_target(AUTH_SERVICE_URL)
@@ -114,7 +114,7 @@ async def get_items(
 async def create_item(
     payload: dict[str, Any],
     response: Response,
-    authorization: str | None = Header(default="Bearer valid-token"),
+    authorization: str | None = Header(default=None),
 ) -> dict[str, Any]:
     """Validate token and forward item creation to data-service."""
     check_twin_outbound_target(AUTH_SERVICE_URL)
