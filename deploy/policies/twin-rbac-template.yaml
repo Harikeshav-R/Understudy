@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: understudy-twin
+  namespace: ${TWIN_NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: understudy
+    environment: twin
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: understudy-twin
+  namespace: ${TWIN_NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: understudy
+    environment: twin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: understudy-twin
+subjects:
+  - kind: ServiceAccount
+    name: understudy-twin
+    namespace: ${TWIN_NAMESPACE}
