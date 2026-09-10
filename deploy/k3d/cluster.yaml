@@ -1,0 +1,47 @@
+apiVersion: k3d.io/v1alpha5
+kind: Simple
+metadata:
+  name: ust
+servers: 1
+agents: 0
+image: rancher/k3s:v1.30.2-k3s1
+ports:
+  # Edge-gateway / Mirror-gateway HTTP entry
+  - port: 8080:8080
+    nodeFilters:
+      - loadbalancer
+  # Direct data-service / fault injection entry
+  - port: 8081:8081
+    nodeFilters:
+      - loadbalancer
+  # Observability
+  - port: 9090:9090
+    nodeFilters:
+      - loadbalancer
+  - port: 3100:3100
+    nodeFilters:
+      - loadbalancer
+  # Postgres instances (prod, twin template, system)
+  - port: 5432:5432
+    nodeFilters:
+      - loadbalancer
+  - port: 5433:5433
+    nodeFilters:
+      - loadbalancer
+  - port: 5434:5434
+    nodeFilters:
+      - loadbalancer
+registries:
+  create:
+    name: ust-registry
+    host: 0.0.0.0
+    hostPort: "5001"
+options:
+  k3d:
+    wait: true
+    timeout: "120s"
+  k3s:
+    extraArgs:
+      - arg: --disable=traefik
+        nodeFilters:
+          - server:*
