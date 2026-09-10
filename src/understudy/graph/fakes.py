@@ -1,7 +1,6 @@
 """Deterministic fake dependency graph implementations."""
 
-from datetime import UTC, datetime
-
+from understudy.common.clock import Clock, SystemClock
 from understudy.contracts.incident import DependencyEdge, DependencyGraphSnapshot
 from understudy.graph.api import BlastRadiusCalculator, DependencyGraph
 
@@ -9,7 +8,8 @@ from understudy.graph.api import BlastRadiusCalculator, DependencyGraph
 class FakeDependencyGraph(DependencyGraph):
     """Deterministic in-memory service dependency graph."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Clock | None = None) -> None:
+        self.clock: Clock = clock or SystemClock()
         self._nodes = ["edge-gateway", "auth-service", "data-service", "worker"]
         self._edges = [
             ("edge-gateway", "auth-service"),
@@ -48,7 +48,7 @@ class FakeDependencyGraph(DependencyGraph):
         return DependencyGraphSnapshot(
             nodes=list(self._nodes),
             edges=[DependencyEdge(source=s, target=t) for s, t in self._edges],
-            observed_at=datetime.now(UTC),
+            observed_at=self.clock.now(),
         )
 
 

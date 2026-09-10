@@ -1,7 +1,6 @@
 """Deterministic fake tournament implementation."""
 
-from datetime import UTC, datetime
-
+from understudy.common.clock import Clock, SystemClock
 from understudy.contracts.enums import TournamentOutcome
 from understudy.contracts.evidence import (
     CandidateEvidence,
@@ -17,15 +16,21 @@ from understudy.tournament.api import Tournament
 class FakeTournament(Tournament):
     """Deterministic tournament observer, scorer, and arbiter."""
 
-    def __init__(self, force_ambiguous: bool = False, seed: int = 42) -> None:
+    def __init__(
+        self,
+        force_ambiguous: bool = False,
+        seed: int = 42,
+        clock: Clock | None = None,
+    ) -> None:
         self.force_ambiguous = force_ambiguous
         self.seed = seed
+        self.clock: Clock = clock or SystemClock()
 
     async def observe_and_score(
         self, twins: list[TwinHandle], plans: list[RemediationPlan]
     ) -> tuple[list[CandidateEvidence], TournamentResult]:
         """Produce deterministic rehearsal evidence and tournament result."""
-        now = datetime.now(UTC)
+        now = self.clock.now()
         evidences: list[CandidateEvidence] = []
         scores: list[CandidateScore] = []
 
@@ -53,7 +58,7 @@ class FakeTournament(Tournament):
             )
             evidences.append(ev)
 
-            composite = 0.10 + (0.30 * idx)
+            composite = 0.10 + (0.30 * idx) + ((self.seed % 10) * 0.001)
             score = CandidateScore(
                 plan_id=plan.plan_id,
                 composite=composite,
@@ -70,7 +75,7 @@ class FakeTournament(Tournament):
     ) -> TournamentResult:
         """Arbitrate tournament result deterministically."""
         _ = evidence
-        now = datetime.now(UTC)
+        now = self.clock.now()
         incident_id = "inc_default"
         if not scores:
             return TournamentResult(

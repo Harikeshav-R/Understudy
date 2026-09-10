@@ -427,3 +427,56 @@ async def test_fake_orchestrator() -> None:
     assert run_rec.outcome == RunOutcome.EXECUTED
     assert run_rec.run_id == "run_alt_001"
     assert await deps.run_store.get_run("run_alt_001") is not None
+
+
+@pytest.mark.asyncio
+async def test_fakes_clock_injection_and_determinism() -> None:
+    from understudy.common.clock import FrozenClock
+
+    frozen_time = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+    clock = FrozenClock(frozen_time)
+    deps = create_fake_deps(seed=42, clock=clock)
+
+    # Verify AlertSource uses frozen clock
+    alert = await deps.alert_source.receive_alert()
+    assert alert.fired_at == frozen_time
+
+    # Verify ObservabilityAdapter uses frozen clock
+    metrics = await deps.observability.metric_window("data-service", frozen_time)
+    assert metrics.end_time == frozen_time
+
+    # Verify DeployHistory uses frozen clock
+    deploys = await deps.deploy_history.recent_deploys()
+    assert deploys[0].deployed_at == frozen_time
+
+    # Verify FleetController uses frozen clock
+    twins = await deps.fleet_controller.fork("inc_001", 1)
+    assert twins[0].forked_from_snapshot_at == frozen_time
+
+    # Verify DependencyGraph uses frozen clock
+    snap = deps.dependency_graph.snapshot()
+    assert snap.observed_at == frozen_time
+
+    # Verify Orchestrator uses frozen clock
+    orchestrator = FakeOrchestrator(deps=deps, clock=clock)
+    rec = await orchestrator.run_incident(alert)
+    assert rec.started_at == frozen_time
+
+    # Verify Planner determinism with seed
+    p1 = FakePlanner(seed=42)
+    p2 = FakePlanner(seed=43)
+    c1 = await p1.generate_candidates(rec.context)
+    c2 = await p2.generate_candidates(rec.context)
+    assert c1[1].params.replica_delta != c2[1].params.replica_delta
+
+    # Verify Tournament determinism with seed
+    t1 = FakeTournament(seed=42, clock=clock)
+    t2 = FakeTournament(seed=43, clock=clock)
+    _, res1 = await t1.observe_and_score(twins, c1[:1])
+    _, res2 = await t2.observe_and_score(twins, c1[:1])
+    assert res1.scores[0].composite != res2.scores[0].composite
+
+    # Verify EvalHarness uses clock and seed
+    harness = FakeEvalHarness(seed=45, clock=clock)
+    eval_rec = await harness.run_scenario("scenario_test")
+    assert eval_rec.started_at == frozen_time

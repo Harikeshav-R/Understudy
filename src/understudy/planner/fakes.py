@@ -44,18 +44,19 @@ class FakePlanner(Planner):
         )
 
         # Candidate 1: Scale workload
+        replica_delta = 1 + (self.seed % 3)
         plan_1 = RemediationPlan(
             plan_id="plan_cand_1",
             candidate_index=1,
             action=ActionType.SCALE_WORKLOAD,
-            params=ActionParams(workload=service, replica_delta=1),
+            params=ActionParams(workload=service, replica_delta=replica_delta),
             target_resources=[ResourceRef(namespace="ust-twin", kind="Deployment", name=service)],
             declared_blast_set=[service],
             inverse=RemediationPlan(
                 plan_id="plan_cand_1_inv",
                 candidate_index=1,
                 action=ActionType.SCALE_WORKLOAD,
-                params=ActionParams(workload=service, replica_delta=-1),
+                params=ActionParams(workload=service, replica_delta=-replica_delta),
                 target_resources=[
                     ResourceRef(namespace="ust-twin", kind="Deployment", name=service)
                 ],

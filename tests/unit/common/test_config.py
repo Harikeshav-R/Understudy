@@ -151,3 +151,56 @@ def test_model_validation_failure_raises_config_error(tmp_path: Path) -> None:
     bad_cfg.write_text("timeouts:\n  fork_seconds: 'not_an_int'\n")
     with pytest.raises(ConfigError, match=r"Configuration validation failed"):
         load_settings(default_config_path=bad_cfg)
+
+
+def test_load_yaml_file_syntax_error_raises_config_error(tmp_path: Path) -> None:
+    bad_yaml = tmp_path / "bad_syntax.yaml"
+    bad_yaml.write_text("key: [unclosed list\n")
+    with pytest.raises(ConfigError, match=r"Failed to load default config at"):
+        load_settings(default_config_path=bad_yaml)
+
+
+def test_keyring_secret_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    # Create mock keyring module
+    class MockKeyring:
+        @staticmethod
+        def get_password(service: str, username: str) -> str | None:
+            mock_passwords = {"understudy": {"OPENROUTER_API_KEY": "keyring-secret-token"}}
+            return mock_passwords.get(service, {}).get(username)
+
+    monkeypatch.setitem(sys.modules, "keyring", MockKeyring)
+
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+    settings = load_settings(
+        default_config_path=tmp_path / "none.yaml",
+        local_config_path=tmp_path / "none.yaml",
+        env_file_path=empty_env,
+    )
+    assert settings.secrets.openrouter_api_key == "keyring-secret-token"
+
+
+def test_secrets_already_in_yaml_and_broken_keyring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import sys
+
+    class BrokenKeyring:
+        @staticmethod
+        def get_password(_service: str, _username: str) -> str:
+            raise RuntimeError("Keyring failure")
+
+    monkeypatch.setitem(sys.modules, "keyring", BrokenKeyring)
+
+    cfg = tmp_path / "cfg.yaml"
+    cfg.write_text("secrets:\n  openrouter_api_key: from_yaml\n")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+    settings = load_settings(
+        default_config_path=cfg,
+        local_config_path=tmp_path / "none.yaml",
+        env_file_path=empty_env,
+    )
+    assert settings.secrets.openrouter_api_key == "from_yaml"

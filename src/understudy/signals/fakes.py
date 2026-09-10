@@ -1,7 +1,8 @@
 """Deterministic in-memory fake signals implementations."""
 
-from datetime import UTC, datetime
+from datetime import datetime
 
+from understudy.common.clock import Clock, SystemClock
 from understudy.contracts.incident import (
     Alert,
     DeployRef,
@@ -16,7 +17,8 @@ from understudy.signals.api import AlertSource, DeployHistory, ObservabilityAdap
 class FakeAlertSource(AlertSource):
     """Deterministic alert source with injectable alert queue."""
 
-    def __init__(self, alerts: list[Alert] | None = None) -> None:
+    def __init__(self, alerts: list[Alert] | None = None, clock: Clock | None = None) -> None:
+        self.clock: Clock = clock or SystemClock()
         self._alerts: list[Alert] = list(alerts or [])
         self._default_alert = Alert(
             alert_id="alt_fake_001",
@@ -24,7 +26,7 @@ class FakeAlertSource(AlertSource):
             title="Synthetic p99 latency breach",
             service="edge-gateway",
             severity="critical",
-            fired_at=datetime.now(UTC),
+            fired_at=self.clock.now(),
             raw={"details": "p99 > 400ms"},
         )
 
@@ -42,12 +44,13 @@ class FakeAlertSource(AlertSource):
 class FakeObservabilityAdapter(ObservabilityAdapter):
     """Deterministic telemetry adapter returning reproducible metrics and logs."""
 
-    def __init__(self, seed: int = 42) -> None:
+    def __init__(self, seed: int = 42, clock: Clock | None = None) -> None:
         self.seed = seed
+        self.clock: Clock = clock or SystemClock()
 
     async def metric_window(self, service: str, since: datetime) -> MetricWindow:
         """Return deterministic metrics window."""
-        now = datetime.now(UTC)
+        now = self.clock.now()
         point = MetricPoint(timestamp=now, value=120.0 + (self.seed % 10))
         series = MetricSeries(
             metric_name="http_latency_ms",
@@ -66,7 +69,7 @@ class FakeObservabilityAdapter(ObservabilityAdapter):
 
     async def error_signatures(self, service: str, since: datetime) -> list[ErrorSignature]:
         """Return deterministic error signatures."""
-        now = datetime.now(UTC)
+        now = self.clock.now()
         return [
             ErrorSignature(
                 fingerprint="fp_sig_001",
@@ -87,8 +90,9 @@ class FakeObservabilityAdapter(ObservabilityAdapter):
 class FakeDeployHistory(DeployHistory):
     """Deterministic deploy history from version control."""
 
-    def __init__(self, deploys: list[DeployRef] | None = None) -> None:
-        now = datetime.now(UTC)
+    def __init__(self, deploys: list[DeployRef] | None = None, clock: Clock | None = None) -> None:
+        self.clock: Clock = clock or SystemClock()
+        now = self.clock.now()
         self._deploys: list[DeployRef] = list(
             deploys
             or [

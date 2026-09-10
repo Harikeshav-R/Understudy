@@ -47,3 +47,33 @@ def test_retry_non_retryable_exception_raises_immediately() -> None:
     with pytest.raises(KeyError):
         specific_func()
     assert calls == 1
+
+
+def test_retry_default_exceptions_understudy_error() -> None:
+    from understudy.common.errors import UnderstudyError
+
+    calls = 0
+
+    @retry(max_attempts=3, min_wait=0.01, max_wait=0.02)
+    def domain_func() -> str:
+        nonlocal calls
+        calls += 1
+        if calls < 2:
+            raise UnderstudyError("transient domain error")
+        return "recovered"
+
+    assert domain_func() == "recovered"
+    assert calls == 2
+
+    # Non-UnderstudyError should raise immediately without retry
+    calls = 0
+
+    @retry(max_attempts=3, min_wait=0.01, max_wait=0.02)
+    def non_domain_func() -> None:
+        nonlocal calls
+        calls += 1
+        raise ValueError("standard error")
+
+    with pytest.raises(ValueError, match="standard error"):
+        non_domain_func()
+    assert calls == 1

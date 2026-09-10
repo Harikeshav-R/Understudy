@@ -1,8 +1,8 @@
 """Deterministic fake evaluation harness implementation."""
 
-from datetime import UTC, datetime
 from typing import Any
 
+from understudy.common.clock import Clock, SystemClock
 from understudy.contracts.enums import RunOutcome
 from understudy.contracts.incident import (
     Alert,
@@ -17,12 +17,13 @@ from understudy.eval.api import EvalHarness
 class FakeEvalHarness(EvalHarness):
     """Deterministic evaluation harness fake."""
 
-    def __init__(self, seed: int = 42) -> None:
+    def __init__(self, seed: int = 42, clock: Clock | None = None) -> None:
         self.seed = seed
+        self.clock: Clock = clock or SystemClock()
 
     async def run_scenario(self, scenario_id: str) -> RunRecord:
         """Run a fake evaluation scenario and produce a RunRecord."""
-        now = datetime.now(UTC)
+        now = self.clock.now()
         context = IncidentContext(
             incident_id=f"inc_{scenario_id}",
             alert=Alert(

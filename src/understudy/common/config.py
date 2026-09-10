@@ -140,6 +140,18 @@ def _read_env_file(path: Path) -> dict[str, str]:
     return env_vars
 
 
+def _load_yaml_file(path: Path, label: str = "config") -> dict[str, Any]:
+    """Load and parse a YAML file into a dictionary, returning empty dict if missing."""
+    if not path.is_file():
+        return {}
+    try:
+        with path.open(encoding="utf-8") as f:
+            loaded = yaml.safe_load(f)
+            return loaded if isinstance(loaded, dict) else {}
+    except Exception as exc:
+        raise ConfigError(f"Failed to load {label} config at {path}: {exc}") from exc
+
+
 def load_settings(
     default_config_path: Path | str | None = None,
     local_config_path: Path | str | None = None,
@@ -150,25 +162,11 @@ def load_settings(
 
     # 1. default.yaml
     def_path = Path(default_config_path or "config/default.yaml")
-    if def_path.is_file():
-        try:
-            with def_path.open(encoding="utf-8") as f:
-                loaded = yaml.safe_load(f)
-                if isinstance(loaded, dict):
-                    data = _deep_merge(data, loaded)
-        except Exception as exc:
-            raise ConfigError(f"Failed to load default config at {def_path}: {exc}") from exc
+    data = _deep_merge(data, _load_yaml_file(def_path, "default"))
 
     # 2. local.yaml
     loc_path = Path(local_config_path or "config/local.yaml")
-    if loc_path.is_file():
-        try:
-            with loc_path.open(encoding="utf-8") as f:
-                loaded = yaml.safe_load(f)
-                if isinstance(loaded, dict):
-                    data = _deep_merge(data, loaded)
-        except Exception as exc:
-            raise ConfigError(f"Failed to load local config at {loc_path}: {exc}") from exc
+    data = _deep_merge(data, _load_yaml_file(loc_path, "local"))
 
     # 3. .env file
     env_path = Path(env_file_path or ".env")
@@ -178,35 +176,32 @@ def load_settings(
     env_lookup: dict[str, str] = {**env_file_vars, **os.environ}
 
     # 4. Apply environment overrides
-    if "UNDERSTUDY_ENV" in env_lookup:
-        data["env"] = env_lookup["UNDERSTUDY_ENV"]
-    if "UNDERSTUDY_LOG_LEVEL" in env_lookup:
-        data["log_level"] = env_lookup["UNDERSTUDY_LOG_LEVEL"]
+    env_str_fields = {
+        "UNDERSTUDY_ENV": "env",
+        "UNDERSTUDY_LOG_LEVEL": "log_level",
+        "UNDERSTUDY_ROLE": "role",
+        "UNDERSTUDY_LLM_MODEL": "llm_model",
+        "UNDERSTUDY_EMBEDDING_MODEL": "embedding_model",
+        "UNDERSTUDY_OPENROUTER_BASE_URL": "openrouter_base_url",
+    }
+    for env_key, field_name in env_str_fields.items():
+        if env_key in env_lookup:
+            data[field_name] = env_lookup[env_key]
+
+    env_bool_fields = {
+        "UNDERSTUDY_ACTUATION_ENABLED": "actuation_enabled",
+        "UNDERSTUDY_FAULT_INJECTION_ENABLED": "fault_injection_enabled",
+    }
+    for env_key, field_name in env_bool_fields.items():
+        if env_key in env_lookup:
+            data[field_name] = env_lookup[env_key].lower() in ("true", "1", "yes")
+
     if "UNDERSTUDY_CANDIDATE_COUNT" in env_lookup:
         try:
             data["candidate_count"] = int(env_lookup["UNDERSTUDY_CANDIDATE_COUNT"])
         except ValueError as exc:
             val_str = env_lookup["UNDERSTUDY_CANDIDATE_COUNT"]
-            msg = f"Invalid integer for UNDERSTUDY_CANDIDATE_COUNT: {val_str}"
-            raise ConfigError(msg) from exc
-    if "UNDERSTUDY_ACTUATION_ENABLED" in env_lookup:
-        data["actuation_enabled"] = env_lookup["UNDERSTUDY_ACTUATION_ENABLED"].lower() in (
-            "true",
-            "1",
-            "yes",
-        )
-    if "UNDERSTUDY_FAULT_INJECTION_ENABLED" in env_lookup:
-        data["fault_injection_enabled"] = env_lookup[
-            "UNDERSTUDY_FAULT_INJECTION_ENABLED"
-        ].lower() in ("true", "1", "yes")
-    if "UNDERSTUDY_ROLE" in env_lookup:
-        data["role"] = env_lookup["UNDERSTUDY_ROLE"]
-    if "UNDERSTUDY_LLM_MODEL" in env_lookup:
-        data["llm_model"] = env_lookup["UNDERSTUDY_LLM_MODEL"]
-    if "UNDERSTUDY_EMBEDDING_MODEL" in env_lookup:
-        data["embedding_model"] = env_lookup["UNDERSTUDY_EMBEDDING_MODEL"]
-    if "UNDERSTUDY_OPENROUTER_BASE_URL" in env_lookup:
-        data["openrouter_base_url"] = env_lookup["UNDERSTUDY_OPENROUTER_BASE_URL"]
+            raise ConfigError(f"Invalid integer for UNDERSTUDY_CANDIDATE_COUNT: {val_str}") from exc
 
     # Secrets
     secrets_data = data.setdefault("secrets", {})
@@ -226,6 +221,16 @@ def load_settings(
     for env_key, secret_field in secret_keys.items():
         if env_key in env_lookup:
             secrets_data[secret_field] = env_lookup[env_key]
+        elif secret_field not in secrets_data:
+            try:
+                import importlib
+
+                keyring_mod = importlib.import_module("keyring")
+                keyring_val = keyring_mod.get_password("understudy", env_key)
+                if keyring_val and isinstance(keyring_val, str):
+                    secrets_data[secret_field] = keyring_val
+            except Exception:
+                pass
 
     try:
         return Settings.model_validate(data)

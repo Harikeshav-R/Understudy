@@ -7,7 +7,7 @@ import sys
 
 import pytest
 
-from understudy.common.config import reset_settings
+from understudy.common.config import get_settings, reset_settings
 from understudy.doctor import (
     TWELVE_GB_BYTES,
     check_docker_memory,
@@ -106,6 +106,42 @@ def test_check_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     res_set = check_secret("OPENROUTER_API_KEY", "openrouter_api_key", required=True)
     assert res_set.passed is True
     assert "configured" in res_set.message
+
+    # Resolving via mock keyring when settings has no secret
+    monkeypatch.delenv("DATADOG_API_KEY", raising=False)
+    reset_settings()
+    # Force settings without keyring first
+    _ = get_settings()
+
+    class MockKeyring:
+        @staticmethod
+        def get_password(_service: str, key: str) -> str | None:
+            return "dd-token" if key == "DATADOG_API_KEY" else None
+
+    monkeypatch.setitem(sys.modules, "keyring", MockKeyring)
+    res_keyring = check_secret("DATADOG_API_KEY", "datadog_api_key", required=False)
+    assert res_keyring.passed is True
+    assert "configured" in res_keyring.message
+
+    class BrokenKeyring:
+        @staticmethod
+        def get_password(_service: str, _key: str) -> str:
+            raise RuntimeError("Keyring locked")
+
+    monkeypatch.setitem(sys.modules, "keyring", BrokenKeyring)
+    res_broken = check_secret("DATADOG_API_KEY", "datadog_api_key", required=False)
+    assert res_broken.passed is False
+    assert "not set" in res_broken.message
+
+    class NonStringKeyring:
+        @staticmethod
+        def get_password(_service: str, _key: str) -> None:
+            return None
+
+    monkeypatch.setitem(sys.modules, "keyring", NonStringKeyring)
+    res_non_string = check_secret("DATADOG_API_KEY", "datadog_api_key", required=False)
+    assert res_non_string.passed is False
+    assert "not set" in res_non_string.message
 
 
 def test_run_doctor_all_passed(monkeypatch: pytest.MonkeyPatch) -> None:

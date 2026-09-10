@@ -12,6 +12,8 @@ from tenacity import (
     wait_exponential,
 )
 
+from understudy.common.errors import UnderstudyError
+
 F = TypeVar("F", bound=Callable[..., Any])
 
 
@@ -19,7 +21,7 @@ def retry(
     max_attempts: int = 3,
     min_wait: float = 0.1,
     max_wait: float = 2.0,
-    retry_exceptions: tuple[type[Exception], ...] = (Exception,),
+    retry_exceptions: tuple[type[Exception], ...] = (UnderstudyError,),
 ) -> Callable[[F], F]:
     """Configurable retry decorator built on tenacity."""
     return tenacity_retry(

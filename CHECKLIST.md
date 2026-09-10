@@ -68,7 +68,7 @@ Both people, one sitting. Nothing else starts until Checkpoint 0 is green.
 - [x] `make check` — ruff ok, mypy --strict clean, import-linter contracts kept, coverage 100%
 - [x] `ust doctor` exits 0 with all preflight lines OK
 - [x] Every Protocol importable; graph deps constructible entirely from fakes
-- [x] CI green on a real PR (not on a local run)
+- [ ] CI green on a real PR (not on a local run)
 
 **Gate:** both people can now open files the other will never touch. If that is not true,
 Phase 0 is not done.

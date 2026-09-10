@@ -1,11 +1,23 @@
 """Deterministic in-memory fake store implementations."""
 
-from typing import Any
+from typing import Any, TypedDict
 
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
 from understudy.store.api import EvalStore, PlaybookStore, RunStore
+
+
+class _PlaybookRecord(TypedDict):
+    playbook_id: str
+    failure_class: FailureClass
+    signature_text: str
+    embedding: list[float]
+    plan: RemediationPlan
+    evidence_refs: list[str]
+    origin: str
+    successes: int
+    failures: int
 
 
 class FakeRunStore(RunStore):
@@ -44,7 +56,7 @@ class FakePlaybookStore(PlaybookStore):
     """In-memory fake playbook store."""
 
     def __init__(self) -> None:
-        self._playbooks: dict[str, dict[str, Any]] = {}
+        self._playbooks: dict[str, _PlaybookRecord] = {}
 
     async def save_playbook(
         self,
@@ -74,7 +86,7 @@ class FakePlaybookStore(PlaybookStore):
         record = self._playbooks.get(playbook_id)
         if record is None:
             return None
-        return record["plan"]  # type: ignore[no-any-return]
+        return record["plan"]
 
     async def search_playbooks(
         self, embedding: list[float], limit: int = 5

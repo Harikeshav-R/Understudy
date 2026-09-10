@@ -1,7 +1,6 @@
 """Deterministic fake fleet controller implementation."""
 
-from datetime import UTC, datetime
-
+from understudy.common.clock import Clock, SystemClock
 from understudy.contracts.twin import TwinHandle
 from understudy.fleet.api import FleetController
 
@@ -9,12 +8,13 @@ from understudy.fleet.api import FleetController
 class FakeFleetController(FleetController):
     """Deterministic in-memory twin environment controller."""
 
-    def __init__(self) -> None:
+    def __init__(self, clock: Clock | None = None) -> None:
+        self.clock: Clock = clock or SystemClock()
         self._twins: dict[str, list[TwinHandle]] = {}
 
     async def fork(self, incident_id: str, n: int) -> list[TwinHandle]:
         """Fork N deterministic twin environments."""
-        now = datetime.now(UTC)
+        now = self.clock.now()
         twins: list[TwinHandle] = []
         for i in range(n):
             twin_id = f"twin_{incident_id}_{i}"
