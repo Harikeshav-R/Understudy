@@ -11,17 +11,21 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
+from psycopg import Error as PsycopgError
 from psycopg_pool import AsyncConnectionPool
 
 from services._common import (
     FaultManager,
     create_pool,
+    get_logger,
     ping_db,
     setup_fault_middleware,
     setup_fault_routes,
     setup_health_routes,
     setup_metrics,
 )
+
+logger = get_logger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "1.0"))
@@ -87,7 +91,8 @@ async def process_one_job(pool: AsyncConnectionPool | None) -> bool:
             )
             await conn.commit()
             return True
-    except Exception:
+    except PsycopgError as exc:
+        logger.warning("job_processing_failed", error=str(exc))
         return False
 
 
@@ -99,8 +104,6 @@ async def worker_loop() -> None:
             await process_one_job(db_pool)
         except asyncio.CancelledError:
             break
-        except Exception:
-            pass
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -112,8 +115,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         db_pool = create_pool(DATABASE_URL)
         await db_pool.open()
         fault_manager.pool = db_pool
-        with contextlib.suppress(Exception):
+        try:
             await init_worker_db(db_pool)
+        except PsycopgError as exc:
+            logger.error("worker_db_init_failed", error=str(exc))
 
     task = asyncio.create_task(worker_loop())
     try:
@@ -133,10 +138,23 @@ setup_fault_routes(app, fault_manager)
 
 
 async def check_db_readiness() -> bool:
-    """Readiness probe for worker database connection."""
+    """Readiness probe for worker database connection and jobs table presence.
+
+    Connectivity alone (`ping_db`) is not sufficient: if `init_worker_db` failed to run
+    (see the lifespan above), the pool would still answer `SELECT 1` while the worker can
+    never process a job, so readiness must also confirm the table exists.
+    """
     if db_pool is None:
         return True
-    return await ping_db(db_pool)
+    if not await ping_db(db_pool):
+        return False
+    try:
+        async with db_pool.connection() as conn, conn.cursor() as cur:
+            await cur.execute("SELECT to_regclass('jobs')")
+            row = await cur.fetchone()
+            return bool(row and row[0] is not None)
+    except PsycopgError:
+        return False
 
 
 setup_health_routes(app, [check_db_readiness])

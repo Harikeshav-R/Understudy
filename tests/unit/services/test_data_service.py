@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import psycopg
 import pytest
 from fastapi import HTTPException
 
@@ -198,7 +199,10 @@ async def test_data_lifespan_with_db(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_pool = AsyncMock()
     with (
         patch("services.data_service.app.create_pool", return_value=mock_pool),
-        patch("services.data_service.app.init_db", side_effect=RuntimeError("db init error")),
+        patch(
+            "services.data_service.app.init_db",
+            side_effect=psycopg.OperationalError("db init error"),
+        ),
     ):
         async with data_module.lifespan(app):
             assert mock_pool.open.await_count == 1

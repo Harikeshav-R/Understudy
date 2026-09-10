@@ -9,6 +9,7 @@ from services._common.faults import (
     setup_fault_routes,
 )
 from services._common.health import setup_health_routes
+from services._common.logging import get_logger
 from services._common.metrics import setup_metrics
 from services._common.role_guard import (
     check_twin_outbound_target,
@@ -26,6 +27,7 @@ __all__ = [
     "ensure_fault_injection_permitted",
     "get_connection",
     "get_default_conninfo",
+    "get_logger",
     "get_service_role",
     "is_fault_injection_enabled",
     "ping_db",

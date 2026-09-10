@@ -1,6 +1,5 @@
 """Data demo service: CRUD operations over Postgres with good and N+1 regression variants."""
 
-import contextlib
 import json
 import os
 from collections.abc import AsyncGenerator
@@ -8,18 +7,22 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
+from psycopg import Error as PsycopgError
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
 from services._common import (
     FaultManager,
     create_pool,
+    get_logger,
     ping_db,
     setup_fault_middleware,
     setup_fault_routes,
     setup_health_routes,
     setup_metrics,
 )
+
+logger = get_logger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DATA_SERVICE_VARIANT = os.getenv("DATA_SERVICE_VARIANT", "good").strip().lower()
@@ -96,8 +99,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         db_pool = create_pool(DATABASE_URL)
         await db_pool.open()
         fault_manager.pool = db_pool
-        with contextlib.suppress(Exception):
+        try:
             await init_db(db_pool)
+        except PsycopgError as exc:
+            logger.error("data_service_db_init_failed", error=str(exc))
     try:
         yield
     finally:
