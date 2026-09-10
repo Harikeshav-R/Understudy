@@ -48,8 +48,8 @@ class FakeRunStore(RunStore):
         return results
 
     async def get_active_runs(self) -> list[RunRecord]:
-        """Retrieve runs that have not finished."""
-        return [r for r in self._runs.values() if r.finished_at is None]
+        """List runs with no finished_at timestamp yet."""
+        return [run for run in self._runs.values() if run.finished_at is None]
 
 
 class FakePlaybookStore(PlaybookStore):

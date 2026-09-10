@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from understudy.actuator.fakes import FakeActuator
+from understudy.common.clock import SystemClock
 from understudy.common.errors import ActuationError
 from understudy.contracts.enums import (
     ActionType,
@@ -41,10 +42,12 @@ from understudy.signals.fakes import (
 from understudy.store.fakes import FakeEvalStore, FakePlaybookStore, FakeRunStore
 from understudy.tournament.fakes import FakeTournament
 
+FIXED_NOW = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+
 
 @pytest.fixture
 def sample_context() -> IncidentContext:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     return IncidentContext(
         incident_id="inc_001",
         alert=Alert(
@@ -65,7 +68,7 @@ def sample_context() -> IncidentContext:
 
 @pytest.fixture
 def sample_run_record(sample_context: IncidentContext) -> RunRecord:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     return RunRecord(
         run_id="run_001",
         incident_id="inc_001",
@@ -83,7 +86,6 @@ async def test_fake_run_store(sample_run_record: RunRecord) -> None:
     store = FakeRunStore()
     assert await store.get_run("run_001") is None
     assert await store.list_runs() == []
-    assert await store.get_active_runs() == []
 
     await store.record_run(sample_run_record)
     assert await store.get_run("run_001") == sample_run_record
@@ -91,7 +93,13 @@ async def test_fake_run_store(sample_run_record: RunRecord) -> None:
     assert len(await store.list_runs(incident_id="inc_001")) == 1
     assert len(await store.list_runs(incident_id="other")) == 0
     assert len(await store.list_runs(scenario_id="sc_1")) == 0
-    assert len(await store.get_active_runs()) == 1
+    assert await store.get_active_runs() == [sample_run_record]
+
+    finished_record = sample_run_record.model_copy(
+        update={"run_id": "run_002", "finished_at": sample_run_record.started_at}
+    )
+    await store.record_run(finished_record)
+    assert await store.get_active_runs() == [sample_run_record]
 
 
 @pytest.mark.asyncio
@@ -150,7 +158,7 @@ async def test_fake_eval_store() -> None:
 
 @pytest.mark.asyncio
 async def test_fake_alert_source() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     source = FakeAlertSource()
     alert1 = await source.receive_alert()
     assert alert1.alert_id == "alt_fake_001"
@@ -171,7 +179,7 @@ async def test_fake_alert_source() -> None:
 @pytest.mark.asyncio
 async def test_fake_observability_adapter() -> None:
     adapter = FakeObservabilityAdapter(seed=123)
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     window = await adapter.metric_window("edge-gateway", now)
     assert window.service == "edge-gateway"
     assert len(window.series) > 0
@@ -242,7 +250,7 @@ async def test_fake_fleet_controller() -> None:
         candidate_index=0,
         namespace="ust-twin-unknown-0",
         database="twin_unknown_db",
-        forked_from_snapshot_at=datetime.now(UTC),
+        forked_from_snapshot_at=FIXED_NOW,
         ready_at=None,
         state="ready",
     )
@@ -324,7 +332,7 @@ async def test_fake_safety_kernel() -> None:
         rationale="noop",
         origin="planner",
     )
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     facts = [Fact(name="replicas", value=3, source="k8s", observed_at=now)]
 
     kernel_pass = FakeSafetyKernel(force_verdict=KernelVerdictType.PASS)
@@ -414,7 +422,7 @@ async def test_fake_eval_harness() -> None:
 async def test_fake_orchestrator() -> None:
     deps = create_fake_deps(seed=42)
     orchestrator = FakeOrchestrator(deps=deps, seed=42)
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     alert = Alert(
         alert_id="alt_001",
         source="synthetic",
@@ -427,6 +435,12 @@ async def test_fake_orchestrator() -> None:
     assert run_rec.outcome == RunOutcome.EXECUTED
     assert run_rec.run_id == "run_alt_001"
     assert await deps.run_store.get_run("run_alt_001") is not None
+
+
+@pytest.mark.asyncio
+async def test_fake_orchestrator_defaults_without_clock_or_deps() -> None:
+    orchestrator = FakeOrchestrator()
+    assert isinstance(orchestrator.clock, SystemClock)
 
 
 @pytest.mark.asyncio

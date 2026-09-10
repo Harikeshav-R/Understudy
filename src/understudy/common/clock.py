@@ -30,6 +30,11 @@ class SystemClock:
         await asyncio.sleep(seconds)
 
 
+def resolve_clock(clock: Clock | None) -> Clock:
+    """Return the given clock, or a new SystemClock if none was provided."""
+    return clock or SystemClock()
+
+
 class FrozenClock:
     """Deterministic, settable clock for unit tests and simulation."""
 

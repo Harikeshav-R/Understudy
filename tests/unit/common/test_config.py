@@ -204,3 +204,91 @@ def test_secrets_already_in_yaml_and_broken_keyring(
         env_file_path=empty_env,
     )
     assert settings.secrets.openrouter_api_key == "from_yaml"
+
+
+def test_resolve_keyring_secret_branches(monkeypatch: pytest.MonkeyPatch) -> None:
+    import sys
+
+    from understudy.common.config import resolve_keyring_secret
+
+    class MockKeyring:
+        @staticmethod
+        def get_password(_service: str, username: str) -> str | None:
+            if username == "VALID":
+                return "secret-token"
+            if username == "NON_STRING":
+                return None
+            raise RuntimeError("Keyring backend failed")
+
+    monkeypatch.setitem(sys.modules, "keyring", MockKeyring)
+    assert resolve_keyring_secret("VALID") == "secret-token"
+    assert resolve_keyring_secret("NON_STRING") is None
+    assert resolve_keyring_secret("BROKEN") is None
+
+
+def test_nested_environment_variable_overrides(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("UNDERSTUDY_TIMEOUTS__FORK_SECONDS", "45")
+    monkeypatch.setenv("UNDERSTUDY_SCORING__RECOVERY_WEIGHT", "0.55")
+    monkeypatch.setenv("UNDERSTUDY_CLUSTER_PROD_NAMESPACE", "custom-prod")
+    monkeypatch.setenv("UNDERSTUDY_ENDPOINTS__PROMETHEUS", "http://prom:9090")
+    monkeypatch.setenv("UNDERSTUDY_ACTUATION_ENABLED", "false")
+
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+    settings = load_settings(
+        default_config_path=Path("config/default.yaml"),
+        local_config_path=tmp_path / "none.yaml",
+        env_file_path=empty_env,
+    )
+
+    assert settings.timeouts.fork_seconds == 45
+    assert settings.scoring.recovery_weight == 0.55
+    assert settings.cluster.prod_namespace == "custom-prod"
+    assert settings.endpoints.prometheus == "http://prom:9090"
+    assert settings.actuation_enabled is False
+
+
+def test_nested_env_invalid_int(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERSTUDY_TIMEOUTS__FORK_SECONDS", "not_an_int")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+    with pytest.raises(ConfigError, match="Invalid integer for UNDERSTUDY_TIMEOUTS__FORK_SECONDS"):
+        load_settings(
+            default_config_path=Path("config/default.yaml"),
+            local_config_path=tmp_path / "none.yaml",
+            env_file_path=empty_env,
+        )
+
+
+def test_nested_env_override_coerces_via_model_annotation_when_no_yaml_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # No "timeouts" section in default.yaml at all, so default_val is None and coercion
+    # must fall back to the TimeoutSettings model's declared field annotation.
+    def_file = tmp_path / "default.yaml"
+    def_file.write_text("env: dev\n")
+    monkeypatch.setenv("UNDERSTUDY_TIMEOUTS__FORK_SECONDS", "77")
+
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+    settings = load_settings(
+        default_config_path=def_file,
+        local_config_path=tmp_path / "none.yaml",
+        env_file_path=empty_env,
+    )
+
+    assert settings.timeouts.fork_seconds == 77
+
+
+def test_nested_env_invalid_float(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("UNDERSTUDY_SCORING__RECOVERY_WEIGHT", "not_a_float")
+    empty_env = tmp_path / ".env"
+    empty_env.write_text("")
+    with pytest.raises(ConfigError, match="Invalid float for UNDERSTUDY_SCORING__RECOVERY_WEIGHT"):
+        load_settings(
+            default_config_path=Path("config/default.yaml"),
+            local_config_path=tmp_path / "none.yaml",
+            env_file_path=empty_env,
+        )

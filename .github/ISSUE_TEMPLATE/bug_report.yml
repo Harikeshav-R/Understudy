@@ -48,7 +48,7 @@ body:
       value: |
         - OS: macOS / Linux
         - Python version: 3.12.x
-        - uv version: 
-        - Docker allocated RAM: 
+        - uv version:
+        - Docker allocated RAM:
     validations:
       required: true

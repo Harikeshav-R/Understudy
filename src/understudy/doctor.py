@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from typing import TextIO
 
-from understudy.common.config import get_settings
+from understudy.common.config import get_settings, resolve_keyring_secret
 
 REQUIRED_SECRETS = [
     ("OPENROUTER_API_KEY", "openrouter_api_key"),
@@ -21,7 +21,7 @@ OPTIONAL_SECRETS = [
     ("DATADOG_API_KEY", "datadog_api_key"),
 ]
 
-TWELVE_GB_BYTES = 12 * 1000 * 1000 * 1000  # 12 GB decimal
+TWELVE_GB_BYTES = 12 * 1024 * 1024 * 1024  # 12 GiB = 12,884,901,888 bytes per ADR-003
 
 
 @dataclass(frozen=True)
@@ -92,7 +92,7 @@ def check_docker_memory() -> CheckResult:
                 message=f"docker info failed: {proc.stderr.strip()}",
             )
         mem_bytes = int(proc.stdout.strip())
-        mem_gb = mem_bytes / (1000 * 1000 * 1000)
+        mem_gb = mem_bytes / (1024 * 1024 * 1024)
         if mem_bytes >= TWELVE_GB_BYTES:
             return CheckResult(
                 name="docker_memory",
@@ -104,7 +104,7 @@ def check_docker_memory() -> CheckResult:
             passed=False,
             message=f"Docker memory {mem_gb:.1f} GB < 12 GB (ADR-003 requires >= 12 GB)",
         )
-    except Exception as exc:
+    except (subprocess.SubprocessError, FileNotFoundError, OSError, ValueError) as exc:
         return CheckResult(
             name="docker_memory",
             passed=False,
@@ -117,15 +117,7 @@ def check_secret(env_name: str, field_name: str, required: bool = True) -> Check
     settings = get_settings()
     val = getattr(settings.secrets, field_name, None) or os.environ.get(env_name)
     if not val:
-        try:
-            import importlib
-
-            keyring_mod = importlib.import_module("keyring")
-            keyring_val = keyring_mod.get_password("understudy", env_name)
-            if isinstance(keyring_val, str):
-                val = keyring_val
-        except Exception:
-            val = None
+        val = resolve_keyring_secret(env_name)
     if val:
         return CheckResult(
             name=f"secret:{env_name}",

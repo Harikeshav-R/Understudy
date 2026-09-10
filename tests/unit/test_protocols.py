@@ -57,7 +57,7 @@ def test_orchestrator_function_stubs() -> None:
     with pytest.raises(NotImplementedError):
         build_graph(deps)
 
-    now = datetime.now(UTC)
+    now = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
     alert = Alert(
         alert_id="alt_1",
         source="synthetic",

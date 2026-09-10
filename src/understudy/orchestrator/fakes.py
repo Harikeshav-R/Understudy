@@ -1,7 +1,7 @@
 """Deterministic fake orchestrator and fake dependency builder."""
 
 from understudy.actuator.fakes import FakeActuator
-from understudy.common.clock import Clock, SystemClock
+from understudy.common.clock import Clock, resolve_clock
 from understudy.contracts.enums import RunOutcome
 from understudy.contracts.incident import (
     Alert,
@@ -28,7 +28,7 @@ from understudy.tournament.fakes import FakeTournament
 
 def create_fake_deps(seed: int = 42, clock: Clock | None = None) -> Deps:
     """Construct and return a Deps container wired entirely with deterministic fakes."""
-    active_clock = clock or SystemClock()
+    active_clock = resolve_clock(clock)
     return Deps(
         run_store=FakeRunStore(),
         playbook_store=FakePlaybookStore(),
@@ -58,7 +58,12 @@ class FakeOrchestrator(Orchestrator):
         seed: int = 42,
         clock: Clock | None = None,
     ) -> None:
-        self.clock = clock or SystemClock()
+        if clock is not None:
+            self.clock = clock
+        elif deps is not None and isinstance(deps.dependency_graph, FakeDependencyGraph):
+            self.clock = deps.dependency_graph.clock
+        else:
+            self.clock = resolve_clock(None)
         self.deps = deps or create_fake_deps(seed=seed, clock=self.clock)
         self.seed = seed
 

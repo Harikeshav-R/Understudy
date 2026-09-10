@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from understudy.common.clock import Clock, SystemClock
+from understudy.common.clock import Clock, resolve_clock
 from understudy.contracts.enums import RunOutcome
 from understudy.contracts.incident import (
     Alert,
@@ -19,7 +19,7 @@ class FakeEvalHarness(EvalHarness):
 
     def __init__(self, seed: int = 42, clock: Clock | None = None) -> None:
         self.seed = seed
-        self.clock: Clock = clock or SystemClock()
+        self.clock: Clock = resolve_clock(clock)
 
     async def run_scenario(self, scenario_id: str) -> RunRecord:
         """Run a fake evaluation scenario and produce a RunRecord."""

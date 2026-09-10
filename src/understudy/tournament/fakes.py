@@ -1,6 +1,6 @@
 """Deterministic fake tournament implementation."""
 
-from understudy.common.clock import Clock, SystemClock
+from understudy.common.clock import Clock, resolve_clock
 from understudy.contracts.enums import TournamentOutcome
 from understudy.contracts.evidence import (
     CandidateEvidence,
@@ -24,7 +24,7 @@ class FakeTournament(Tournament):
     ) -> None:
         self.force_ambiguous = force_ambiguous
         self.seed = seed
-        self.clock: Clock = clock or SystemClock()
+        self.clock: Clock = resolve_clock(clock)
 
     async def observe_and_score(
         self, twins: list[TwinHandle], plans: list[RemediationPlan]

@@ -15,6 +15,7 @@ from understudy.common.config import (
     get_settings,
     load_settings,
     reset_settings,
+    resolve_keyring_secret,
 )
 from understudy.common.errors import (
     ActuationError,
@@ -63,5 +64,6 @@ __all__ = [
     "new_run_id",
     "new_twin_id",
     "reset_settings",
+    "resolve_keyring_secret",
     "retry",
 ]

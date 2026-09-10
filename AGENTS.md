@@ -132,7 +132,7 @@ Rules:
 - Only `orchestrator` may import `langgraph`.
 - Only `store` may import `psycopg` or `sqlalchemy`.
 - Only `fleet`, `actuator` and `graph` may import `kubernetes`.
-- No package may import a sibling's internals — only its `api.py` and `contracts`.
+- No package may import a sibling's internals — only its `api.py` and `contracts` (and sibling `fakes.py` when constructing test fakes in `fakes.py` per §7.1 and §11).
 
 If your change needs a new edge in that graph, it needs an ADR.
 

@@ -26,7 +26,12 @@ class RunStore(Protocol):
         raise NotImplementedError
 
     async def get_active_runs(self) -> list[RunRecord]:
-        """Retrieve runs currently in flight."""
+        """List runs with no finished_at timestamp yet.
+
+        This is the documented fact source for kernel invariant K5 (single writer):
+        `in_flight_plan_targets` is read from this set under a transaction that also
+        inserts the new claim, so the check and the claim are atomic (docs/03-invariants.md).
+        """
         raise NotImplementedError
 
 

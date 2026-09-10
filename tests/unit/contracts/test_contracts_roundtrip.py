@@ -36,6 +36,8 @@ from understudy.contracts import (
     TwinHandle,
 )
 
+FIXED_NOW = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
+
 
 def test_action_params_roundtrip() -> None:
     model = ActionParams(
@@ -92,7 +94,7 @@ def test_remediation_plan_roundtrip() -> None:
 
 
 def test_metric_models_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     point = MetricPoint(timestamp=now, value=42.5)
     point_deser = MetricPoint.model_validate_json(point.model_dump_json())
     assert point == point_deser
@@ -119,7 +121,7 @@ def test_metric_models_roundtrip() -> None:
 
 
 def test_dependency_graph_models_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     edge = DependencyEdge(source="edge-gateway", target="auth-service")
     edge_deser = DependencyEdge.model_validate_json(edge.model_dump_json())
     assert edge == edge_deser
@@ -134,7 +136,7 @@ def test_dependency_graph_models_roundtrip() -> None:
 
 
 def test_alert_and_signatures_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     alert = Alert(
         alert_id="alt_123",
         source="pagerduty",
@@ -170,7 +172,7 @@ def test_alert_and_signatures_roundtrip() -> None:
 
 
 def test_incident_context_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     context = IncidentContext(
         incident_id="inc_001",
         alert=Alert(
@@ -203,7 +205,7 @@ def test_incident_context_roundtrip() -> None:
 
 
 def test_twin_and_mirror_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     twin = TwinHandle(
         twin_id="twin_001",
         incident_id="inc_001",
@@ -227,7 +229,7 @@ def test_twin_and_mirror_roundtrip() -> None:
 
 
 def test_evidence_and_tournament_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     probe = ProbeSample(at=now, healthy=True, p99_latency_ms=85.2, error_rate=0.0)
     probe_deser = ProbeSample.model_validate_json(probe.model_dump_json())
     assert probe == probe_deser
@@ -273,7 +275,7 @@ def test_evidence_and_tournament_roundtrip() -> None:
 
 
 def test_kernel_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     fact = Fact(
         name="replicas[data-service]",
         value=3,
@@ -307,7 +309,7 @@ def test_kernel_roundtrip() -> None:
 
 
 def test_run_record_roundtrip() -> None:
-    now = datetime.now(UTC)
+    now = FIXED_NOW
     context = IncidentContext(
         incident_id="inc_001",
         alert=Alert(

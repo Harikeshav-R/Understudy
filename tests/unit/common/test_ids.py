@@ -15,6 +15,7 @@ def test_generate_ulid_format() -> None:
     ulid = generate_ulid()
     assert len(ulid) == 26
     assert ulid.isalnum()
+    assert ulid.islower()
 
 
 def test_generate_ulid_deterministic_params() -> None:

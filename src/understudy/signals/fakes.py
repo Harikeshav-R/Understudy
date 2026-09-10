@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from understudy.common.clock import Clock, SystemClock
+from understudy.common.clock import Clock, resolve_clock
 from understudy.contracts.incident import (
     Alert,
     DeployRef,
@@ -18,7 +18,7 @@ class FakeAlertSource(AlertSource):
     """Deterministic alert source with injectable alert queue."""
 
     def __init__(self, alerts: list[Alert] | None = None, clock: Clock | None = None) -> None:
-        self.clock: Clock = clock or SystemClock()
+        self.clock: Clock = resolve_clock(clock)
         self._alerts: list[Alert] = list(alerts or [])
         self._default_alert = Alert(
             alert_id="alt_fake_001",
@@ -46,15 +46,17 @@ class FakeObservabilityAdapter(ObservabilityAdapter):
 
     def __init__(self, seed: int = 42, clock: Clock | None = None) -> None:
         self.seed = seed
-        self.clock: Clock = clock or SystemClock()
+        self.clock: Clock = resolve_clock(clock)
 
-    async def metric_window(self, service: str, since: datetime) -> MetricWindow:
+    async def metric_window(
+        self, service: str, since: datetime, namespace: str = "ust-prod"
+    ) -> MetricWindow:
         """Return deterministic metrics window."""
         now = self.clock.now()
         point = MetricPoint(timestamp=now, value=120.0 + (self.seed % 10))
         series = MetricSeries(
             metric_name="http_latency_ms",
-            labels={"service": service},
+            labels={"service": service, "namespace": namespace},
             points=[point],
         )
         return MetricWindow(
@@ -67,8 +69,11 @@ class FakeObservabilityAdapter(ObservabilityAdapter):
             request_count=1000,
         )
 
-    async def error_signatures(self, service: str, since: datetime) -> list[ErrorSignature]:
+    async def error_signatures(
+        self, service: str, since: datetime, namespace: str = "ust-prod"
+    ) -> list[ErrorSignature]:
         """Return deterministic error signatures."""
+        _ = namespace
         now = self.clock.now()
         return [
             ErrorSignature(
@@ -91,7 +96,7 @@ class FakeDeployHistory(DeployHistory):
     """Deterministic deploy history from version control."""
 
     def __init__(self, deploys: list[DeployRef] | None = None, clock: Clock | None = None) -> None:
-        self.clock: Clock = clock or SystemClock()
+        self.clock: Clock = resolve_clock(clock)
         now = self.clock.now()
         self._deploys: list[DeployRef] = list(
             deploys

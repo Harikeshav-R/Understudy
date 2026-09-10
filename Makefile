@@ -22,6 +22,7 @@ bootstrap:
 	uv run pre-commit install
 
 check: lint typecheck
+	uv run python scripts/check_mocks.py
 	uv run lint-imports
 	uv run pytest --cov=understudy --cov-branch --cov-fail-under=100
 

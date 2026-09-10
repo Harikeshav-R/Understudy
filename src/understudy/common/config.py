@@ -152,6 +152,23 @@ def _load_yaml_file(path: Path, label: str = "config") -> dict[str, Any]:
         raise ConfigError(f"Failed to load {label} config at {path}: {exc}") from exc
 
 
+def resolve_keyring_secret(env_key: str) -> str | None:
+    """Retrieve secret from OS keyring if available, or None."""
+    try:
+        import importlib
+
+        keyring_mod = importlib.import_module("keyring")
+        keyring_val = keyring_mod.get_password("understudy", env_key)
+        if keyring_val and isinstance(keyring_val, str):
+            return keyring_val
+    except Exception:
+        # keyring is an optional, not-a-hard-dependency integration: the backend may be
+        # missing, unconfigured, or raise its own error hierarchy (e.g. NoKeyringError)
+        # in headless/CI environments, and this lookup must always degrade gracefully.
+        return None
+    return None
+
+
 def load_settings(
     default_config_path: Path | str | None = None,
     local_config_path: Path | str | None = None,
@@ -203,6 +220,57 @@ def load_settings(
             val_str = env_lookup["UNDERSTUDY_CANDIDATE_COUNT"]
             raise ConfigError(f"Invalid integer for UNDERSTUDY_CANDIDATE_COUNT: {val_str}") from exc
 
+    # 4b. Nested configuration section overrides (timeouts, cluster, scoring, endpoints)
+    section_models: dict[str, type[BaseModel]] = {
+        "timeouts": TimeoutSettings,
+        "cluster": ClusterSettings,
+        "scoring": ScoringSettings,
+        "endpoints": EndpointSettings,
+    }
+    known_sections = tuple(section_models)
+    for k, v in env_lookup.items():
+        if not k.startswith("UNDERSTUDY_"):
+            continue
+        rem = k[len("UNDERSTUDY_") :]
+        sec: str | None = None
+        field: str | None = None
+        for s in known_sections:
+            double_prefix = f"{s.upper()}__"
+            single_prefix = f"{s.upper()}_"
+            if rem.startswith(double_prefix):
+                sec = s
+                field = rem[len(double_prefix) :].lower()
+                break
+            if rem.startswith(single_prefix):
+                sec = s
+                field = rem[len(single_prefix) :].lower()
+                break
+
+        if sec and field:
+            sec_dict = data.setdefault(sec, {})
+            default_val = sec_dict.get(field)
+            is_int_field = isinstance(default_val, int) and not isinstance(default_val, bool)
+            is_float_field = isinstance(default_val, float)
+            if default_val is None:
+                field_info = section_models[sec].model_fields.get(field)
+                annotation = field_info.annotation if field_info else None
+                is_int_field = annotation is int
+                is_float_field = annotation is float
+            parsed_val: Any
+            if is_int_field:
+                try:
+                    parsed_val = int(v)
+                except ValueError as exc:
+                    raise ConfigError(f"Invalid integer for {k}: {v}") from exc
+            elif is_float_field:
+                try:
+                    parsed_val = float(v)
+                except ValueError as exc:
+                    raise ConfigError(f"Invalid float for {k}: {v}") from exc
+            else:
+                parsed_val = v
+            sec_dict[field] = parsed_val
+
     # Secrets
     secrets_data = data.setdefault("secrets", {})
     secret_keys = {
@@ -222,15 +290,9 @@ def load_settings(
         if env_key in env_lookup:
             secrets_data[secret_field] = env_lookup[env_key]
         elif secret_field not in secrets_data:
-            try:
-                import importlib
-
-                keyring_mod = importlib.import_module("keyring")
-                keyring_val = keyring_mod.get_password("understudy", env_key)
-                if keyring_val and isinstance(keyring_val, str):
-                    secrets_data[secret_field] = keyring_val
-            except Exception:
-                pass
+            keyring_val = resolve_keyring_secret(env_key)
+            if keyring_val is not None:
+                secrets_data[secret_field] = keyring_val
 
     try:
         return Settings.model_validate(data)
