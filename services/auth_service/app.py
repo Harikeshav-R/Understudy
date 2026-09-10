@@ -19,8 +19,9 @@ from services._common import (
 )
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+TOKEN_CACHE_MAX_SIZE = int(os.getenv("AUTH_TOKEN_CACHE_MAX_SIZE", "1000"))
 
-# In-memory token cache
+# In-memory token cache, bounded to TOKEN_CACHE_MAX_SIZE entries (oldest evicted first)
 TOKEN_CACHE: dict[str, dict[str, Any]] = {
     "Bearer valid-token": {"user_id": "user_admin", "scope": "admin"},
     "Bearer test-token": {"user_id": "user_test", "scope": "read_write"},
@@ -85,6 +86,8 @@ async def validate_token(
     # 2. Synthetic token pattern acceptance for testing
     if authorization.startswith("Bearer valid-") or authorization.startswith("Bearer token-"):
         user_info = {"user_id": "user_dynamic", "scope": "standard"}
+        if len(TOKEN_CACHE) >= TOKEN_CACHE_MAX_SIZE:
+            TOKEN_CACHE.pop(next(iter(TOKEN_CACHE)))
         TOKEN_CACHE[authorization] = user_info
         return {
             "valid": True,

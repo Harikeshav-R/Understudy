@@ -51,6 +51,29 @@ async def test_validate_dynamic_token(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_token_cache_bounded(
+    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+) -> None:
+    """TOKEN_CACHE must not grow without bound: oldest entry is evicted at capacity."""
+    monkeypatch.setattr(auth_module, "TOKEN_CACHE_MAX_SIZE", 2)
+    monkeypatch.setattr(
+        auth_module,
+        "TOKEN_CACHE",
+        {
+            "Bearer seed-a": {"user_id": "a", "scope": "x"},
+            "Bearer seed-b": {"user_id": "b", "scope": "x"},
+        },
+    )
+
+    resp = await client.get("/validate", headers={"Authorization": "Bearer valid-new"})
+    assert resp.status_code == 200
+
+    assert len(auth_module.TOKEN_CACHE) == 2
+    assert "Bearer seed-a" not in auth_module.TOKEN_CACHE
+    assert "Bearer valid-new" in auth_module.TOKEN_CACHE
+
+
+@pytest.mark.asyncio
 async def test_validate_invalid_token(client: httpx.AsyncClient) -> None:
     resp = await client.get("/validate", headers={"Authorization": "Bearer totally-fake"})
     assert resp.status_code == 401
