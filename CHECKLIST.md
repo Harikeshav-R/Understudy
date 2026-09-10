@@ -83,15 +83,15 @@ Phase 0 is not done.
 - [x] A1.4 `:regression` image variant of data-service with the real N+1 query
 - [x] A1.5 `deploy/prod/` manifests with limits per architecture §2.10, `dependencies.yaml`
 - [x] A1.6 `deploy/system/`: three Postgres instances, Prometheus, Loki + promtail
-- [ ] A1.7 `deploy/policies/`: ServiceAccounts, Roles, twin NetworkPolicy template
-- [ ] A1.8 `services/loadgen/` seeded deterministic generator
+- [x] A1.7 `deploy/policies/`: ServiceAccounts, Roles, twin NetworkPolicy template
+- [x] A1.8 `services/loadgen/` seeded deterministic generator
 
 **Checkpoint A1**
-- [ ] `kubectl -n ust-prod get pods` → 4/4 Running, zero restarts
-- [ ] `curl localhost:8080/api/items` returns items; Prometheus has ≥ 6 targets up
-- [ ] `make loadgen RPS=20 DURATION=30` → p99 < 400 ms, error rate 0.00
-- [ ] Latency fault raises p99 above the SLO within 5 s and recovers at TTL
-- [ ] Container memory with prod only is under 3.5 GB
+- [x] `kubectl -n ust-prod get pods` → 4/4 Running, zero restarts
+- [x] `curl localhost:8080/api/items` returns items; Prometheus has ≥ 6 targets up
+- [x] `make loadgen RPS=20 DURATION=30` → p99 < 400 ms, error rate 0.00
+- [x] Latency fault raises p99 above the SLO within 5 s and recovers at TTL
+- [x] Container memory with prod only is under 3.5 GB
 
 ---
 

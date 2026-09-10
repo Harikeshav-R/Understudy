@@ -1,4 +1,4 @@
-.PHONY: all bootstrap build-images check check-int clean cluster-down cluster-up demo deploy-prod deploy-system down eval fmt help lint reset test typecheck up
+.PHONY: all bootstrap build-images check check-int clean cluster-down cluster-up demo deploy-prod deploy-system down eval fmt help lint loadgen reset test typecheck up
 
 all: check
 
@@ -8,6 +8,7 @@ help:
 	@echo "  make cluster-up   - Start local k3d cluster & registry (Phase 1A)"
 	@echo "  make cluster-down - Tear down local k3d cluster"
 	@echo "  make build-images - Build demo services and push to local registry"
+	@echo "  make loadgen      - Run deterministic load generator (Phase 1A)"
 	@echo "  make check        - Run full validation (ruff, mypy, import-linter, 100% test cov)"
 	@echo "  make fmt          - Auto-format and fix with ruff"
 	@echo "  make lint         - Run ruff lint and format checks"
@@ -81,6 +82,8 @@ deploy-prod: build-images
 	@echo "Deploying ust-prod demo stack..."
 	@kubectl apply -f deploy/prod/namespace.yaml
 	@kubectl apply -f deploy/system/prod-postgres.yaml
+	@kubectl apply -f deploy/policies/understudy-prod.yaml
+	@kubectl apply -f deploy/policies/understudy-twin.yaml
 	@kubectl apply -f deploy/prod/configmap.yaml
 	@kubectl apply -f deploy/prod/auth-service.yaml
 	@kubectl apply -f deploy/prod/data-service.yaml
@@ -88,6 +91,14 @@ deploy-prod: build-images
 	@kubectl apply -f deploy/prod/worker.yaml
 	@kubectl wait --for=condition=Ready pod -l app=prod-postgres -n ust-prod --timeout=120s
 	@kubectl wait --for=condition=Ready pods -l app.kubernetes.io/part-of=understudy -n ust-prod --timeout=120s
+
+RPS ?= 20
+DURATION ?= 30
+SEED ?= 42
+TARGET_URL ?= http://localhost:8080
+
+loadgen:
+	uv run python -m services.loadgen --rps $(RPS) --duration $(DURATION) --seed $(SEED) --target-url $(TARGET_URL)
 
 up: cluster-up build-images deploy-system deploy-prod
 	@echo "Understudy cluster, system infrastructure, and production demo stack ready."
