@@ -36,6 +36,14 @@ registries:
     name: ust-registry
     host: 0.0.0.0
     hostPort: "5001"
+  config: |
+    mirrors:
+      "localhost:5001":
+        endpoint:
+          - http://ust-registry:5000
+      "ust-registry:5000":
+        endpoint:
+          - http://ust-registry:5000
 options:
   k3d:
     wait: true

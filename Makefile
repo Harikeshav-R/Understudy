@@ -1,4 +1,4 @@
-.PHONY: all bootstrap build-images check check-int clean cluster-down cluster-up demo down eval fmt help lint reset test typecheck up
+.PHONY: all bootstrap build-images check check-int clean cluster-down cluster-up demo deploy-prod deploy-system down eval fmt help lint reset test typecheck up
 
 all: check
 
@@ -69,8 +69,28 @@ build-images:
 	docker build -t localhost:5001/worker:good -f services/worker/Dockerfile .
 	docker push localhost:5001/worker:good
 
-up: cluster-up
-	@echo "make up is implemented in Phase 1A."
+deploy-system:
+	@echo "Deploying ust-system backing infrastructure..."
+	@kubectl apply -f deploy/prod/namespace.yaml
+	@kubectl apply -f deploy/system/namespace.yaml
+	@kubectl apply -f deploy/system/
+	@kubectl wait --for=condition=Ready pod -l app=prod-postgres -n ust-prod --timeout=120s
+	@kubectl wait --for=condition=Ready pods -l app.kubernetes.io/part-of=understudy -n ust-system --timeout=120s
+
+deploy-prod: build-images
+	@echo "Deploying ust-prod demo stack..."
+	@kubectl apply -f deploy/prod/namespace.yaml
+	@kubectl apply -f deploy/system/prod-postgres.yaml
+	@kubectl apply -f deploy/prod/configmap.yaml
+	@kubectl apply -f deploy/prod/auth-service.yaml
+	@kubectl apply -f deploy/prod/data-service.yaml
+	@kubectl apply -f deploy/prod/edge-gateway.yaml
+	@kubectl apply -f deploy/prod/worker.yaml
+	@kubectl wait --for=condition=Ready pod -l app=prod-postgres -n ust-prod --timeout=120s
+	@kubectl wait --for=condition=Ready pods -l app.kubernetes.io/part-of=understudy -n ust-prod --timeout=120s
+
+up: cluster-up build-images deploy-system deploy-prod
+	@echo "Understudy cluster, system infrastructure, and production demo stack ready."
 
 down: cluster-down
 

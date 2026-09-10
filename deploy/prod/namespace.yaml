@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ust-prod
+  labels:
+    app.kubernetes.io/part-of: understudy
+    environment: production

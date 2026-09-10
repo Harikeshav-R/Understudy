@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: system-postgres-init
+  namespace: ust-system
+  labels:
+    app: system-postgres
+    app.kubernetes.io/name: system-postgres
+    app.kubernetes.io/part-of: understudy
+data:
+  init.sql: |
+    CREATE EXTENSION IF NOT EXISTS vector;
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: system-postgres
+  namespace: ust-system
+  labels:
+    app: system-postgres
+    app.kubernetes.io/name: system-postgres
+    app.kubernetes.io/part-of: understudy
+    app.kubernetes.io/component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: system-postgres
+  template:
+    metadata:
+      labels:
+        app: system-postgres
+        app.kubernetes.io/name: system-postgres
+        app.kubernetes.io/part-of: understudy
+    spec:
+      containers:
+        - name: postgres
+          image: pgvector/pgvector:pg16
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_USER
+              value: "postgres"
+            - name: POSTGRES_PASSWORD
+              value: "postgres"
+            - name: POSTGRES_DB
+              value: "ust_system"
+          volumeMounts:
+            - name: init-script
+              mountPath: /docker-entrypoint-initdb.d/init.sql
+              subPath: init.sql
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 400Mi
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - postgres
+                - -d
+                - ust_system
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - postgres
+                - -d
+                - ust_system
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: init-script
+          configMap:
+            name: system-postgres-init
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: system-postgres
+  namespace: ust-system
+  labels:
+    app: system-postgres
+    app.kubernetes.io/name: system-postgres
+    app.kubernetes.io/part-of: understudy
+spec:
+  type: LoadBalancer
+  selector:
+    app: system-postgres
+  ports:
+    - name: host-port
+      port: 5434
+      targetPort: 5432
