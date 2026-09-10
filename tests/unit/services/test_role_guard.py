@@ -90,3 +90,43 @@ def test_check_twin_outbound_target_twin_allows_local_twin(
     monkeypatch.setenv("UNDERSTUDY_ROLE", "twin")
     # Twin calling twin service is allowed
     check_twin_outbound_target("http://data-service.ust-twin-inc-0.svc.cluster.local:8000")
+
+
+def test_check_twin_outbound_target_twin_denies_ip_literal_bypass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UNDERSTUDY_ROLE", "twin")
+    # A bare ClusterIP never contains "ust-prod" as a substring, but is still denied:
+    # legitimate in-cluster calls always go through Kubernetes DNS, never a raw IP.
+    with pytest.raises(HTTPException) as exc_info:
+        check_twin_outbound_target("http://10.43.12.5:8000")
+    assert exc_info.value.status_code == 403
+    assert "IP literal" in str(exc_info.value.detail)
+
+
+def test_check_twin_outbound_target_twin_denies_ipv6_literal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UNDERSTUDY_ROLE", "twin")
+    with pytest.raises(HTTPException) as exc_info:
+        check_twin_outbound_target("http://[::1]:8000")
+    assert exc_info.value.status_code == 403
+    assert "IP literal" in str(exc_info.value.detail)
+
+
+def test_check_twin_outbound_target_twin_denies_empty_hostname(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UNDERSTUDY_ROLE", "twin")
+    with pytest.raises(HTTPException) as exc_info:
+        check_twin_outbound_target("not-a-url")
+    assert exc_info.value.status_code == 403
+    assert "no resolvable hostname" in str(exc_info.value.detail)
+
+
+def test_check_twin_outbound_target_twin_allows_substring_lookalike(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("UNDERSTUDY_ROLE", "twin")
+    # "ust-prod" as a mere substring of a label (not the label itself) is not production.
+    check_twin_outbound_target("http://ust-prod-mock.ust-twin-inc-0.svc.cluster.local:8000")
