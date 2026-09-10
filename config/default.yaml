@@ -1,0 +1,43 @@
+env: "development"
+log_level: "INFO"
+candidate_count: 3
+actuation_enabled: true
+fault_injection_enabled: false
+role: "agent"
+llm_model: "anthropic/claude-3.5-sonnet"
+embedding_model: "text-embedding-3-small"
+openrouter_base_url: "https://openrouter.ai/api/v1"
+
+timeouts:
+  fork_seconds: 120
+  candidate_apply_seconds: 60
+  observation_seconds: 200
+  kernel_seconds: 5
+  incident_seconds: 600
+
+cluster:
+  context: "k3d-ust"
+  prod_namespace: "ust-prod"
+  system_namespace: "ust-system"
+  twin_namespace_prefix: "ust-twin"
+
+scoring:
+  recovery_weight: 0.40
+  blast_weight: 0.25
+  downstream_weight: 0.20
+  violations_weight: 0.15
+  ambiguity_margin: 0.15
+  mirror_drop_ceiling: 0.05
+  min_probe_samples: 60
+  recovery_consecutive_seconds: 15
+  recovery_timeout_seconds: 180
+  downstream_error_ceiling: 0.10
+  violation_ceiling: 5
+
+endpoints:
+  mirror_gateway: "http://localhost:8080"
+  prometheus: "http://localhost:9090"
+  loki: "http://localhost:3100"
+  postgres_prod: "postgresql://postgres:postgres@localhost:5432/ust_prod"
+  postgres_twin: "postgresql://postgres:postgres@localhost:5433/postgres"
+  postgres_system: "postgresql://postgres:postgres@localhost:5434/ust_system"

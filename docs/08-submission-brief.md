@@ -149,7 +149,7 @@ Stated because a reliability brief that lists none is not a reliability brief.
 
 ```bash
 git clone <repo> && cd understudy
-cp .env.example .env        # GitHub, Slack, PagerDuty, Anthropic keys
+cp .env.example .env        # GitHub, Slack, PagerDuty, OpenRouter keys
 make bootstrap && make up
 make eval                   # regenerates eval/report.json and this brief
 ```

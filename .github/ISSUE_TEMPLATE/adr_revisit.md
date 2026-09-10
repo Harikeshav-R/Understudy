@@ -7,7 +7,7 @@ labels: ["adr-revisit", "architecture"]
 
 ## ADR Reference
 - **ADR Number:** ADR-XXX
-- **ADR Title:** 
+- **ADR Title:**
 
 ## Reason for Revisit Request
 <!-- Explain why the current decision cannot hold, what new information or blocker has been discovered. -->

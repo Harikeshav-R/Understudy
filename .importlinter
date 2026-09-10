@@ -1,0 +1,113 @@
+[importlinter]
+root_package = understudy
+include_external_packages = True
+
+[importlinter:contract:contracts-isolated]
+name = Contracts imports nothing internal
+type = forbidden
+source_modules =
+    understudy.contracts
+forbidden_modules =
+    understudy.common
+    understudy.store
+    understudy.signals
+    understudy.graph
+    understudy.playbook
+    understudy.planner
+    understudy.fleet
+    understudy.mirror
+    understudy.tournament
+    understudy.kernel
+    understudy.actuator
+    understudy.notify
+    understudy.shadow
+    understudy.orchestrator
+    understudy.eval
+    understudy.cli
+
+[importlinter:contract:common-isolated]
+name = Common imports only contracts
+type = forbidden
+source_modules =
+    understudy.common
+forbidden_modules =
+    understudy.store
+    understudy.signals
+    understudy.graph
+    understudy.playbook
+    understudy.planner
+    understudy.fleet
+    understudy.mirror
+    understudy.tournament
+    understudy.kernel
+    understudy.actuator
+    understudy.notify
+    understudy.shadow
+    understudy.orchestrator
+    understudy.eval
+    understudy.cli
+
+[importlinter:contract:langgraph-only-in-orchestrator]
+name = Only orchestrator may import langgraph
+type = forbidden
+source_modules =
+    understudy.contracts
+    understudy.common
+    understudy.store
+    understudy.signals
+    understudy.graph
+    understudy.playbook
+    understudy.planner
+    understudy.fleet
+    understudy.mirror
+    understudy.tournament
+    understudy.kernel
+    understudy.actuator
+    understudy.notify
+    understudy.shadow
+    understudy.eval
+forbidden_modules =
+    langgraph
+
+[importlinter:contract:db-only-in-store]
+name = Only store may import psycopg or sqlalchemy
+type = forbidden
+source_modules =
+    understudy.contracts
+    understudy.common
+    understudy.signals
+    understudy.graph
+    understudy.playbook
+    understudy.planner
+    understudy.fleet
+    understudy.mirror
+    understudy.tournament
+    understudy.kernel
+    understudy.actuator
+    understudy.notify
+    understudy.shadow
+    understudy.orchestrator
+    understudy.eval
+forbidden_modules =
+    psycopg
+    sqlalchemy
+
+[importlinter:contract:k8s-restricted]
+name = Only fleet, actuator and graph may import kubernetes
+type = forbidden
+source_modules =
+    understudy.contracts
+    understudy.common
+    understudy.store
+    understudy.signals
+    understudy.playbook
+    understudy.planner
+    understudy.mirror
+    understudy.tournament
+    understudy.kernel
+    understudy.notify
+    understudy.shadow
+    understudy.orchestrator
+    understudy.eval
+forbidden_modules =
+    kubernetes

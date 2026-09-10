@@ -1,7 +1,7 @@
 ## Build-Plan Step Implemented
 
 <!-- Specify the step from CHECKLIST.md and docs/04-build-plan.md (e.g. Phase 0 - Step 0.1) -->
-- **Step:** 
+- **Step:**
 
 ## Checkpoint Execution & Output
 
@@ -13,19 +13,19 @@
 ## ADRs Relied On
 
 <!-- List all ADRs from docs/01-decisions.md directly relevant to this change -->
-- 
+-
 
 ## Mock Registry Disclosures
 
 <!-- Did you add or modify any # MOCKED: markers?
      Ensure every marker has a matching row in docs/MOCKS.md.
      If none added, write "None". -->
-- 
+-
 
 ## Documentation Updates
 
 <!-- Describe docs updated to maintain truth, or "None required" with reason -->
-- 
+-
 
 ## Definition of Done
 

@@ -31,17 +31,5 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-groups
 
-      - name: Code format check (ruff format)
-        run: uv run ruff format --check .
-
-      - name: Code lint check (ruff check)
-        run: uv run ruff check .
-
-      - name: Static type check (mypy --strict)
-        run: uv run mypy --strict src tests
-
-      - name: Import architecture boundaries (import-linter)
-        run: uv run lint-imports
-
-      - name: Unit tests with 100% line & branch coverage
-        run: uv run pytest --cov=understudy --cov-branch --cov-fail-under=100
+      - name: Run verification checks (make check)
+        run: make check

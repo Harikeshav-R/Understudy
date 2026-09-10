@@ -393,3 +393,15 @@ under time pressure without an explicit decision.
 **Why.** Deciding what to cut while tired at 2am produces bad cuts. Deciding now produces
 good ones.
 **Rejected.** Building in dependency order and hoping.
+
+### ADR-034 — OpenRouter is the model-agnostic LLM and embeddings provider.
+**Decision.** Understudy uses OpenRouter as its LLM and embeddings provider via its
+OpenAI-compatible API (`https://openrouter.ai/api/v1`). The entire runtime is model-agnostic:
+model identifiers for candidate generation, advisory judging, shadow hypothesis generation,
+and embeddings are configurable via settings and environment variables.
+**Why.** OpenRouter provides a unified gateway to diverse foundation models without vendor
+SDK lock-in. A model-agnostic architecture ensures that Understudy's safety and reliability
+claims (closed action enum, deterministic tournament scoring, Z3 formal kernel) stand on
+their own mechanisms rather than on undocumented capabilities or quirks of a specific model.
+**Rejected.** Direct single-vendor SDK integration (e.g., Anthropic-only), hardcoding model
+identifiers in component code.

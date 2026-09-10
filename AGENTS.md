@@ -62,7 +62,9 @@ cannot run the checkpoint (no cluster, no secrets), say so explicitly in the PR 
    boxes only for what you actually observed.
 7. Tick your step's box in `CHECKLIST.md` **in this PR**, and copy the definition-of-done
    block from the top of that file into the PR body.
-8. Commit with a conventional-commit message (always including a commit description describing the change), push the branch, open a PR.
+8. Commit with a conventional-commit message (always including a commit description
+   describing the change), push the branch, open a PR. Never merge the PR; wait for
+   human review.
 9. Update `docs/` if your change made any of it untrue. A PR that invalidates a document
    and does not update it will be rejected.
 
@@ -106,6 +108,8 @@ Rules:
 **PRs.**
 - **Never commit to `main`. Never push to `main`. Always open a PR.** No exceptions,
   including for docs and typos.
+- **Never auto-merge or merge a PR.** Agents must never merge pull requests or enable
+  auto-merge; review and merge are strictly human actions.
 - **Merge commits**, not squash, not rebase-merge. History keeps the individual commits.
 - PR title follows Conventional Commits, same as a commit subject.
 - PR body uses `.github/pull_request_template.md`, which requires:
@@ -128,7 +132,7 @@ Rules:
 - Only `orchestrator` may import `langgraph`.
 - Only `store` may import `psycopg` or `sqlalchemy`.
 - Only `fleet`, `actuator` and `graph` may import `kubernetes`.
-- No package may import a sibling's internals — only its `api.py` and `contracts`.
+- No package may import a sibling's internals — only its `api.py` and `contracts` (and sibling `fakes.py` when constructing test fakes in `fakes.py` per §7.1 and §11).
 
 If your change needs a new edge in that graph, it needs an ADR.
 
@@ -273,6 +277,7 @@ proceed?".
 ## 9. Things that are never acceptable
 
 - Committing or pushing to `main`.
+- Merging a PR or enabling auto-merge (merging is human-only).
 - `git push --force` on any shared branch.
 - `--no-verify` on commit or push.
 - Committing secrets, `.env`, kubeconfigs, tokens, or `config/local.yaml`.

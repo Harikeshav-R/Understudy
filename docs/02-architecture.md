@@ -491,7 +491,12 @@ allocation and refuses to start if it is below 12 GB.
   long-lived. Never in YAML, never in manifests, never in a commit. Pre-commit runs
   `detect-secrets`.
 - Required secrets: `GITHUB_TOKEN`, `SLACK_BOT_TOKEN`, `PAGERDUTY_ROUTING_KEY`,
-  `PAGERDUTY_WEBHOOK_SECRET`, `ANTHROPIC_API_KEY`, `DATADOG_API_KEY` (optional).
+  `PAGERDUTY_WEBHOOK_SECRET`, `OPENROUTER_API_KEY`, `DATADOG_API_KEY` (optional).
+- LLM and embeddings provider: OpenRouter via OpenAI-compatible endpoints
+  (`https://openrouter.ai/api/v1`). The runtime is model-agnostic; models for planning,
+  advisory judging, shadow hypothesis generation, and embeddings are read from `Settings`
+  (`llm_model`, `embedding_model`, overridable by `UNDERSTUDY_LLM_MODEL`,
+  `UNDERSTUDY_EMBEDDING_MODEL`).
 
 ## 2.12 Database schema (system-postgres)
 
