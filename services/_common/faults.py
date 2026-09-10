@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import gc
 import math
+import os
 import random
 import time
 from collections.abc import Awaitable, Callable
@@ -11,10 +12,13 @@ from enum import StrEnum
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from psycopg_pool import AsyncConnectionPool
+from psycopg_pool import AsyncConnectionPool, PoolTimeout
 from pydantic import BaseModel, Field
 
 from services._common.role_guard import ensure_fault_injection_permitted
+
+FAULT_INJECTION_SEED_ENV = "FAULT_INJECTION_SEED"
+DEFAULT_FAULT_INJECTION_SEED = 1337
 
 
 class FaultKind(StrEnum):
@@ -47,7 +51,7 @@ def _run_cpu_spin(duration_sec: float) -> None:
 class FaultManager:
     """Manages active faults, applies per-request mutations, and handles TTL recovery."""
 
-    def __init__(self, pool: AsyncConnectionPool | None = None) -> None:
+    def __init__(self, pool: AsyncConnectionPool | None = None, seed: int | None = None) -> None:
         self.pool = pool
         self.active_fault: FaultRequest | None = None
         self.expires_at: float | None = None
@@ -56,6 +60,9 @@ class FaultManager:
         self._held_connections: list[Any] = []
         self._stall_event = asyncio.Event()
         self._stall_event.set()
+        if seed is None:
+            seed = int(os.getenv(FAULT_INJECTION_SEED_ENV, str(DEFAULT_FAULT_INJECTION_SEED)))
+        self._rng = random.Random(seed)
 
     def get_active_fault(self) -> FaultRequest | None:
         """Return the active fault specification if one is active."""
@@ -88,7 +95,7 @@ class FaultManager:
                 try:
                     conn = await self.pool.getconn(timeout=1.0)
                     self._held_connections.append(conn)
-                except Exception:
+                except PoolTimeout:
                     break
         elif fault.kind == FaultKind.STALL:
             self._stall_event.clear()
@@ -141,7 +148,7 @@ class FaultManager:
 
         elif fault.kind == FaultKind.ERROR_RATE:
             rate = fault.magnitude if fault.magnitude <= 1.0 else (fault.magnitude / 100.0)
-            if random.random() < rate:
+            if self._rng.random() < rate:
                 raise HTTPException(
                     status_code=500,
                     detail="Injected fault: simulated error rate",
@@ -151,7 +158,11 @@ class FaultManager:
             await asyncio.to_thread(_run_cpu_spin, fault.magnitude / 1000.0)
 
         elif fault.kind == FaultKind.STALL:
-            await asyncio.sleep(fault.magnitude / 1000.0)
+            # Same semantics as the worker: block until the fault clears (TTL or explicit
+            # DELETE /admin/fault), ignoring magnitude. Previously this slept for a bounded
+            # `magnitude` ms, identical to LATENCY, which made STALL indistinguishable from
+            # LATENCY for HTTP services.
+            await self.wait_if_stalled()
 
 
 def setup_fault_routes(app: FastAPI, fault_manager: FaultManager) -> None:

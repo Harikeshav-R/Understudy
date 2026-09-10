@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
+from psycopg_pool import PoolTimeout
 
 from services._common.faults import (
     FaultKind,
@@ -68,6 +69,55 @@ async def test_fault_error_rate() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fault_error_rate_seeded_determinism() -> None:
+    """Same seed must produce the same accept/reject sequence (CLAUDE.md §5.7)."""
+
+    async def run(seed: int) -> list[bool]:
+        manager = FaultManager(seed=seed)
+        await manager.apply_fault(
+            FaultRequest(kind=FaultKind.ERROR_RATE, magnitude=0.5, ttl_seconds=10),
+        )
+        outcomes = []
+        for _ in range(30):
+            try:
+                await manager.pre_request_hook()
+                outcomes.append(False)
+            except HTTPException:
+                outcomes.append(True)
+        return outcomes
+
+    first = await run(42)
+    second = await run(42)
+    assert first == second
+    assert any(first)
+    assert not all(first)
+
+
+@pytest.mark.asyncio
+async def test_fault_error_rate_default_seed_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Constructing without an explicit seed falls back to FAULT_INJECTION_SEED."""
+    monkeypatch.setenv("FAULT_INJECTION_SEED", "7")
+
+    async def run() -> list[bool]:
+        manager = FaultManager()
+        await manager.apply_fault(
+            FaultRequest(kind=FaultKind.ERROR_RATE, magnitude=0.5, ttl_seconds=10),
+        )
+        outcomes = []
+        for _ in range(30):
+            try:
+                await manager.pre_request_hook()
+                outcomes.append(False)
+            except HTTPException:
+                outcomes.append(True)
+        return outcomes
+
+    first = await run()
+    second = await run()
+    assert first == second
+
+
+@pytest.mark.asyncio
 async def test_fault_cpu_spin() -> None:
     manager = FaultManager()
     await manager.apply_fault(
@@ -122,7 +172,7 @@ async def test_fault_pool_exhaustion() -> None:
 @pytest.mark.asyncio
 async def test_fault_pool_exhaustion_errors_handled() -> None:
     mock_pool = AsyncMock()
-    mock_pool.getconn.side_effect = TimeoutError("exhausted")
+    mock_pool.getconn.side_effect = PoolTimeout("exhausted")
     mock_pool.putconn.side_effect = RuntimeError("broken")
 
     manager = FaultManager(pool=mock_pool)
@@ -140,19 +190,20 @@ async def test_fault_pool_exhaustion_errors_handled() -> None:
 
 @pytest.mark.asyncio
 async def test_fault_stall() -> None:
+    """STALL blocks pre_request_hook indefinitely (like the worker), ignoring magnitude,
+    until the fault is cleared -- it must not merely sleep for `magnitude` ms like LATENCY."""
     manager = FaultManager()
     await manager.apply_fault(
         FaultRequest(kind=FaultKind.STALL, magnitude=20, ttl_seconds=10),
     )
     assert manager.is_stalled is True
 
-    # pre_request_hook with stall
-    start = asyncio.get_event_loop().time()
-    await manager.pre_request_hook()
-    duration = asyncio.get_event_loop().time() - start
-    assert duration >= 0.015
+    task = asyncio.create_task(manager.pre_request_hook())
+    await asyncio.sleep(0.05)
+    assert not task.done()
 
     await manager.clear_fault()
+    await asyncio.wait_for(task, timeout=1.0)
     assert manager.is_stalled is False
 
 
