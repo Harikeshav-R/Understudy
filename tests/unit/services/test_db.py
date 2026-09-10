@@ -2,6 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock
 
+import psycopg
 import pytest
 
 from services._common.db import (
@@ -57,7 +58,7 @@ async def test_ping_db_wrong_value() -> None:
 @pytest.mark.asyncio
 async def test_ping_db_exception() -> None:
     mock_pool = MagicMock()
-    mock_pool.connection.side_effect = ConnectionError("offline")
+    mock_pool.connection.side_effect = psycopg.OperationalError("offline")
 
     assert await ping_db(mock_pool) is False
 

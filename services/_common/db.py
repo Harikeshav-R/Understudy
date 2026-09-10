@@ -5,6 +5,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from psycopg import AsyncConnection
+from psycopg import Error as PsycopgError
 from psycopg_pool import AsyncConnectionPool
 
 
@@ -40,7 +41,7 @@ async def ping_db(pool: AsyncConnectionPool) -> bool:
             await cur.execute("SELECT 1")
             row = await cur.fetchone()
             return bool(row and row[0] == 1)
-    except Exception:
+    except PsycopgError:
         return False
 
 
