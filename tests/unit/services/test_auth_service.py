@@ -95,7 +95,7 @@ async def test_check_db_readiness() -> None:
 async def test_auth_lifespan_with_db(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(auth_module, "DATABASE_URL", "postgresql://fake:5432/db")
     mock_pool = AsyncMock()
-    with patch("services.auth_service.app.create_pool", return_value=mock_pool):
+    with patch("services._common.bootstrap.create_pool", return_value=mock_pool):
         async with auth_module.lifespan(app):
             assert mock_pool.open.await_count == 1
         assert mock_pool.close.await_count == 1

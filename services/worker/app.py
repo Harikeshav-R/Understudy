@@ -16,13 +16,11 @@ from psycopg_pool import AsyncConnectionPool
 
 from services._common import (
     FaultManager,
-    create_pool,
+    create_service_app,
+    db_pool_lifespan,
     get_logger,
     ping_db,
-    setup_fault_middleware,
-    setup_fault_routes,
     setup_health_routes,
-    setup_metrics,
 )
 
 logger = get_logger(__name__)
@@ -130,30 +128,18 @@ async def worker_loop() -> None:
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage worker polling task and database connection pool lifecycle."""
     global db_pool
-    if DATABASE_URL:
-        db_pool = create_pool(DATABASE_URL)
-        await db_pool.open()
-        fault_manager.pool = db_pool
+    async with db_pool_lifespan(DATABASE_URL, fault_manager, on_open=init_worker_db) as pool:
+        db_pool = pool
+        task = asyncio.create_task(worker_loop())
         try:
-            await init_worker_db(db_pool)
-        except PsycopgError as exc:
-            logger.error("worker_db_init_failed", error=str(exc))
-
-    task = asyncio.create_task(worker_loop())
-    try:
-        yield
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        if db_pool:
-            await db_pool.close()
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
-app = FastAPI(title="worker", lifespan=lifespan)
-setup_metrics(app, "worker")
-setup_fault_middleware(app, fault_manager)
-setup_fault_routes(app, fault_manager)
+app = create_service_app("worker", fault_manager, lifespan)
 
 
 async def check_db_readiness() -> bool:

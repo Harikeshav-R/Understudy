@@ -11,10 +11,8 @@ from fastapi import FastAPI, Header, HTTPException, Response, status
 from services._common import (
     FaultManager,
     check_twin_outbound_target,
-    setup_fault_middleware,
-    setup_fault_routes,
+    create_service_app,
     setup_health_routes,
-    setup_metrics,
 )
 
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8000").rstrip("/")
@@ -34,10 +32,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await app.state.http_client.aclose()
 
 
-app = FastAPI(title="edge-gateway", lifespan=lifespan)
-setup_metrics(app, "edge-gateway")
-setup_fault_middleware(app, fault_manager)
-setup_fault_routes(app, fault_manager)
+app = create_service_app("edge-gateway", fault_manager, lifespan)
 
 
 async def check_auth_reachability() -> bool:
