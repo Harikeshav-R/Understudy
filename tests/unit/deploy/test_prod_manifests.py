@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from deploy import generate_prod_manifests as prod_generator
 
 
 def _load_manifests(file_path: Path) -> list[dict[str, Any]]:
@@ -107,9 +108,27 @@ def test_prod_demo_service_workloads() -> None:
         env_dict = {item["name"]: item["value"] for item in c.get("env", []) if "value" in item}
         assert env_dict.get("UNDERSTUDY_ROLE") == "prod"
 
+        # FAULT_INJECTION_SEED must be sourced from the app-config ConfigMap, not a
+        # hardcoded literal, so services/_common/faults.py's default can't silently drift
+        # from the prod value.
+        env_from_ref = {
+            item["name"]: item["valueFrom"] for item in c.get("env", []) if "valueFrom" in item
+        }
+        assert "FAULT_INJECTION_SEED" in env_from_ref, f"{fname} must source FAULT_INJECTION_SEED"
+        seed_ref = env_from_ref["FAULT_INJECTION_SEED"]["configMapKeyRef"]
+        assert seed_ref["name"] == "app-config"
+        assert seed_ref["key"] == "FAULT_INJECTION_SEED"
+
         # Verify probes
         assert "livenessProbe" in c, f"{fname} must configure livenessProbe"
         assert "readinessProbe" in c, f"{fname} must configure readinessProbe"
+
+
+def test_prod_service_manifests_match_generator() -> None:
+    """deploy/generate_prod_manifests.py must produce exactly what's committed for all
+    four prod service manifests -- this is what keeps them from drifting apart
+    independently."""
+    assert prod_generator.check_drift() == []
 
 
 def test_edge_gateway_service_ports() -> None:
