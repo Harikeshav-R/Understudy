@@ -18,6 +18,8 @@ from pydantic import BaseModel, Field
 from services._common.role_guard import ensure_fault_injection_permitted
 
 FAULT_INJECTION_SEED_ENV = "FAULT_INJECTION_SEED"
+# In deploy/prod, this env var is sourced from configmap.yaml's app-config ConfigMap,
+# which is the source of truth there; this default only covers non-k8s/local runs.
 DEFAULT_FAULT_INJECTION_SEED = 1337
 
 

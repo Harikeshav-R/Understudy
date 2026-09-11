@@ -43,6 +43,11 @@ spec:
               value: "http://data-service:8000"
             - name: HTTP_TIMEOUT_SECONDS
               value: "5.0"
+            - name: FAULT_INJECTION_SEED
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: FAULT_INJECTION_SEED
           resources:
             requests:
               cpu: 50m

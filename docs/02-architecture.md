@@ -381,7 +381,9 @@ Every service exposes:
 `error_rate` fault outcomes are drawn from a `random.Random` seeded per process by the
 `FAULT_INJECTION_SEED` env var (default `1337`), never the unseeded global `random` module,
 so two runs of the same scenario with the same seed inject errors on the same requests
-(ADR-015, CLAUDE.md §5.7).
+(ADR-015, CLAUDE.md §5.7). In `deploy/prod`, this env var is sourced from the `app-config`
+ConfigMap (`deploy/prod/configmap.yaml`) via `configMapKeyRef` in each Deployment, which is
+the source of truth there; the `1337` code default only covers non-k8s/local runs.
 
 Each service ships two image tags: `:good` and `:regression`. The `:regression` tag of
 `data-service` contains a genuine performance regression (an N+1 query in the list
