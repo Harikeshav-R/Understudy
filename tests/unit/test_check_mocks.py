@@ -122,6 +122,43 @@ def test_check_parity_overlapping_prefix_not_matched(tmp_path: Path) -> None:
     assert any("pagerduty_v2.py" in err for err in errors)
 
 
+def test_check_parity_services_marker_unregistered(tmp_path: Path) -> None:
+    services = tmp_path / "services"
+    (services / "auth_service").mkdir(parents=True)
+    (services / "auth_service" / "app.py").write_text("# MOCKED: synthetic token acceptance\n")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    mocks = docs / "MOCKS.md"
+    mocks.write_text(
+        "| Module | What | Why | Real | Issue | Status |\n"
+        "|---|---|---|---|---|---|\n"
+        "| _(none yet)_ | | | | | |\n"
+    )
+
+    ok, errors = check_parity(tmp_path, mocks)
+    assert ok is False
+    assert len(errors) == 1
+    assert "services/auth_service/app.py" in errors[0]
+
+
+def test_check_parity_services_marker_registered(tmp_path: Path) -> None:
+    services = tmp_path / "services"
+    (services / "auth_service").mkdir(parents=True)
+    (services / "auth_service" / "app.py").write_text("# MOCKED: synthetic token acceptance\n")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    mocks = docs / "MOCKS.md"
+    mocks.write_text(
+        "| Module | What | Why | Real | Issue | Status |\n"
+        "|---|---|---|---|---|---|\n"
+        "| services.auth_service.app | Synthetic tokens | demo | app.py | #1 | open |\n"
+    )
+
+    ok, errors = check_parity(tmp_path, mocks)
+    assert ok is True
+    assert errors == []
+
+
 def test_check_parity_stale_registry_row(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()

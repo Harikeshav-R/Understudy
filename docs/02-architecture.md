@@ -374,7 +374,7 @@ Edit `INSTANCES` in that script, not the YAML files directly.
 | Service | Role | Depends on | Fault knobs |
 |---|---|---|---|
 | `edge-gateway` | HTTP entry, fans out to auth then data | auth, data | latency, error rate, CPU spin |
-| `auth-service` | Token validation, in-memory cache over Postgres | data-db | latency, error rate, cache poisoning, memory leak |
+| `auth-service` | Token validation: seeded + synthetic tokens in-memory today (`# MOCKED:`, tracked in #16); Postgres-backed lookup not yet built | data-db | latency, error rate, cache poisoning, memory leak |
 | `data-service` | CRUD over Postgres, connection pool | postgres | pool exhaustion, latency, error rate, bad-deploy variant |
 | `worker` | Polls a job table (`FOR UPDATE SKIP LOCKED`), processes | postgres | stall, backlog growth, crash loop |
 

@@ -80,6 +80,64 @@ async def test_validate_invalid_token(client: httpx.AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_seeded_admin_token_never_downgraded_by_eviction(
+    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+) -> None:
+    """Regression for the reported bug: the seeded admin token must never be evicted
+    from a cache (it isn't even in the evictable TOKEN_CACHE) and must never be
+    silently re-derived as scope: standard via the synthetic-pattern branch, no matter
+    how much synthetic-token traffic the cache has seen."""
+    monkeypatch.setattr(auth_module, "TOKEN_CACHE_MAX_SIZE", 1)
+
+    # Drive enough synthetic traffic to force repeated evictions of TOKEN_CACHE.
+    for i in range(5):
+        resp = await client.get("/validate", headers={"Authorization": f"Bearer valid-dyn-{i}"})
+        assert resp.status_code == 200
+
+    # The seeded admin token was never in TOKEN_CACHE, so it was never evicted, and
+    # revalidating it must still report scope: admin, not scope: standard.
+    resp = await client.get("/validate", headers={"Authorization": "Bearer valid-token"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["scope"] == "admin"
+    assert data["user_id"] == "user_admin"
+    assert "Bearer valid-token" not in auth_module.TOKEN_CACHE
+
+
+@pytest.mark.asyncio
+async def test_synthetic_tokens_disabled_by_env_override(
+    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+) -> None:
+    """AUTH_SERVICE_ALLOW_SYNTHETIC_TOKENS=false must reject synthetic tokens even
+    outside prod."""
+    monkeypatch.setenv("AUTH_SERVICE_ALLOW_SYNTHETIC_TOKENS", "false")
+    resp = await client.get("/validate", headers={"Authorization": "Bearer valid-anything"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_synthetic_tokens_disabled_in_prod_by_default(
+    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+) -> None:
+    """Synthetic-token acceptance defaults to off in prod (UNDERSTUDY_ROLE=prod) unless
+    explicitly re-enabled."""
+    monkeypatch.setenv("UNDERSTUDY_ROLE", "prod")
+    resp = await client.get("/validate", headers={"Authorization": "Bearer valid-anything"})
+    assert resp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_synthetic_tokens_explicitly_reenabled_in_prod(
+    monkeypatch: pytest.MonkeyPatch, client: httpx.AsyncClient
+) -> None:
+    """AUTH_SERVICE_ALLOW_SYNTHETIC_TOKENS=true overrides the prod default."""
+    monkeypatch.setenv("UNDERSTUDY_ROLE", "prod")
+    monkeypatch.setenv("AUTH_SERVICE_ALLOW_SYNTHETIC_TOKENS", "true")
+    resp = await client.get("/validate", headers={"Authorization": "Bearer valid-anything"})
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_check_db_readiness() -> None:
     auth_module.db_pool = None
     assert await check_db_readiness() is True
