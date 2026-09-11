@@ -15,9 +15,10 @@ from services._common import (
     ping_db,
     setup_health_routes,
 )
+from services._common.settings import get_services_settings
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-TOKEN_CACHE_MAX_SIZE = int(os.getenv("AUTH_TOKEN_CACHE_MAX_SIZE", "1000"))
+TOKEN_CACHE_MAX_SIZE = get_services_settings().auth_service.token_cache_max_size
 
 # In-memory token cache, bounded to TOKEN_CACHE_MAX_SIZE entries (oldest evicted first)
 TOKEN_CACHE: dict[str, dict[str, Any]] = {

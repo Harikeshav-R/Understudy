@@ -3,11 +3,12 @@
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import httpx
 
 from services._common.logging import get_logger
+from services._common.settings import load_services_settings
 from services.loadgen.generator import RequestSpec, SeededRequestGenerator
 
 logger = get_logger("loadgen")
@@ -15,14 +16,21 @@ logger = get_logger("loadgen")
 
 @dataclass(frozen=True)
 class LoadgenConfig:
-    """Configuration options for load generation run."""
+    """Configuration options for load generation run. Defaults come from
+    load_services_settings().loadgen so a CLI run with no flags matches the same
+    tunable the settings docs describe (see services/loadgen/main.py, which sources
+    its own flag defaults from the same settings object)."""
 
-    rps: float = 20.0
-    duration_seconds: float = 30.0
+    rps: float = field(default_factory=lambda: load_services_settings().loadgen.rps)
+    duration_seconds: float = field(
+        default_factory=lambda: load_services_settings().loadgen.duration_seconds
+    )
     target_url: str = "http://localhost:8080"
-    seed: int = 42
-    auth_token: str = "valid-token"
-    http_timeout_seconds: float = 10.0
+    seed: int = field(default_factory=lambda: load_services_settings().loadgen.seed)
+    auth_token: str = field(default_factory=lambda: load_services_settings().loadgen.auth_token)
+    http_timeout_seconds: float = field(
+        default_factory=lambda: load_services_settings().loadgen.http_timeout_seconds
+    )
 
 
 @dataclass(frozen=True)
@@ -117,10 +125,14 @@ async def run_loadgen(
 
     interval = 1.0 / config.rps if config.rps > 0 else 0.0
 
+    loadgen_settings = load_services_settings().loadgen
     owns_client = client is None
     http_client = client or httpx.AsyncClient(
         timeout=httpx.Timeout(config.http_timeout_seconds),
-        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+        limits=httpx.Limits(
+            max_connections=loadgen_settings.max_connections,
+            max_keepalive_connections=loadgen_settings.max_keepalive_connections,
+        ),
     )
 
     logger.info(
@@ -170,7 +182,12 @@ async def run_loadgen(
     p95 = calculate_percentile(latencies, 95.0)
     p99 = calculate_percentile(latencies, 99.0)
 
-    p99_str = f"p99 < 400ms ({p99:.1f}ms)" if p99 < 400.0 else f"p99 >= 400ms ({p99:.1f}ms)"
+    p99_sla_ms = loadgen_settings.p99_sla_ms
+    p99_str = (
+        f"p99 < {p99_sla_ms:.0f}ms ({p99:.1f}ms)"
+        if p99 < p99_sla_ms
+        else f"p99 >= {p99_sla_ms:.0f}ms ({p99:.1f}ms)"
+    )
     summary_line = (
         f"Summary: total={len(results)}, success={successful}, failed={failed}, "
         f"error rate {error_rate:.2f}, p50={p50:.1f}ms, p90={p90:.1f}ms, "

@@ -22,11 +22,14 @@ from services._common import (
     ping_db,
     setup_health_routes,
 )
+from services._common.settings import get_services_settings
 
 logger = get_logger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "1.0"))
+_settings = get_services_settings().worker
+POLL_INTERVAL_SECONDS = _settings.poll_interval_seconds
+JOB_LIST_LIMIT = _settings.job_list_limit
 
 db_pool: AsyncConnectionPool | None = None
 fault_manager = FaultManager()
@@ -172,7 +175,10 @@ async def list_jobs() -> dict[str, Any]:
         return {"jobs": IN_MEMORY_JOBS, "is_stalled": fault_manager.is_stalled}
 
     async with db_pool.connection() as conn, conn.cursor() as cur:
-        await cur.execute("SELECT id, payload, status FROM jobs ORDER BY id DESC LIMIT 50")
+        await cur.execute(
+            "SELECT id, payload, status FROM jobs ORDER BY id DESC LIMIT %s",
+            (JOB_LIST_LIMIT,),
+        )
         rows = await cur.fetchall()
         jobs = [{"id": r[0], "payload": r[1], "status": r[2]} for r in rows]
         return {"jobs": jobs, "is_stalled": fault_manager.is_stalled}

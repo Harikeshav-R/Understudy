@@ -14,10 +14,11 @@ from services._common import (
     create_service_app,
     setup_health_routes,
 )
+from services._common.settings import get_services_settings
 
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8000").rstrip("/")
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:8000").rstrip("/")
-HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "5.0"))
+HTTP_TIMEOUT_SECONDS = get_services_settings().edge_gateway.http_timeout_seconds
 
 fault_manager = FaultManager()
 

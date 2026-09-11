@@ -16,9 +16,9 @@ from psycopg_pool import AsyncConnectionPool, PoolTimeout
 from pydantic import BaseModel, Field
 
 from services._common.role_guard import ensure_fault_injection_permitted
+from services._common.settings import get_services_settings
 
 FAULT_INJECTION_SEED_ENV = "FAULT_INJECTION_SEED"
-DEFAULT_FAULT_INJECTION_SEED = 1337
 
 
 class FaultKind(StrEnum):
@@ -79,7 +79,8 @@ class FaultManager:
         # POOL_EXHAUSTION just appended while clear_fault is mid-iteration over the list.
         self._state_lock = asyncio.Lock()
         if seed is None:
-            seed = int(os.getenv(FAULT_INJECTION_SEED_ENV, str(DEFAULT_FAULT_INJECTION_SEED)))
+            default_seed = get_services_settings().faults.injection_seed
+            seed = int(os.getenv(FAULT_INJECTION_SEED_ENV, str(default_seed)))
         self._rng = random.Random(seed)
 
     def get_active_fault(self) -> FaultRequest | None:
@@ -110,9 +111,12 @@ class FaultManager:
             elif fault.kind == FaultKind.POOL_EXHAUSTION and self.pool is not None:
                 # Acquire connections to exhaust pool
                 count = max(1, int(fault.magnitude))
+                getconn_timeout = (
+                    get_services_settings().faults.pool_exhaustion_getconn_timeout_seconds
+                )
                 for _ in range(count):
                     try:
-                        conn = await self.pool.getconn(timeout=1.0)
+                        conn = await self.pool.getconn(timeout=getconn_timeout)
                         self._held_connections.append(conn)
                     except PoolTimeout:
                         break
