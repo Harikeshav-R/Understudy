@@ -222,6 +222,7 @@ __marimo__/
 
 # Understudy specific & secrets per AGENTS.md §9
 config/local.yaml
+config/services.local.yaml
 kubeconfig
 *.kubeconfig
 .secrets
