@@ -10,9 +10,9 @@ exists without a row, or a row without a marker.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
 import sys
+from pathlib import Path
 
 MOCKED_PATTERN = re.compile(r"#\s*MOCKED:\s*(.+)")
 
@@ -35,7 +35,9 @@ def scan_source_markers(search_dir: Path) -> dict[str, list[tuple[int, str]]]:
         for idx, line in enumerate(content.splitlines(), start=1):
             match = MOCKED_PATTERN.search(line)
             if match:
-                rel_path = str(py_file.resolve().relative_to(search_dir.resolve()))
+                # posix separators: dotted module names are matched via "/", and this
+                # must be stable across platforms (make check runs on Windows too).
+                rel_path = py_file.resolve().relative_to(search_dir.resolve()).as_posix()
                 markers.setdefault(rel_path, []).append((idx, match.group(1).strip()))
 
     return markers
@@ -83,8 +85,15 @@ def check_parity(
     """Verify exact parity between code markers and MOCKS.md table rows."""
     registry_file = mocks_file or (repo_root / "docs" / "MOCKS.md")
     src_dir = repo_root / "src"
+    services_dir = repo_root / "services"
 
     code_markers = scan_source_markers(src_dir)
+    # services/ is a separate package tree from src/understudy (no shared root_package),
+    # so its own dotted module names include the "services" segment itself; re-key its
+    # markers with that prefix rather than treating services_dir as the scan root.
+    for file_path, occurrences in scan_source_markers(services_dir).items():
+        code_markers[f"services/{file_path}"] = occurrences
+
     registered_modules = parse_mock_registry(registry_file)
 
     errors: list[str] = []
