@@ -16,8 +16,11 @@ from psycopg_pool import AsyncConnectionPool, PoolTimeout
 from pydantic import BaseModel, Field
 
 from services._common.role_guard import ensure_fault_injection_permitted
+from services._common.settings import get_services_settings
 
 FAULT_INJECTION_SEED_ENV = "FAULT_INJECTION_SEED"
+# In deploy/prod, this env var is sourced from configmap.yaml's app-config ConfigMap,
+# which is the source of truth there; this default only covers non-k8s/local runs.
 DEFAULT_FAULT_INJECTION_SEED = 1337
 
 
@@ -36,7 +39,17 @@ class FaultRequest(BaseModel):
     """Specification for an injected fault."""
 
     kind: FaultKind
-    magnitude: float = Field(ge=0, description="Magnitude of fault (ms, percentage, MB, conns)")
+    magnitude: float = Field(
+        ge=0,
+        description=(
+            "Magnitude of fault, units depend on kind: LATENCY is milliseconds, "
+            "MEMORY_LEAK is megabytes, POOL_EXHAUSTION is a connection count, CPU_SPIN "
+            "is milliseconds of burn time. ERROR_RATE is the odd one out: a value "
+            "<= 1.0 is read as a fraction (0.5 = 50%), a value > 1.0 as a percentage "
+            "(50.0 = 50%) -- so a caller who means '1%' and passes 1.0 gets 100% "
+            "instead, since 1.0 lands on the fraction side of that boundary."
+        ),
+    )
     ttl_seconds: float = Field(gt=0, description="Time-to-live before recovery in seconds")
 
 
@@ -60,8 +73,17 @@ class FaultManager:
         self._held_connections: list[Any] = []
         self._stall_event = asyncio.Event()
         self._stall_event.set()
+        # Guards the active-fault-transition critical section (active_fault, expires_at,
+        # _timer_task, _leaked_buffers, _held_connections) against two sources of
+        # concurrency: overlapping admin apply_fault/clear_fault calls, and the
+        # independent _ttl_watcher background task clearing a fault out from under a
+        # fresh apply_fault. Without it, e.g. a TTL expiry racing a new apply_fault could
+        # cancel the new fault's timer instead of the old one, or drop a connection
+        # POOL_EXHAUSTION just appended while clear_fault is mid-iteration over the list.
+        self._state_lock = asyncio.Lock()
         if seed is None:
-            seed = int(os.getenv(FAULT_INJECTION_SEED_ENV, str(DEFAULT_FAULT_INJECTION_SEED)))
+            default_seed = get_services_settings().faults.injection_seed
+            seed = int(os.getenv(FAULT_INJECTION_SEED_ENV, str(default_seed)))
         self._rng = random.Random(seed)
 
     def get_active_fault(self) -> FaultRequest | None:
@@ -79,32 +101,43 @@ class FaultManager:
 
     async def apply_fault(self, fault: FaultRequest) -> None:
         """Apply a new fault and schedule TTL expiration."""
-        await self.clear_fault()
+        async with self._state_lock:
+            await self._clear_fault_locked()
 
-        self.active_fault = fault
-        self.expires_at = time.time() + fault.ttl_seconds
+            self.active_fault = fault
+            self.expires_at = time.time() + fault.ttl_seconds
 
-        # Kind-specific initialization
-        if fault.kind == FaultKind.MEMORY_LEAK:
-            # Allocate magnitude in MB
-            self._leaked_buffers.append(bytearray(int(fault.magnitude * 1024 * 1024)))
-        elif fault.kind == FaultKind.POOL_EXHAUSTION and self.pool is not None:
-            # Acquire connections to exhaust pool
-            count = max(1, int(fault.magnitude))
-            for _ in range(count):
-                try:
-                    conn = await self.pool.getconn(timeout=1.0)
-                    self._held_connections.append(conn)
-                except PoolTimeout:
-                    break
-        elif fault.kind == FaultKind.STALL:
-            self._stall_event.clear()
+            # Kind-specific initialization
+            if fault.kind == FaultKind.MEMORY_LEAK:
+                # Allocate magnitude in MB
+                self._leaked_buffers.append(bytearray(int(fault.magnitude * 1024 * 1024)))
+            elif fault.kind == FaultKind.POOL_EXHAUSTION and self.pool is not None:
+                # Acquire connections to exhaust pool
+                count = max(1, int(fault.magnitude))
+                getconn_timeout = (
+                    get_services_settings().faults.pool_exhaustion_getconn_timeout_seconds
+                )
+                for _ in range(count):
+                    try:
+                        conn = await self.pool.getconn(timeout=getconn_timeout)
+                        self._held_connections.append(conn)
+                    except PoolTimeout:
+                        break
+            elif fault.kind == FaultKind.STALL:
+                self._stall_event.clear()
 
-        # Schedule automatic TTL clearance
-        self._timer_task = asyncio.create_task(self._ttl_watcher(fault.ttl_seconds))
+            # Schedule automatic TTL clearance
+            self._timer_task = asyncio.create_task(self._ttl_watcher(fault.ttl_seconds))
 
     async def clear_fault(self) -> None:
         """Revert active faults and restore baseline state."""
+        async with self._state_lock:
+            await self._clear_fault_locked()
+
+    async def _clear_fault_locked(self) -> None:
+        """Revert active faults and restore baseline state. Caller must hold
+        _state_lock; apply_fault calls this directly (already holding the lock) instead
+        of the public clear_fault to avoid a self-deadlock on the non-reentrant Lock."""
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -147,6 +180,10 @@ class FaultManager:
             await asyncio.sleep(fault.magnitude / 1000.0)
 
         elif fault.kind == FaultKind.ERROR_RATE:
+            # magnitude is a fraction at <= 1.0, a percentage above it (see FaultRequest
+            # .magnitude docstring) -- this boundary is intentional and load-bearing for
+            # test_faults.py::test_fault_error_rate (1.0 and 100.0 both mean 100%), not a
+            # bug to "fix" by changing the comparison.
             rate = fault.magnitude if fault.magnitude <= 1.0 else (fault.magnitude / 100.0)
             if self._rng.random() < rate:
                 raise HTTPException(

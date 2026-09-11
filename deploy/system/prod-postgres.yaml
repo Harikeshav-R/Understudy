@@ -29,11 +29,11 @@ spec:
               name: postgres
           env:
             - name: POSTGRES_USER
-              value: "postgres"
+              value: postgres
             - name: POSTGRES_HOST_AUTH_METHOD
-              value: "trust"
+              value: trust
             - name: POSTGRES_DB
-              value: "ust_prod"
+              value: ust_prod
           resources:
             requests:
               cpu: 100m

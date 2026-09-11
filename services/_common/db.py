@@ -8,6 +8,8 @@ from psycopg import AsyncConnection
 from psycopg import Error as PsycopgError
 from psycopg_pool import AsyncConnectionPool
 
+from services._common.settings import get_services_settings
+
 
 def get_default_conninfo() -> str:
     """Return the database connection string from environment."""
@@ -19,17 +21,18 @@ def get_default_conninfo() -> str:
 
 def create_pool(
     conninfo: str | None = None,
-    min_size: int = 1,
-    max_size: int = 10,
-    timeout: float = 5.0,
+    min_size: int | None = None,
+    max_size: int | None = None,
+    timeout: float | None = None,
 ) -> AsyncConnectionPool:
     """Create an asynchronous Postgres connection pool."""
     dsn = conninfo or get_default_conninfo()
+    db_settings = get_services_settings().db
     return AsyncConnectionPool(
         conninfo=dsn,
-        min_size=min_size,
-        max_size=max_size,
-        timeout=timeout,
+        min_size=min_size if min_size is not None else db_settings.pool_min_size,
+        max_size=max_size if max_size is not None else db_settings.pool_max_size,
+        timeout=timeout if timeout is not None else db_settings.pool_timeout_seconds,
         open=False,
     )
 

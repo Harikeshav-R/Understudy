@@ -48,8 +48,8 @@ understudy/
 │   ├── k3d/                       # cluster config, registry
 │   ├── prod/                      # ust-prod manifests
 │   ├── system/                    # ust-system: postgres, prometheus, loki, mirror-gateway
-│   ├── twin/                      # twin manifest templates (rendered at fork time)
-│   └── policies/                  # RBAC, NetworkPolicies
+│   └── policies/                  # RBAC, NetworkPolicies, and their *.template.yaml
+│                                   # counterparts (rendered at fork time)
 ├── scenarios/                     # chaos corpus: seed/ and generated/
 ├── eval/                          # report.json, report.md (committed outputs)
 └── tests/
@@ -146,6 +146,13 @@ that package's `api.py`, and it is the only thing other packages may import.
 **Hard rule (ADR-005/006).** No package except `orchestrator` may import `langgraph`. No
 package except `store` may import `psycopg`/`sqlalchemy`. No package except `fleet`,
 `actuator` and `graph` may import `kubernetes`. Enforced by an import-linter rule in CI.
+
+**`actuator`'s RBAC ships ahead of it.** `deploy/policies/understudy-prod.yaml` defines the
+`understudy-prod` ServiceAccount/Role/RoleBinding that `actuator` will authenticate to the
+Kubernetes API as (ADR-028), from the agent's host process (§2.10) — not by being assumed
+as any pod's `serviceAccountName`. It is unreferenced by `deploy/prod/*.yaml` until
+`actuator/apply.py` (build-plan step 5.1/5.2) lands; that is expected, not dead
+configuration.
 
 ## 2.4 Contracts
 
@@ -358,11 +365,16 @@ tournament so twin and prod verdicts are measured identically.
 ## 2.5 The demo stack
 
 Four Python FastAPI services, hand-written (ADR: default accepted), deliberately small.
+Their `deploy/prod/{auth-service,data-service,edge-gateway,worker}.yaml` manifests are
+generated from one shared template by `deploy/generate_prod_manifests.py` (the same
+generate-don't-hand-maintain convention as the postgres manifests, §2.10) --
+`--check` (wired into `tests/unit/deploy/test_prod_manifests.py`) fails CI on drift.
+Edit `INSTANCES` in that script, not the YAML files directly.
 
 | Service | Role | Depends on | Fault knobs |
 |---|---|---|---|
 | `edge-gateway` | HTTP entry, fans out to auth then data | auth, data | latency, error rate, CPU spin |
-| `auth-service` | Token validation, in-memory cache over Postgres | data-db | latency, error rate, cache poisoning, memory leak |
+| `auth-service` | Token validation: seeded + synthetic tokens in-memory today (`# MOCKED:`, tracked in #16); Postgres-backed lookup not yet built | data-db | latency, error rate, cache poisoning, memory leak |
 | `data-service` | CRUD over Postgres, connection pool | postgres | pool exhaustion, latency, error rate, bad-deploy variant |
 | `worker` | Polls a job table (`FOR UPDATE SKIP LOCKED`), processes | postgres | stall, backlog growth, crash loop |
 
@@ -381,7 +393,9 @@ Every service exposes:
 `error_rate` fault outcomes are drawn from a `random.Random` seeded per process by the
 `FAULT_INJECTION_SEED` env var (default `1337`), never the unseeded global `random` module,
 so two runs of the same scenario with the same seed inject errors on the same requests
-(ADR-015, CLAUDE.md §5.7).
+(ADR-015, CLAUDE.md §5.7). In `deploy/prod`, this env var is sourced from the `app-config`
+ConfigMap (`deploy/prod/configmap.yaml`) via `configMapKeyRef` in each Deployment, which is
+the source of truth there; the `1337` code default only covers non-k8s/local runs.
 
 Each service ships two image tags: `:good` and `:regression`. The `:regression` tag of
 `data-service` contains a genuine performance regression (an N+1 query in the list
@@ -389,6 +403,42 @@ endpoint) so `BAD_DEPLOY` scenarios are real code differences, not simulated one
 
 **Feature flags** are ConfigMap keys read at request time (not startup), so
 `DISABLE_FLAG` and `REVERT_CONFIG` are meaningful actions with immediate effect.
+
+### 2.5.1 services/ tunables
+
+Every numeric/string tunable across `services/` is defined once in
+`services/_common/settings.py` (`ServicesSettings`, one frozen pydantic model per
+section) and layered from `config/services.yaml` → an optional, gitignored
+`config/services.local.yaml` → the field's environment variable. Access via
+`get_services_settings()`; `reset_services_settings()` is for tests only.
+
+| Section | Field | Default | Env var |
+|---|---|---|---|
+| `edge_gateway` | `http_timeout_seconds` | `5.0` | `HTTP_TIMEOUT_SECONDS` |
+| `auth_service` | `token_cache_max_size` | `1000` | `AUTH_TOKEN_CACHE_MAX_SIZE` |
+| `worker` | `poll_interval_seconds` | `1.0` | `POLL_INTERVAL_SECONDS` |
+| `worker` | `job_list_limit` | `50` | `WORKER_JOB_LIST_LIMIT` |
+| `loadgen` | `rps` | `20.0` | `LOADGEN_RPS` |
+| `loadgen` | `duration_seconds` | `30.0` | `LOADGEN_DURATION` |
+| `loadgen` | `seed` | `42` | `LOADGEN_SEED` |
+| `loadgen` | `auth_token` | `"valid-token"` | `LOADGEN_AUTH_TOKEN` |
+| `loadgen` | `http_timeout_seconds` | `10.0` | `LOADGEN_TIMEOUT` |
+| `loadgen` | `max_connections` | `200` | `LOADGEN_MAX_CONNECTIONS` |
+| `loadgen` | `max_keepalive_connections` | `50` | `LOADGEN_MAX_KEEPALIVE_CONNECTIONS` |
+| `loadgen` | `p99_sla_ms` | `400.0` | `LOADGEN_P99_SLA_MS` |
+| `db` | `pool_min_size` | `1` | `DB_POOL_MIN_SIZE` |
+| `db` | `pool_max_size` | `10` | `DB_POOL_MAX_SIZE` |
+| `db` | `pool_timeout_seconds` | `5.0` | `DB_POOL_TIMEOUT_SECONDS` |
+| `faults` | `injection_seed` | `1337` | `FAULT_INJECTION_SEED` |
+| `faults` | `pool_exhaustion_getconn_timeout_seconds` | `1.0` | `FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS` |
+| `metrics` | `histogram_buckets` | see `config/services.yaml` | none (edit the YAML) |
+
+`edge_gateway.http_timeout_seconds`, `auth_service.token_cache_max_size`,
+`worker.poll_interval_seconds`, and `faults.injection_seed` keep the exact env var
+names they used before this settings module existed (already wired into
+`deploy/prod/*.yaml`'s `env`/`configMapKeyRef` entries and `loadgen`'s own CLI flag
+fallbacks) rather than a new naming scheme, so already-deployed configuration keeps
+working unchanged.
 
 ## 2.6 Probes, recovery, blast radius
 
@@ -482,6 +532,15 @@ Docker Desktop allocated 12 GB of the 18 GB. Budget lines are enforced as Kubern
 | `mirror-gateway` | 1 | 250 MB | 250 MB |
 | `egress-stub`, `loadgen` | 2 | 100 MB | 200 MB |
 | **Cluster total** | | | **≈ 6.4 GB** |
+
+`prod-postgres.yaml`, `twin-postgres.yaml`, and `system-postgres.yaml`
+(`deploy/system/`) are generated from one shared template by
+`deploy/generate_postgres_manifests.py` rather than maintained as three
+independently hand-edited files. They're still committed, plain YAML -- nothing in
+`make up`/`kubectl apply` runs the generator at deploy time; `--check` (wired into
+`tests/unit/deploy/test_system_manifests.py`) fails CI if a committed file drifts
+from what the generator would produce. Edit `INSTANCES` in that script, not the YAML
+files directly.
 | Understudy agent (host process) | 1 | — | ~600 MB |
 
 Headroom is deliberate: shadow mode may hold twins while an incident arrives, and Phase 6

@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI, Request, Response
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
+    CollectorRegistry,
     Counter,
     Histogram,
     Info,
@@ -13,30 +14,44 @@ from prometheus_client import (
 )
 
 from services._common.role_guard import get_service_role
-
-# Metrics definitions
-REQUEST_COUNT = Counter(
-    "http_requests_total",
-    "Total number of HTTP requests processed",
-    ["service", "method", "endpoint", "status_code"],
-)
-
-REQUEST_DURATION = Histogram(
-    "http_request_duration_seconds",
-    "HTTP request latency in seconds",
-    ["service", "method", "endpoint"],
-    buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.4, 0.5, 1.0, 2.0, 5.0),
-)
-
-SERVICE_INFO = Info(
-    "understudy_service",
-    "Understudy demo service information",
-)
+from services._common.settings import get_services_settings
 
 
-def setup_metrics(app: FastAPI, service_name: str) -> None:
-    """Attach metrics middleware and /metrics scraping route to the FastAPI application."""
-    SERVICE_INFO.info({"service": service_name, "role": get_service_role()})
+def setup_metrics(
+    app: FastAPI, service_name: str, registry: CollectorRegistry | None = None
+) -> None:
+    """Attach metrics middleware and /metrics scraping route to the FastAPI application.
+
+    Builds its own CollectorRegistry (and Counter/Histogram/Info instances against it)
+    per call rather than sharing process-wide globals. Every service's app.py calls this
+    once at import time, and every service test file imports its app module into the
+    same pytest process -- module-level globals here would mean whichever service (or
+    test) called setup_metrics last determines what /metrics reports for the rest of the
+    run, and counters/histograms would accumulate across unrelated services' tests.
+    `registry` is exposed so tests can pass their own to assert in isolation; production
+    call sites omit it and get a fresh one.
+    """
+    metrics_registry = registry if registry is not None else CollectorRegistry()
+
+    request_count = Counter(
+        "http_requests_total",
+        "Total number of HTTP requests processed",
+        ["service", "method", "endpoint", "status_code"],
+        registry=metrics_registry,
+    )
+    request_duration = Histogram(
+        "http_request_duration_seconds",
+        "HTTP request latency in seconds",
+        ["service", "method", "endpoint"],
+        buckets=get_services_settings().metrics.histogram_buckets,
+        registry=metrics_registry,
+    )
+    service_info = Info(
+        "understudy_service",
+        "Understudy demo service information",
+        registry=metrics_registry,
+    )
+    service_info.info({"service": service_name, "role": get_service_role()})
 
     @app.middleware("http")
     async def metrics_middleware(
@@ -58,13 +73,13 @@ def setup_metrics(app: FastAPI, service_name: str) -> None:
             return response
         finally:
             duration = time.monotonic() - start_time
-            REQUEST_COUNT.labels(
+            request_count.labels(
                 service=service_name,
                 method=method,
                 endpoint=path,
                 status_code=str(status_code),
             ).inc()
-            REQUEST_DURATION.labels(
+            request_duration.labels(
                 service=service_name,
                 method=method,
                 endpoint=path,
@@ -72,4 +87,4 @@ def setup_metrics(app: FastAPI, service_name: str) -> None:
 
     @app.get("/metrics", tags=["Observability"])
     async def metrics() -> Response:
-        return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+        return Response(content=generate_latest(metrics_registry), media_type=CONTENT_TYPE_LATEST)

@@ -1,0 +1,36 @@
+# Defaults for services/ tunables. Layered by services/_common/settings.py:
+# this file -> config/services.local.yaml (gitignored, optional) -> environment
+# variables (see settings.py's _ENV_OVERRIDES for the env var name per field).
+
+edge_gateway:
+  http_timeout_seconds: 5.0
+
+auth_service:
+  token_cache_max_size: 1000
+
+worker:
+  poll_interval_seconds: 1.0
+  job_list_limit: 50
+
+loadgen:
+  rps: 20.0
+  duration_seconds: 30.0
+  seed: 42
+  auth_token: "valid-token"
+  http_timeout_seconds: 10.0
+  max_connections: 200
+  max_keepalive_connections: 50
+  p99_sla_ms: 400.0
+
+db:
+  pool_min_size: 1
+  pool_max_size: 10
+  pool_timeout_seconds: 5.0
+
+faults:
+  injection_seed: 1337
+  pool_exhaustion_getconn_timeout_seconds: 1.0
+
+metrics:
+  histogram_buckets:
+    [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.4, 0.5, 1.0, 2.0, 5.0]

@@ -11,15 +11,14 @@ from fastapi import FastAPI, Header, HTTPException, Response, status
 from services._common import (
     FaultManager,
     check_twin_outbound_target,
-    setup_fault_middleware,
-    setup_fault_routes,
+    create_service_app,
     setup_health_routes,
-    setup_metrics,
 )
+from services._common.settings import get_services_settings
 
 AUTH_SERVICE_URL = os.getenv("AUTH_SERVICE_URL", "http://auth-service:8000").rstrip("/")
 DATA_SERVICE_URL = os.getenv("DATA_SERVICE_URL", "http://data-service:8000").rstrip("/")
-HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "5.0"))
+HTTP_TIMEOUT_SECONDS = get_services_settings().edge_gateway.http_timeout_seconds
 
 fault_manager = FaultManager()
 
@@ -34,10 +33,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await app.state.http_client.aclose()
 
 
-app = FastAPI(title="edge-gateway", lifespan=lifespan)
-setup_metrics(app, "edge-gateway")
-setup_fault_middleware(app, fault_manager)
-setup_fault_routes(app, fault_manager)
+app = create_service_app("edge-gateway", fault_manager, lifespan)
 
 
 async def check_auth_reachability() -> bool:
@@ -107,7 +103,8 @@ async def get_items(
             detail=data_resp.text,
         )
 
-    return data_resp.json()  # type: ignore[no-any-return]
+    items: dict[str, Any] = data_resp.json()
+    return items
 
 
 @app.post("/api/items", tags=["Items"], status_code=status.HTTP_201_CREATED)
@@ -149,4 +146,5 @@ async def create_item(
         ) from exc
 
     response.status_code = data_resp.status_code
-    return data_resp.json()  # type: ignore[no-any-return]
+    created_item: dict[str, Any] = data_resp.json()
+    return created_item

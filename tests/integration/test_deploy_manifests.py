@@ -61,3 +61,40 @@ def test_kubectl_dry_run_system_manifests() -> None:
         check=False,
     )
     assert res.returncode == 0, f"kubectl dry-run on deploy/system/ failed:\n{res.stderr}"
+
+
+@pytest.mark.integration
+def test_kubectl_dry_run_policy_manifests() -> None:
+    """Verify that deploy/policies manifests are accepted by kubectl dry-run."""
+    if not _cluster_available():
+        pytest.skip("Kubernetes cluster is not reachable (requires running cluster / make up)")
+
+    policy_files = [
+        "deploy/policies/understudy-prod.yaml",
+        "deploy/policies/understudy-twin.yaml",
+    ]
+    args = ["kubectl", "apply", "--dry-run=client"]
+    for f in policy_files:
+        args.extend(["-f", f])
+
+    res = subprocess.run(args, capture_output=True, text=True, check=False)
+    assert res.returncode == 0, f"kubectl dry-run on deploy/policies/ failed:\n{res.stderr}"
+
+    # Verify twin-network-policy in a default namespace
+    res_np = subprocess.run(
+        [
+            "kubectl",
+            "apply",
+            "--dry-run=client",
+            "-n",
+            "default",
+            "-f",
+            "deploy/policies/twin-network-policy.yaml",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert res_np.returncode == 0, (
+        f"kubectl dry-run on twin-network-policy.yaml failed:\n{res_np.stderr}"
+    )

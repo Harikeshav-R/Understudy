@@ -198,7 +198,7 @@ async def test_data_lifespan_with_db(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(data_module, "DATABASE_URL", "postgresql://fake:5432/db")
     mock_pool = AsyncMock()
     with (
-        patch("services.data_service.app.create_pool", return_value=mock_pool),
+        patch("services._common.bootstrap.create_pool", return_value=mock_pool),
         patch(
             "services.data_service.app.init_db",
             side_effect=psycopg.OperationalError("db init error"),

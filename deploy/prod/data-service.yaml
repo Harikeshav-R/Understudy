@@ -19,11 +19,11 @@ spec:
         app: data-service
         app.kubernetes.io/name: data-service
         app.kubernetes.io/part-of: understudy
-        understudy.dev/scrape: "true"
+        understudy.dev/scrape: 'true'
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8000'
+        prometheus.io/path: /metrics
     spec:
       containers:
         - name: data-service
@@ -34,11 +34,16 @@ spec:
               name: http
           env:
             - name: UNDERSTUDY_ROLE
-              value: "prod"
+              value: prod
             - name: DATABASE_URL
-              value: "postgresql://postgres@prod-postgres:5432/ust_prod"
+              value: postgresql://postgres@prod-postgres:5432/ust_prod
             - name: DATA_SERVICE_VARIANT
-              value: "good"
+              value: good
+            - name: FAULT_INJECTION_SEED
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: FAULT_INJECTION_SEED
           resources:
             requests:
               cpu: 50m

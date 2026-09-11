@@ -1,0 +1,48 @@
+# This ServiceAccount/Role/RoleBinding is intentionally not referenced by any pod's
+# `serviceAccountName` in deploy/prod/*.yaml. It is not dead: per ADR-028
+# (docs/01-decisions.md), the actuator authenticates to the Kubernetes API directly as
+# this ServiceAccount from outside the cluster (docs/02-architecture.md §2.10 documents
+# the agent host process as running off-cluster), to patch Deployments/ConfigMaps for
+# actuation actions — not by being assumed as pod identity. This RBAC ships ahead of its
+# consumer (build-plan step A1.7, actuator/apply.py is step 5.1/5.2, still unbuilt).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: understudy-prod
+  namespace: ust-prod
+  labels:
+    app.kubernetes.io/part-of: understudy
+    environment: production
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: understudy-prod
+  namespace: ust-prod
+  labels:
+    app.kubernetes.io/part-of: understudy
+    environment: production
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "patch", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: understudy-prod
+  namespace: ust-prod
+  labels:
+    app.kubernetes.io/part-of: understudy
+    environment: production
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: understudy-prod
+subjects:
+  - kind: ServiceAccount
+    name: understudy-prod
+    namespace: ust-prod

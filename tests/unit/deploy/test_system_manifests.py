@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from deploy import generate_postgres_manifests as pg_generator
 
 
 def _load_manifests(file_path: Path) -> list[dict[str, Any]]:
@@ -97,6 +98,14 @@ def test_system_postgres_manifest() -> None:
     assert svc["spec"]["type"] == "LoadBalancer"
     ports = {p["name"]: p["port"] for p in svc["spec"]["ports"]}
     assert ports.get("host-port") == 5434
+
+
+def test_postgres_manifests_match_generator() -> None:
+    """deploy/generate_postgres_manifests.py must produce exactly what's committed for
+    all three postgres manifests -- this is what keeps them from drifting apart
+    independently, replacing the manual-diff burden a human previously had to do by
+    hand across three near-identical files."""
+    assert pg_generator.check_drift() == []
 
 
 def test_prometheus_manifest() -> None:
