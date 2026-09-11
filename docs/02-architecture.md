@@ -482,6 +482,15 @@ Docker Desktop allocated 12 GB of the 18 GB. Budget lines are enforced as Kubern
 | `mirror-gateway` | 1 | 250 MB | 250 MB |
 | `egress-stub`, `loadgen` | 2 | 100 MB | 200 MB |
 | **Cluster total** | | | **≈ 6.4 GB** |
+
+`prod-postgres.yaml`, `twin-postgres.yaml`, and `system-postgres.yaml`
+(`deploy/system/`) are generated from one shared template by
+`deploy/generate_postgres_manifests.py` rather than maintained as three
+independently hand-edited files. They're still committed, plain YAML -- nothing in
+`make up`/`kubectl apply` runs the generator at deploy time; `--check` (wired into
+`tests/unit/deploy/test_system_manifests.py`) fails CI if a committed file drifts
+from what the generator would produce. Edit `INSTANCES` in that script, not the YAML
+files directly.
 | Understudy agent (host process) | 1 | — | ~600 MB |
 
 Headroom is deliberate: shadow mode may hold twins while an incident arrives, and Phase 6
