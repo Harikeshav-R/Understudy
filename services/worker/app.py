@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from psycopg import Error as PsycopgError
 from psycopg_pool import AsyncConnectionPool
 
@@ -96,12 +96,31 @@ async def process_one_job(pool: AsyncConnectionPool | None) -> bool:
         return False
 
 
+async def _worker_iteration() -> None:
+    """Run one poll-and-process cycle, honoring whatever fault is currently active.
+
+    Factored out of worker_loop so it can be exercised directly under test without
+    driving a real polling loop. pre_request_hook's ERROR_RATE branch raises
+    HTTPException, which is meaningful in an HTTP handler but has no response to attach
+    to here; treat it the same way a real job-processing failure is treated (log and
+    skip this iteration's job) rather than letting it crash the polling task.
+    """
+    await fault_manager.wait_if_stalled()
+    try:
+        await fault_manager.pre_request_hook()
+    except HTTPException as exc:
+        logger.warning("worker_fault_injected", detail=exc.detail)
+        return
+    await process_one_job(db_pool)
+
+
 async def worker_loop() -> None:
-    """Continuous polling loop that honors active stall faults."""
+    """Continuous polling loop that honors active faults (stall, latency, error_rate,
+    cpu_spin) applied via /admin/fault. Previously only consulted wait_if_stalled, so
+    every other fault kind was a no-op against job processing."""
     while True:
         try:
-            await fault_manager.wait_if_stalled()
-            await process_one_job(db_pool)
+            await _worker_iteration()
         except asyncio.CancelledError:
             break
         await asyncio.sleep(POLL_INTERVAL_SECONDS)

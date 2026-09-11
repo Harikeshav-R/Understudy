@@ -9,9 +9,12 @@ import psycopg
 import pytest
 
 import services.worker.app as worker_module
+from services._common.faults import FaultKind, FaultRequest
 from services.worker.app import (
+    _worker_iteration,
     app,
     check_db_readiness,
+    fault_manager,
     init_worker_db,
     process_one_job,
     worker_loop,
@@ -108,6 +111,35 @@ async def test_worker_loop_propagates_unexpected_errors() -> None:
         pytest.raises(RuntimeError),
     ):
         await worker_loop()
+
+
+@pytest.mark.asyncio
+async def test_worker_iteration_applies_error_rate_fault() -> None:
+    """Previously worker_loop never called pre_request_hook, so ERROR_RATE (and
+    LATENCY/CPU_SPIN) faults were no-ops against job processing -- only STALL worked, via
+    the separate wait_if_stalled call. A magnitude of 1.0 always triggers (see
+    faults.py's fraction/percentage convention), so the job must be skipped, not
+    processed, on every iteration while the fault is active."""
+    worker_module.IN_MEMORY_JOBS = [{"id": 1, "payload": "task", "status": "pending"}]
+    await fault_manager.apply_fault(
+        FaultRequest(kind=FaultKind.ERROR_RATE, magnitude=1.0, ttl_seconds=10)
+    )
+    try:
+        with patch("services.worker.app.process_one_job") as mock_process:
+            await _worker_iteration()
+            mock_process.assert_not_called()
+        assert worker_module.IN_MEMORY_JOBS[0]["status"] == "pending"
+    finally:
+        await fault_manager.clear_fault()
+
+
+@pytest.mark.asyncio
+async def test_worker_iteration_no_fault_processes_job() -> None:
+    """With no active fault, pre_request_hook is a no-op and the job is processed exactly
+    as before this fault-injection gap was fixed."""
+    worker_module.IN_MEMORY_JOBS = [{"id": 1, "payload": "task", "status": "pending"}]
+    await _worker_iteration()
+    assert worker_module.IN_MEMORY_JOBS[0]["status"] == "completed"
 
 
 @pytest.mark.asyncio
