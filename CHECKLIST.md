@@ -77,12 +77,12 @@ Phase 0 is not done.
 
 ## Phase 1A — Cluster and demo stack (Stream A)  **[P0]**
 
-- [ ] A1.1 `deploy/k3d/cluster.yaml`, local registry, `make cluster-up` / `cluster-down`
-- [ ] A1.2 Four FastAPI demo services + `services/_common/` (metrics, health, role guard)
-- [ ] A1.3 Fault injection endpoints, all six kinds, with the prod-role guard
-- [ ] A1.4 `:regression` image variant of data-service with the real N+1 query
-- [ ] A1.5 `deploy/prod/` manifests with limits per architecture §2.10, `dependencies.yaml`
-- [ ] A1.6 `deploy/system/`: three Postgres instances, Prometheus, Loki + promtail
+- [x] A1.1 `deploy/k3d/cluster.yaml`, local registry, `make cluster-up` / `cluster-down`
+- [x] A1.2 Four FastAPI demo services + `services/_common/` (metrics, health, role guard)
+- [x] A1.3 Fault injection endpoints, all six kinds, with the prod-role guard
+- [x] A1.4 `:regression` image variant of data-service with the real N+1 query
+- [x] A1.5 `deploy/prod/` manifests with limits per architecture §2.10, `dependencies.yaml`
+- [x] A1.6 `deploy/system/`: three Postgres instances, Prometheus, Loki + promtail
 - [ ] A1.7 `deploy/policies/`: ServiceAccounts, Roles, twin NetworkPolicy template
 - [ ] A1.8 `services/loadgen/` seeded deterministic generator
 

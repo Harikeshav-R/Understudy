@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: feature-flags
+  namespace: ust-prod
+  labels:
+    app.kubernetes.io/part-of: understudy
+    app.kubernetes.io/component: config
+data:
+  enable_recommendations: "true"
+  enable_fast_cache: "true"
+  enable_v2_catalogue: "false"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: ust-prod
+  labels:
+    app.kubernetes.io/part-of: understudy
+    app.kubernetes.io/component: config
+data:
+  ENVIRONMENT: "production"
+  LOG_LEVEL: "INFO"
+  FAULT_INJECTION_SEED: "1337"

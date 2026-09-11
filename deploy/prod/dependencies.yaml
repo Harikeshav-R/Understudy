@@ -1,0 +1,28 @@
+version: "1"
+services:
+  - name: edge-gateway
+    description: "Public HTTP ingress and coordinator"
+    depends_on:
+      - auth-service
+      - data-service
+  - name: auth-service
+    description: "Credential and token validation"
+    depends_on:
+      - data-service
+  - name: data-service
+    description: "Item catalogue CRUD over PostgreSQL"
+    depends_on: []
+  - name: worker
+    description: "Asynchronous queue consumer"
+    depends_on:
+      - data-service
+
+edges:
+  - source: edge-gateway
+    target: auth-service
+  - source: edge-gateway
+    target: data-service
+  - source: auth-service
+    target: data-service
+  - source: worker
+    target: data-service

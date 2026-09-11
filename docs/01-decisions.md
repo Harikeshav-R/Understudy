@@ -52,6 +52,9 @@ Python's reach at demo scale (hundreds of RPS, not tens of thousands).
 language for both, and rejected only because a second toolchain, a second test runner and
 a second CI lane cost more than they buy here. If the mirror gateway ever becomes the
 bottleneck, ADR-018 says what to do instead.
+**HTTP framework for demo stack.** FastAPI and Uvicorn (`services` dependency group in
+`pyproject.toml`) provide the ASGI runtime for the four demo services, mirror gateway, and
+webhook endpoints per architecture §2.5.
 
 ---
 

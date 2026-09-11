@@ -378,6 +378,11 @@ Every service exposes:
   unless `UNDERSTUDY_FAULT_INJECTION_ENABLED=true`, which the eval harness sets)
 - `DELETE /admin/fault` — clear
 
+`error_rate` fault outcomes are drawn from a `random.Random` seeded per process by the
+`FAULT_INJECTION_SEED` env var (default `1337`), never the unseeded global `random` module,
+so two runs of the same scenario with the same seed inject errors on the same requests
+(ADR-015, CLAUDE.md §5.7).
+
 Each service ships two image tags: `:good` and `:regression`. The `:regression` tag of
 `data-service` contains a genuine performance regression (an N+1 query in the list
 endpoint) so `BAD_DEPLOY` scenarios are real code differences, not simulated ones.
