@@ -19,11 +19,11 @@ spec:
         app: edge-gateway
         app.kubernetes.io/name: edge-gateway
         app.kubernetes.io/part-of: understudy
-        understudy.dev/scrape: "true"
+        understudy.dev/scrape: 'true'
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8000'
+        prometheus.io/path: /metrics
     spec:
       containers:
         - name: edge-gateway
@@ -34,15 +34,15 @@ spec:
               name: http
           env:
             - name: UNDERSTUDY_ROLE
-              value: "prod"
+              value: prod
             - name: UNDERSTUDY_FAULT_INJECTION_ENABLED
-              value: "false"
+              value: 'false'
             - name: AUTH_SERVICE_URL
-              value: "http://auth-service:8000"
+              value: http://auth-service:8000
             - name: DATA_SERVICE_URL
-              value: "http://data-service:8000"
+              value: http://data-service:8000
             - name: HTTP_TIMEOUT_SECONDS
-              value: "5.0"
+              value: '5.0'
             - name: FAULT_INJECTION_SEED
               valueFrom:
                 configMapKeyRef:

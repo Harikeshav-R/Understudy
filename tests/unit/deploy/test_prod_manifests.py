@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from deploy import generate_prod_manifests as prod_generator
 
 
 def _load_manifests(file_path: Path) -> list[dict[str, Any]]:
@@ -121,6 +122,13 @@ def test_prod_demo_service_workloads() -> None:
         # Verify probes
         assert "livenessProbe" in c, f"{fname} must configure livenessProbe"
         assert "readinessProbe" in c, f"{fname} must configure readinessProbe"
+
+
+def test_prod_service_manifests_match_generator() -> None:
+    """deploy/generate_prod_manifests.py must produce exactly what's committed for all
+    four prod service manifests -- this is what keeps them from drifting apart
+    independently."""
+    assert prod_generator.check_drift() == []
 
 
 def test_edge_gateway_service_ports() -> None:

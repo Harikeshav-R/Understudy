@@ -358,6 +358,11 @@ tournament so twin and prod verdicts are measured identically.
 ## 2.5 The demo stack
 
 Four Python FastAPI services, hand-written (ADR: default accepted), deliberately small.
+Their `deploy/prod/{auth-service,data-service,edge-gateway,worker}.yaml` manifests are
+generated from one shared template by `deploy/generate_prod_manifests.py` (the same
+generate-don't-hand-maintain convention as the postgres manifests, §2.10) --
+`--check` (wired into `tests/unit/deploy/test_prod_manifests.py`) fails CI on drift.
+Edit `INSTANCES` in that script, not the YAML files directly.
 
 | Service | Role | Depends on | Fault knobs |
 |---|---|---|---|

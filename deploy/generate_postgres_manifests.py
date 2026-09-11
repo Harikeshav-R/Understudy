@@ -33,28 +33,15 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SYSTEM_DIR = REPO_ROOT / "deploy" / "system"
 
+# Runnable directly (`python deploy/generate_postgres_manifests.py`) as well as
+# importable as `deploy.generate_postgres_manifests` (from tests); only the direct-run
+# case needs the repo root added to sys.path for the absolute `deploy.*` import below.
+if __package__ in (None, ""):
+    sys.path.insert(0, str(REPO_ROOT))
 
-class _IndentedDumper(yaml.SafeDumper):
-    """PyYAML's default dump doesn't indent list items under their parent key, which
-    reads worse than every hand-written manifest elsewhere in deploy/. Force it."""
-
-    def increase_indent(self, flow: bool = False, indentless: bool = False) -> None:
-        return super().increase_indent(flow, False)
-
-
-class _LiteralStr(str):
-    """A str that _IndentedDumper renders as a literal block scalar (`|`), matching
-    how init.sql is hand-written elsewhere, instead of PyYAML's default single-quoted
-    style for a string containing a newline."""
-
-
-def _represent_literal_str(dumper: _IndentedDumper, data: "_LiteralStr") -> yaml.Node:
-    return dumper.represent_scalar("tag:yaml.org,2002:str", data, style="|")
-
-
-_IndentedDumper.add_representer(_LiteralStr, _represent_literal_str)
-
-_PART_OF_LABEL = {"app.kubernetes.io/part-of": "understudy"}
+from deploy._manifest_gen_common import PART_OF_LABEL as _PART_OF_LABEL  # noqa: E402
+from deploy._manifest_gen_common import LiteralStr as _LiteralStr  # noqa: E402
+from deploy._manifest_gen_common import dump_documents  # noqa: E402
 
 
 def _probe(db_name: str) -> dict[str, Any]:
@@ -221,11 +208,7 @@ INSTANCES: dict[str, dict[str, Any]] = {
 
 def render(filename: str) -> str:
     """Render one deploy/system/<filename>.yaml's full text."""
-    docs = build_manifest(**INSTANCES[filename])
-    return "---\n".join(
-        yaml.dump(doc, Dumper=_IndentedDumper, default_flow_style=False, sort_keys=False)
-        for doc in docs
-    )
+    return dump_documents(build_manifest(**INSTANCES[filename]))
 
 
 def check_drift() -> list[str]:

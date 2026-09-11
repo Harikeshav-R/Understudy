@@ -19,11 +19,11 @@ spec:
         app: auth-service
         app.kubernetes.io/name: auth-service
         app.kubernetes.io/part-of: understudy
-        understudy.dev/scrape: "true"
+        understudy.dev/scrape: 'true'
       annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "8000"
-        prometheus.io/path: "/metrics"
+        prometheus.io/scrape: 'true'
+        prometheus.io/port: '8000'
+        prometheus.io/path: /metrics
     spec:
       containers:
         - name: auth-service
@@ -34,11 +34,11 @@ spec:
               name: http
           env:
             - name: UNDERSTUDY_ROLE
-              value: "prod"
+              value: prod
             - name: DATABASE_URL
-              value: "postgresql://postgres@prod-postgres:5432/ust_prod"
+              value: postgresql://postgres@prod-postgres:5432/ust_prod
             - name: AUTH_TOKEN_CACHE_MAX_SIZE
-              value: "1000"
+              value: '1000'
             - name: FAULT_INJECTION_SEED
               valueFrom:
                 configMapKeyRef:
