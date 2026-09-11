@@ -39,6 +39,11 @@ spec:
               value: "postgresql://postgres@prod-postgres:5432/ust_prod"
             - name: POLL_INTERVAL_SECONDS
               value: "1.0"
+            - name: FAULT_INJECTION_SEED
+              valueFrom:
+                configMapKeyRef:
+                  name: app-config
+                  key: FAULT_INJECTION_SEED
           resources:
             requests:
               cpu: 50m

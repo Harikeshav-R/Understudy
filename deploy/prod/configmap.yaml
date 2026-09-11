@@ -1,3 +1,9 @@
+# enable_recommendations / enable_fast_cache / enable_v2_catalogue are intentionally not
+# wired into any Deployment yet. docs/02-architecture.md §2.5 requires feature flags to be
+# read live at request time (not from a startup-time env var), which needs the actuator's
+# DISABLE_FLAG/REVERT_CONFIG live-read mechanism (build-plan Phase 5, still unbuilt). An
+# envFrom/configMapKeyRef today would only take effect at pod start, contradicting that
+# design, so these keys wait for Phase 5 rather than being wired in early.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -11,6 +17,11 @@ data:
   enable_fast_cache: "true"
   enable_v2_catalogue: "false"
 ---
+# ENVIRONMENT / LOG_LEVEL are unwired for the same reason as feature-flags above (nothing
+# in services/ currently reads them). FAULT_INJECTION_SEED *is* wired into all four
+# deploy/prod/*.yaml Deployments via configMapKeyRef, and is the source of truth in prod;
+# services/_common/faults.py's DEFAULT_FAULT_INJECTION_SEED stays only as the non-k8s/local
+# fallback.
 apiVersion: v1
 kind: ConfigMap
 metadata:
