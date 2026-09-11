@@ -48,8 +48,8 @@ understudy/
 │   ├── k3d/                       # cluster config, registry
 │   ├── prod/                      # ust-prod manifests
 │   ├── system/                    # ust-system: postgres, prometheus, loki, mirror-gateway
-│   ├── twin/                      # twin manifest templates (rendered at fork time)
-│   └── policies/                  # RBAC, NetworkPolicies
+│   └── policies/                  # RBAC, NetworkPolicies, and their *.template.yaml
+│                                   # counterparts (rendered at fork time)
 ├── scenarios/                     # chaos corpus: seed/ and generated/
 ├── eval/                          # report.json, report.md (committed outputs)
 └── tests/

@@ -160,3 +160,25 @@ def test_twin_network_policy_template() -> None:
     assert np["kind"] == "NetworkPolicy"
     assert np["metadata"]["namespace"] == "ust-twin-inc-0"
     assert np["metadata"]["name"] == "twin-egress-containment"
+
+
+def test_twin_network_policy_golden_matches_template() -> None:
+    """The golden copy (applied with `kubectl apply -n <namespace>`, so it carries no
+    namespace of its own) and the template (rendered at fork time, so it carries
+    `namespace: ${TWIN_NAMESPACE}`) must agree on everything else. Neither file is
+    generated from the other, so nothing else catches the two drifting apart if an
+    egress rule is edited in one and not mirrored in the other."""
+    golden = _load_manifests(Path("deploy/policies/twin-network-policy.yaml"))[0]
+    template_content = Path("deploy/policies/twin-network-policy.template.yaml").read_text()
+    rendered = template_content.replace("${TWIN_NAMESPACE}", "ust-twin-inc-0")
+    template = next(d for d in yaml.safe_load_all(rendered) if d is not None)
+
+    assert "namespace" not in golden["metadata"]
+    assert template["metadata"]["namespace"] == "ust-twin-inc-0"
+
+    golden_metadata = {k: v for k, v in golden["metadata"].items() if k != "namespace"}
+    template_metadata = {k: v for k, v in template["metadata"].items() if k != "namespace"}
+    assert golden_metadata == template_metadata
+    assert golden["spec"] == template["spec"]
+    assert golden["apiVersion"] == template["apiVersion"]
+    assert golden["kind"] == template["kind"]
