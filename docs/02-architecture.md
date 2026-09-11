@@ -147,6 +147,13 @@ that package's `api.py`, and it is the only thing other packages may import.
 package except `store` may import `psycopg`/`sqlalchemy`. No package except `fleet`,
 `actuator` and `graph` may import `kubernetes`. Enforced by an import-linter rule in CI.
 
+**`actuator`'s RBAC ships ahead of it.** `deploy/policies/understudy-prod.yaml` defines the
+`understudy-prod` ServiceAccount/Role/RoleBinding that `actuator` will authenticate to the
+Kubernetes API as (ADR-028), from the agent's host process (§2.10) — not by being assumed
+as any pod's `serviceAccountName`. It is unreferenced by `deploy/prod/*.yaml` until
+`actuator/apply.py` (build-plan step 5.1/5.2) lands; that is expected, not dead
+configuration.
+
 ## 2.4 Contracts
 
 These are the frozen types. They are written here in full because both workstreams code
