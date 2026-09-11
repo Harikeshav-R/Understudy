@@ -60,6 +60,14 @@ class FaultManager:
         self._held_connections: list[Any] = []
         self._stall_event = asyncio.Event()
         self._stall_event.set()
+        # Guards the active-fault-transition critical section (active_fault, expires_at,
+        # _timer_task, _leaked_buffers, _held_connections) against two sources of
+        # concurrency: overlapping admin apply_fault/clear_fault calls, and the
+        # independent _ttl_watcher background task clearing a fault out from under a
+        # fresh apply_fault. Without it, e.g. a TTL expiry racing a new apply_fault could
+        # cancel the new fault's timer instead of the old one, or drop a connection
+        # POOL_EXHAUSTION just appended while clear_fault is mid-iteration over the list.
+        self._state_lock = asyncio.Lock()
         if seed is None:
             seed = int(os.getenv(FAULT_INJECTION_SEED_ENV, str(DEFAULT_FAULT_INJECTION_SEED)))
         self._rng = random.Random(seed)
@@ -79,32 +87,40 @@ class FaultManager:
 
     async def apply_fault(self, fault: FaultRequest) -> None:
         """Apply a new fault and schedule TTL expiration."""
-        await self.clear_fault()
+        async with self._state_lock:
+            await self._clear_fault_locked()
 
-        self.active_fault = fault
-        self.expires_at = time.time() + fault.ttl_seconds
+            self.active_fault = fault
+            self.expires_at = time.time() + fault.ttl_seconds
 
-        # Kind-specific initialization
-        if fault.kind == FaultKind.MEMORY_LEAK:
-            # Allocate magnitude in MB
-            self._leaked_buffers.append(bytearray(int(fault.magnitude * 1024 * 1024)))
-        elif fault.kind == FaultKind.POOL_EXHAUSTION and self.pool is not None:
-            # Acquire connections to exhaust pool
-            count = max(1, int(fault.magnitude))
-            for _ in range(count):
-                try:
-                    conn = await self.pool.getconn(timeout=1.0)
-                    self._held_connections.append(conn)
-                except PoolTimeout:
-                    break
-        elif fault.kind == FaultKind.STALL:
-            self._stall_event.clear()
+            # Kind-specific initialization
+            if fault.kind == FaultKind.MEMORY_LEAK:
+                # Allocate magnitude in MB
+                self._leaked_buffers.append(bytearray(int(fault.magnitude * 1024 * 1024)))
+            elif fault.kind == FaultKind.POOL_EXHAUSTION and self.pool is not None:
+                # Acquire connections to exhaust pool
+                count = max(1, int(fault.magnitude))
+                for _ in range(count):
+                    try:
+                        conn = await self.pool.getconn(timeout=1.0)
+                        self._held_connections.append(conn)
+                    except PoolTimeout:
+                        break
+            elif fault.kind == FaultKind.STALL:
+                self._stall_event.clear()
 
-        # Schedule automatic TTL clearance
-        self._timer_task = asyncio.create_task(self._ttl_watcher(fault.ttl_seconds))
+            # Schedule automatic TTL clearance
+            self._timer_task = asyncio.create_task(self._ttl_watcher(fault.ttl_seconds))
 
     async def clear_fault(self) -> None:
         """Revert active faults and restore baseline state."""
+        async with self._state_lock:
+            await self._clear_fault_locked()
+
+    async def _clear_fault_locked(self) -> None:
+        """Revert active faults and restore baseline state. Caller must hold
+        _state_lock; apply_fault calls this directly (already holding the lock) instead
+        of the public clear_fault to avoid a self-deadlock on the non-reentrant Lock."""
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

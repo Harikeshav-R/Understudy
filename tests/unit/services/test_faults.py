@@ -189,6 +189,45 @@ async def test_fault_pool_exhaustion_errors_handled() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fault_concurrent_apply_and_clear_stays_consistent() -> None:
+    """Concurrent admin apply_fault/clear_fault calls (or one racing the independent
+    _ttl_watcher background task) must never leave active_fault/expires_at/_timer_task
+    in a torn state -- the transition is guarded by an asyncio.Lock precisely to
+    prevent a fault that is "half applied" (e.g. active_fault set but no timer
+    scheduled yet) from being observed by a concurrent caller."""
+    manager = FaultManager()
+
+    async def apply(ttl: float) -> None:
+        await manager.apply_fault(
+            FaultRequest(kind=FaultKind.LATENCY, magnitude=1, ttl_seconds=ttl)
+        )
+
+    await asyncio.gather(
+        apply(5.0),
+        apply(6.0),
+        manager.clear_fault(),
+        apply(7.0),
+        manager.clear_fault(),
+        apply(8.0),
+    )
+
+    # Whatever interleaving the event loop chose, the manager must be internally
+    # consistent afterward: either fully cleared, or fully applied -- never a mix.
+    if manager.active_fault is None:
+        assert manager.expires_at is None
+        assert manager._timer_task is None or manager._timer_task.done()
+    else:
+        assert manager.expires_at is not None
+        assert manager._timer_task is not None
+        assert not manager._timer_task.done()
+
+    await manager.clear_fault()
+    assert manager.active_fault is None
+    assert manager.expires_at is None
+    assert manager._timer_task is None
+
+
+@pytest.mark.asyncio
 async def test_fault_stall() -> None:
     """STALL blocks pre_request_hook indefinitely (like the worker), ignoring magnitude,
     until the fault is cleared -- it must not merely sleep for `magnitude` ms like LATENCY."""
