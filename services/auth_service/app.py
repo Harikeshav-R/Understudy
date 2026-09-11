@@ -11,6 +11,7 @@ from psycopg_pool import AsyncConnectionPool
 from services._common import (
     FaultManager,
     create_pool,
+    get_service_role,
     ping_db,
     setup_fault_middleware,
     setup_fault_routes,
@@ -21,11 +22,31 @@ from services._common import (
 DATABASE_URL = os.getenv("DATABASE_URL")
 TOKEN_CACHE_MAX_SIZE = int(os.getenv("AUTH_TOKEN_CACHE_MAX_SIZE", "1000"))
 
-# In-memory token cache, bounded to TOKEN_CACHE_MAX_SIZE entries (oldest evicted first)
-TOKEN_CACHE: dict[str, dict[str, Any]] = {
+# Seeded tokens are authoritative and never evicted or re-derived from the synthetic
+# pattern below, even though "Bearer valid-token" also matches that pattern's prefix --
+# otherwise, once the plain FIFO cache below evicted it, revalidating it would silently
+# fall through to the synthetic branch and downgrade it from scope: admin to
+# scope: standard with no error (the reported admin-token-downgrade bug).
+SEEDED_TOKENS: dict[str, dict[str, Any]] = {
     "Bearer valid-token": {"user_id": "user_admin", "scope": "admin"},
     "Bearer test-token": {"user_id": "user_test", "scope": "read_write"},
 }
+
+# In-memory synthetic-token cache, bounded to TOKEN_CACHE_MAX_SIZE entries (oldest
+# evicted first). Never holds a SEEDED_TOKENS entry.
+TOKEN_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def _synthetic_tokens_allowed() -> bool:
+    # MOCKED: any Bearer valid-*/token-* token is accepted as valid with no real
+    # credential check. Real path: a Postgres-backed token lookup (not yet built; see
+    # docs/02-architecture.md's "in-memory cache over Postgres" auth-service design).
+    # Tracked in #16.
+    override = os.getenv("AUTH_SERVICE_ALLOW_SYNTHETIC_TOKENS")
+    if override is not None:
+        return override.strip().lower() in ("true", "1", "yes")
+    return get_service_role() != "prod"
+
 
 db_pool: AsyncConnectionPool | None = None
 fault_manager = FaultManager()
@@ -73,7 +94,18 @@ async def validate_token(
             detail="Missing Authorization header",
         )
 
-    # 1. Fast path: check in-memory cache
+    # 1. Seeded tokens are authoritative: always checked first, never evicted, never
+    # re-derived from the synthetic-pattern branch below.
+    if authorization in SEEDED_TOKENS:
+        seeded_info = SEEDED_TOKENS[authorization]
+        return {
+            "valid": True,
+            "user_id": seeded_info["user_id"],
+            "scope": seeded_info["scope"],
+            "cached": True,
+        }
+
+    # 2. Fast path: check in-memory cache
     if authorization in TOKEN_CACHE:
         cached_info = TOKEN_CACHE[authorization]
         return {
@@ -83,8 +115,10 @@ async def validate_token(
             "cached": True,
         }
 
-    # 2. Synthetic token pattern acceptance for testing
-    if authorization.startswith("Bearer valid-") or authorization.startswith("Bearer token-"):
+    # 3. Synthetic token pattern acceptance for testing
+    if _synthetic_tokens_allowed() and (
+        authorization.startswith("Bearer valid-") or authorization.startswith("Bearer token-")
+    ):
         user_info = {"user_id": "user_dynamic", "scope": "standard"}
         if len(TOKEN_CACHE) >= TOKEN_CACHE_MAX_SIZE:
             TOKEN_CACHE.pop(next(iter(TOKEN_CACHE)))

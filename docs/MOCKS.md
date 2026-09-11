@@ -12,7 +12,7 @@ This file is only for places where a path that is *supposed* to be real is not.
 
 | Module | What is mocked | Why | Real path | Issue | Status |
 |---|---|---|---|---|---|
-| _(none yet)_ | | | | | |
+| services.auth_service.app | Bearer valid-*/token-* accepted as valid with no real credential check | No Postgres-backed token store exists yet; gated off by default in prod via AUTH_SERVICE_ALLOW_SYNTHETIC_TOKENS | services/auth_service/app.py::validate_token (Postgres-backed lookup) | #16 | open |
 
 ## Rules
 
