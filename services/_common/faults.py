@@ -36,7 +36,17 @@ class FaultRequest(BaseModel):
     """Specification for an injected fault."""
 
     kind: FaultKind
-    magnitude: float = Field(ge=0, description="Magnitude of fault (ms, percentage, MB, conns)")
+    magnitude: float = Field(
+        ge=0,
+        description=(
+            "Magnitude of fault, units depend on kind: LATENCY is milliseconds, "
+            "MEMORY_LEAK is megabytes, POOL_EXHAUSTION is a connection count, CPU_SPIN "
+            "is milliseconds of burn time. ERROR_RATE is the odd one out: a value "
+            "<= 1.0 is read as a fraction (0.5 = 50%), a value > 1.0 as a percentage "
+            "(50.0 = 50%) -- so a caller who means '1%' and passes 1.0 gets 100% "
+            "instead, since 1.0 lands on the fraction side of that boundary."
+        ),
+    )
     ttl_seconds: float = Field(gt=0, description="Time-to-live before recovery in seconds")
 
 
@@ -163,6 +173,10 @@ class FaultManager:
             await asyncio.sleep(fault.magnitude / 1000.0)
 
         elif fault.kind == FaultKind.ERROR_RATE:
+            # magnitude is a fraction at <= 1.0, a percentage above it (see FaultRequest
+            # .magnitude docstring) -- this boundary is intentional and load-bearing for
+            # test_faults.py::test_fault_error_rate (1.0 and 100.0 both mean 100%), not a
+            # bug to "fix" by changing the comparison.
             rate = fault.magnitude if fault.magnitude <= 1.0 else (fault.magnitude / 100.0)
             if self._rng.random() < rate:
                 raise HTTPException(
