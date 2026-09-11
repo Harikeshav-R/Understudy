@@ -104,6 +104,22 @@ async def test_execute_single_request_outcomes() -> None:
 
 
 @pytest.mark.asyncio
+async def test_execute_single_request_non_httpx_error_propagates() -> None:
+    """A bug unrelated to the network call (e.g. a malformed RequestSpec) must not be
+    recorded as a fake failed-request metric; only httpx.RequestError is a legitimate
+    "the request itself failed" outcome."""
+
+    def raise_type_error(_req: httpx.Request) -> httpx.Response:
+        raise TypeError("not a real network failure")
+
+    mock_handler = httpx.MockTransport(raise_type_error)
+    async with httpx.AsyncClient(transport=mock_handler) as client:
+        spec = RequestSpec(method="GET", path="/api/items")
+        with pytest.raises(TypeError, match="not a real network failure"):
+            await _execute_single_request(client, "http://test", spec, lambda: 0.0)
+
+
+@pytest.mark.asyncio
 async def test_run_loadgen_flow_and_pacing() -> None:
     """Validate run_loadgen with mock client, time pacing, and metrics."""
     time_state = {"current": 100.0}

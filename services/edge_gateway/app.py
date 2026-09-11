@@ -107,7 +107,8 @@ async def get_items(
             detail=data_resp.text,
         )
 
-    return data_resp.json()  # type: ignore[no-any-return]
+    items: dict[str, Any] = data_resp.json()
+    return items
 
 
 @app.post("/api/items", tags=["Items"], status_code=status.HTTP_201_CREATED)
@@ -149,4 +150,5 @@ async def create_item(
         ) from exc
 
     response.status_code = data_resp.status_code
-    return data_resp.json()  # type: ignore[no-any-return]
+    created_item: dict[str, Any] = data_resp.json()
+    return created_item

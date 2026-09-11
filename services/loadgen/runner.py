@@ -91,7 +91,7 @@ async def _execute_single_request(
             latency_ms=latency_ms,
             error=None if success else f"HTTP {response.status_code}",
         )
-    except Exception as exc:
+    except httpx.RequestError as exc:
         latency_ms = (time_fn() - start) * 1000.0
         return RequestResult(
             success=False,
