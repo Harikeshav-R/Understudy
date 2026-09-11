@@ -7,22 +7,16 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, status
-from psycopg import Error as PsycopgError
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel
 
 from services._common import (
     FaultManager,
-    create_pool,
-    get_logger,
+    create_service_app,
+    db_pool_lifespan,
     ping_db,
-    setup_fault_middleware,
-    setup_fault_routes,
     setup_health_routes,
-    setup_metrics,
 )
-
-logger = get_logger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 DATA_SERVICE_VARIANT = os.getenv("DATA_SERVICE_VARIANT", "good").strip().lower()
@@ -95,25 +89,12 @@ async def init_db(pool: AsyncConnectionPool) -> None:
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage database pool lifecycle and table initialization."""
     global db_pool
-    if DATABASE_URL:
-        db_pool = create_pool(DATABASE_URL)
-        await db_pool.open()
-        fault_manager.pool = db_pool
-        try:
-            await init_db(db_pool)
-        except PsycopgError as exc:
-            logger.error("data_service_db_init_failed", error=str(exc))
-    try:
+    async with db_pool_lifespan(DATABASE_URL, fault_manager, on_open=init_db) as pool:
+        db_pool = pool
         yield
-    finally:
-        if db_pool:
-            await db_pool.close()
 
 
-app = FastAPI(title="data-service", lifespan=lifespan)
-setup_metrics(app, "data-service")
-setup_fault_middleware(app, fault_manager)
-setup_fault_routes(app, fault_manager)
+app = create_service_app("data-service", fault_manager, lifespan)
 
 
 async def check_db_readiness() -> bool:

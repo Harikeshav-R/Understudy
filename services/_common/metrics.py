@@ -14,6 +14,7 @@ from prometheus_client import (
 )
 
 from services._common.role_guard import get_service_role
+from services._common.settings import get_services_settings
 
 
 def setup_metrics(
@@ -42,7 +43,7 @@ def setup_metrics(
         "http_request_duration_seconds",
         "HTTP request latency in seconds",
         ["service", "method", "endpoint"],
-        buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.4, 0.5, 1.0, 2.0, 5.0),
+        buckets=get_services_settings().metrics.histogram_buckets,
         registry=metrics_registry,
     )
     service_info = Info(

@@ -27,6 +27,14 @@ def test_create_pool() -> None:
     assert pool.max_size == 5
 
 
+def test_create_pool_defaults_from_settings() -> None:
+    """With no explicit min_size/max_size/timeout, create_pool falls back to
+    get_services_settings().db, not a hardcoded literal."""
+    pool = create_pool("postgresql://test:5432/db")
+    assert pool.min_size == 1
+    assert pool.max_size == 10
+
+
 @pytest.mark.asyncio
 async def test_ping_db_success() -> None:
     mock_cursor = AsyncMock()

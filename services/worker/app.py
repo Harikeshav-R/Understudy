@@ -10,25 +10,26 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from psycopg import Error as PsycopgError
 from psycopg_pool import AsyncConnectionPool
 
 from services._common import (
     FaultManager,
-    create_pool,
+    create_service_app,
+    db_pool_lifespan,
     get_logger,
     ping_db,
-    setup_fault_middleware,
-    setup_fault_routes,
     setup_health_routes,
-    setup_metrics,
 )
+from services._common.settings import get_services_settings
 
 logger = get_logger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-POLL_INTERVAL_SECONDS = float(os.getenv("POLL_INTERVAL_SECONDS", "1.0"))
+_settings = get_services_settings().worker
+POLL_INTERVAL_SECONDS = _settings.poll_interval_seconds
+JOB_LIST_LIMIT = _settings.job_list_limit
 
 db_pool: AsyncConnectionPool | None = None
 fault_manager = FaultManager()
@@ -96,12 +97,31 @@ async def process_one_job(pool: AsyncConnectionPool | None) -> bool:
         return False
 
 
+async def _worker_iteration() -> None:
+    """Run one poll-and-process cycle, honoring whatever fault is currently active.
+
+    Factored out of worker_loop so it can be exercised directly under test without
+    driving a real polling loop. pre_request_hook's ERROR_RATE branch raises
+    HTTPException, which is meaningful in an HTTP handler but has no response to attach
+    to here; treat it the same way a real job-processing failure is treated (log and
+    skip this iteration's job) rather than letting it crash the polling task.
+    """
+    await fault_manager.wait_if_stalled()
+    try:
+        await fault_manager.pre_request_hook()
+    except HTTPException as exc:
+        logger.warning("worker_fault_injected", detail=exc.detail)
+        return
+    await process_one_job(db_pool)
+
+
 async def worker_loop() -> None:
-    """Continuous polling loop that honors active stall faults."""
+    """Continuous polling loop that honors active faults (stall, latency, error_rate,
+    cpu_spin) applied via /admin/fault. Previously only consulted wait_if_stalled, so
+    every other fault kind was a no-op against job processing."""
     while True:
         try:
-            await fault_manager.wait_if_stalled()
-            await process_one_job(db_pool)
+            await _worker_iteration()
         except asyncio.CancelledError:
             break
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
@@ -111,30 +131,18 @@ async def worker_loop() -> None:
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage worker polling task and database connection pool lifecycle."""
     global db_pool
-    if DATABASE_URL:
-        db_pool = create_pool(DATABASE_URL)
-        await db_pool.open()
-        fault_manager.pool = db_pool
+    async with db_pool_lifespan(DATABASE_URL, fault_manager, on_open=init_worker_db) as pool:
+        db_pool = pool
+        task = asyncio.create_task(worker_loop())
         try:
-            await init_worker_db(db_pool)
-        except PsycopgError as exc:
-            logger.error("worker_db_init_failed", error=str(exc))
-
-    task = asyncio.create_task(worker_loop())
-    try:
-        yield
-    finally:
-        task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
-        if db_pool:
-            await db_pool.close()
+            yield
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
-app = FastAPI(title="worker", lifespan=lifespan)
-setup_metrics(app, "worker")
-setup_fault_middleware(app, fault_manager)
-setup_fault_routes(app, fault_manager)
+app = create_service_app("worker", fault_manager, lifespan)
 
 
 async def check_db_readiness() -> bool:
@@ -167,7 +175,10 @@ async def list_jobs() -> dict[str, Any]:
         return {"jobs": IN_MEMORY_JOBS, "is_stalled": fault_manager.is_stalled}
 
     async with db_pool.connection() as conn, conn.cursor() as cur:
-        await cur.execute("SELECT id, payload, status FROM jobs ORDER BY id DESC LIMIT 50")
+        await cur.execute(
+            "SELECT id, payload, status FROM jobs ORDER BY id DESC LIMIT %s",
+            (JOB_LIST_LIMIT,),
+        )
         rows = await cur.fetchall()
         jobs = [{"id": r[0], "payload": r[1], "status": r[2]} for r in rows]
         return {"jobs": jobs, "is_stalled": fault_manager.is_stalled}

@@ -1,5 +1,6 @@
 """Shared components for demo services: metrics, health, faults, db, and guards."""
 
+from services._common.bootstrap import create_service_app, db_pool_lifespan
 from services._common.db import create_pool, get_connection, get_default_conninfo, ping_db
 from services._common.faults import (
     FaultKind,
@@ -24,6 +25,8 @@ __all__ = [
     "FaultRequest",
     "check_twin_outbound_target",
     "create_pool",
+    "create_service_app",
+    "db_pool_lifespan",
     "ensure_fault_injection_permitted",
     "get_connection",
     "get_default_conninfo",

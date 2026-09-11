@@ -404,6 +404,42 @@ endpoint) so `BAD_DEPLOY` scenarios are real code differences, not simulated one
 **Feature flags** are ConfigMap keys read at request time (not startup), so
 `DISABLE_FLAG` and `REVERT_CONFIG` are meaningful actions with immediate effect.
 
+### 2.5.1 services/ tunables
+
+Every numeric/string tunable across `services/` is defined once in
+`services/_common/settings.py` (`ServicesSettings`, one frozen pydantic model per
+section) and layered from `config/services.yaml` → an optional, gitignored
+`config/services.local.yaml` → the field's environment variable. Access via
+`get_services_settings()`; `reset_services_settings()` is for tests only.
+
+| Section | Field | Default | Env var |
+|---|---|---|---|
+| `edge_gateway` | `http_timeout_seconds` | `5.0` | `HTTP_TIMEOUT_SECONDS` |
+| `auth_service` | `token_cache_max_size` | `1000` | `AUTH_TOKEN_CACHE_MAX_SIZE` |
+| `worker` | `poll_interval_seconds` | `1.0` | `POLL_INTERVAL_SECONDS` |
+| `worker` | `job_list_limit` | `50` | `WORKER_JOB_LIST_LIMIT` |
+| `loadgen` | `rps` | `20.0` | `LOADGEN_RPS` |
+| `loadgen` | `duration_seconds` | `30.0` | `LOADGEN_DURATION` |
+| `loadgen` | `seed` | `42` | `LOADGEN_SEED` |
+| `loadgen` | `auth_token` | `"valid-token"` | `LOADGEN_AUTH_TOKEN` |
+| `loadgen` | `http_timeout_seconds` | `10.0` | `LOADGEN_TIMEOUT` |
+| `loadgen` | `max_connections` | `200` | `LOADGEN_MAX_CONNECTIONS` |
+| `loadgen` | `max_keepalive_connections` | `50` | `LOADGEN_MAX_KEEPALIVE_CONNECTIONS` |
+| `loadgen` | `p99_sla_ms` | `400.0` | `LOADGEN_P99_SLA_MS` |
+| `db` | `pool_min_size` | `1` | `DB_POOL_MIN_SIZE` |
+| `db` | `pool_max_size` | `10` | `DB_POOL_MAX_SIZE` |
+| `db` | `pool_timeout_seconds` | `5.0` | `DB_POOL_TIMEOUT_SECONDS` |
+| `faults` | `injection_seed` | `1337` | `FAULT_INJECTION_SEED` |
+| `faults` | `pool_exhaustion_getconn_timeout_seconds` | `1.0` | `FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS` |
+| `metrics` | `histogram_buckets` | see `config/services.yaml` | none (edit the YAML) |
+
+`edge_gateway.http_timeout_seconds`, `auth_service.token_cache_max_size`,
+`worker.poll_interval_seconds`, and `faults.injection_seed` keep the exact env var
+names they used before this settings module existed (already wired into
+`deploy/prod/*.yaml`'s `env`/`configMapKeyRef` entries and `loadgen`'s own CLI flag
+fallbacks) rather than a new naming scheme, so already-deployed configuration keeps
+working unchanged.
+
 ## 2.6 Probes, recovery, blast radius
 
 **SLO probe.** Every 1 second against the environment's `edge-gateway`:

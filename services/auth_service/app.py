@@ -10,17 +10,16 @@ from psycopg_pool import AsyncConnectionPool
 
 from services._common import (
     FaultManager,
-    create_pool,
+    create_service_app,
+    db_pool_lifespan,
     get_service_role,
     ping_db,
-    setup_fault_middleware,
-    setup_fault_routes,
     setup_health_routes,
-    setup_metrics,
 )
+from services._common.settings import get_services_settings
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-TOKEN_CACHE_MAX_SIZE = int(os.getenv("AUTH_TOKEN_CACHE_MAX_SIZE", "1000"))
+TOKEN_CACHE_MAX_SIZE = get_services_settings().auth_service.token_cache_max_size
 
 # Seeded tokens are authoritative and never evicted or re-derived from the synthetic
 # pattern below, even though "Bearer valid-token" also matches that pattern's prefix --
@@ -56,21 +55,12 @@ fault_manager = FaultManager()
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage database connection pool lifecycle if database URL is configured."""
     global db_pool
-    if DATABASE_URL:
-        db_pool = create_pool(DATABASE_URL)
-        await db_pool.open()
-        fault_manager.pool = db_pool
-    try:
+    async with db_pool_lifespan(DATABASE_URL, fault_manager) as pool:
+        db_pool = pool
         yield
-    finally:
-        if db_pool:
-            await db_pool.close()
 
 
-app = FastAPI(title="auth-service", lifespan=lifespan)
-setup_metrics(app, "auth-service")
-setup_fault_middleware(app, fault_manager)
-setup_fault_routes(app, fault_manager)
+app = create_service_app("auth-service", fault_manager, lifespan)
 
 
 async def check_db_readiness() -> bool:
