@@ -1,7 +1,6 @@
 """Structured JSON logging configuration using structlog."""
 
 import logging
-import sys
 from typing import Any
 
 import structlog
@@ -22,7 +21,7 @@ def configure_logging(log_level: str = "INFO") -> None:
 
     structlog.configure(
         processors=processors,
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stdout),
+        logger_factory=structlog.PrintLoggerFactory(),
         wrapper_class=structlog.make_filtering_bound_logger(level),
         cache_logger_on_first_use=False,
     )
