@@ -1,8 +1,11 @@
-"""Unit tests for orchestrator graph assembly, edge routing, and control loop execution."""
+from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
+
+if TYPE_CHECKING:
+    from langchain_core.runnables import RunnableConfig
 
 import pytest
 
@@ -30,6 +33,10 @@ from understudy.orchestrator.graph import (
 from understudy.orchestrator.nodes import ALL_NODES
 from understudy.orchestrator.state import State
 from understudy.tournament.fakes import FakeTournament
+
+
+def _config(thread_id: str) -> RunnableConfig:
+    return {"configurable": {"thread_id": thread_id}}
 
 
 def _sample_alert(alert_id: str = "alt_test") -> Alert:
@@ -182,7 +189,8 @@ async def test_full_happy_path_execution() -> None:
     graph = build_graph(deps)
 
     visited_nodes: list[str] = []
-    async for event in graph.astream(State(alert=alert), stream_mode="updates"):
+    config = _config("inc_alt_happy")
+    async for event in graph.astream(State(alert=alert), config=config, stream_mode="updates"):
         for node_name in event:
             visited_nodes.append(node_name)
 
@@ -209,6 +217,11 @@ async def test_full_happy_path_execution() -> None:
     assert stored_run.prod_applied_plan_id == "plan_cand_0"
     assert stored_run.prod_outcome == "resolved"
 
+    # Verify LangGraph checkpointing persisted into CheckpointStore
+    assert deps.checkpoint_store is not None
+    cps = await deps.checkpoint_store.list_checkpoints(thread_id="inc_alt_happy")
+    assert len(cps) >= 13
+
 
 @pytest.mark.asyncio
 async def test_tournament_ambiguous_escalation_path() -> None:
@@ -221,7 +234,8 @@ async def test_tournament_ambiguous_escalation_path() -> None:
     graph = build_graph(deps)
 
     visited_nodes: list[str] = []
-    async for event in graph.astream(State(alert=alert), stream_mode="updates"):
+    config = _config("inc_alt_ambiguous")
+    async for event in graph.astream(State(alert=alert), config=config, stream_mode="updates"):
         for node_name in event:
             visited_nodes.append(node_name)
 
@@ -273,7 +287,8 @@ async def test_tournament_no_viable_candidate_path() -> None:
     graph = build_graph(deps)
 
     visited_nodes: list[str] = []
-    async for event in graph.astream(State(alert=alert), stream_mode="updates"):
+    config = _config("inc_unviable")
+    async for event in graph.astream(State(alert=alert), config=config, stream_mode="updates"):
         for node_name in event:
             visited_nodes.append(node_name)
 
@@ -292,7 +307,8 @@ async def test_safety_kernel_veto_escalation_path() -> None:
     graph = build_graph(deps)
 
     visited_nodes: list[str] = []
-    async for event in graph.astream(State(alert=alert), stream_mode="updates"):
+    config = _config("inc_alt_veto")
+    async for event in graph.astream(State(alert=alert), config=config, stream_mode="updates"):
         for node_name in event:
             visited_nodes.append(node_name)
 
@@ -331,7 +347,8 @@ async def test_safety_kernel_uncertain_escalation_path() -> None:
     graph = build_graph(deps)
 
     visited_nodes: list[str] = []
-    async for event in graph.astream(State(alert=alert), stream_mode="updates"):
+    config = _config("inc_alt_uncertain")
+    async for event in graph.astream(State(alert=alert), config=config, stream_mode="updates"):
         for node_name in event:
             visited_nodes.append(node_name)
 
@@ -354,7 +371,8 @@ async def test_node_failure_error_edge_routing() -> None:
     graph = build_graph(deps)
 
     visited_nodes: list[str] = []
-    async for event in graph.astream(State(alert=alert), stream_mode="updates"):
+    config = _config("inc_alt_fail")
+    async for event in graph.astream(State(alert=alert), config=config, stream_mode="updates"):
         for node_name in event:
             visited_nodes.append(node_name)
 
@@ -385,8 +403,34 @@ async def test_node_runner_empty_incident_id_logging() -> None:
 
     graph = build_graph(deps)
     # Start with empty incident_id and no alert
-    res = await graph.ainvoke(State())
+    res = await graph.ainvoke(State(), config=_config("test_empty"))
     assert "ValueError: alert source unreachable" in res["errors"][0]
+
+
+def test_build_graph_checkpointer_variants() -> None:
+    """Verify build_graph handles various checkpointer configurations."""
+    from understudy.orchestrator.checkpoint import StoreCheckpointSaver
+    from understudy.store.fakes import FakeCheckpointStore
+
+    # 1. deps.checkpoint_store is None (falls back to no checkpointer)
+    deps_no_store = create_fake_deps()
+    deps_no_store = deps_no_store.__class__(**{**deps_no_store.__dict__, "checkpoint_store": None})
+    g1 = build_graph(deps_no_store)
+    assert g1.checkpointer is None
+
+    # 2. explicit checkpointer=None override
+    deps = create_fake_deps()
+    g2 = build_graph(deps, checkpointer=None)
+    assert g2.checkpointer is None
+
+    # 3. explicit BaseCheckpointSaver instance
+    saver = StoreCheckpointSaver(FakeCheckpointStore())
+    g3 = build_graph(deps, checkpointer=saver)
+    assert g3.checkpointer is saver
+
+    # 4. invalid checkpointer argument falls back to None
+    g4 = build_graph(deps, checkpointer="invalid_saver")
+    assert g4.checkpointer is None
 
 
 @pytest.mark.asyncio
@@ -402,6 +446,9 @@ async def test_run_incident_api_and_store_retrieval() -> None:
     # Call again via api_run_incident and api_build_graph
     api_graph = api_build_graph(deps)
     assert api_graph is not None
+
+    api_graph_custom = api_build_graph(deps, checkpointer=None)
+    assert api_graph_custom.checkpointer is None
 
     record2 = await api_run_incident(alert, deps)
     assert record2.incident_id == "inc_alt_api"
@@ -421,25 +468,26 @@ async def test_run_incident_missing_store_record_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_incident_empty_incident_id_fallback() -> None:
+async def test_run_incident_empty_incident_id_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Verify run_incident when final_state.incident_id is empty."""
+    from understudy.orchestrator.nodes.gather_context import gather_context
+
     deps = create_fake_deps()
+    alert = _sample_alert("alt_empty_id")
+    gather_res = await gather_context(State(alert=alert), deps)
+    ctx = gather_res["context"]
 
-    # If an alert has no alert_id and context is provided
-    now = datetime.now(UTC)
-    ctx = (await deps.tournament.observe_and_score([], []))[0]  # dummy check
-    _ = ctx
-
-    alert = Alert(
-        alert_id="",
-        source="synthetic",
-        title="Test",
-        service="edge-gateway",
-        severity="error",
-        fired_at=now,
+    mock_graph = AsyncMock()
+    mock_graph.ainvoke.return_value = State(incident_id="", context=ctx)
+    monkeypatch.setattr(
+        "understudy.orchestrator.graph.build_graph", lambda *_args, **_kwargs: mock_graph
     )
+
     record = await run_incident(alert, deps)
     assert record.outcome == RunOutcome.EXECUTED
+    assert record.incident_id == ""
 
 
 @pytest.mark.asyncio

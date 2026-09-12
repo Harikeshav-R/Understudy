@@ -22,7 +22,12 @@ from understudy.signals.fakes import (
     FakeDeployHistory,
     FakeObservabilityAdapter,
 )
-from understudy.store.fakes import FakeEvalStore, FakePlaybookStore, FakeRunStore
+from understudy.store.fakes import (
+    FakeCheckpointStore,
+    FakeEvalStore,
+    FakePlaybookStore,
+    FakeRunStore,
+)
 from understudy.tournament.fakes import FakeTournament
 
 
@@ -46,6 +51,7 @@ def create_fake_deps(seed: int = 42, clock: Clock | None = None) -> Deps:
         safety_kernel=FakeSafetyKernel(),
         actuator=FakeActuator(),
         notifier=FakeNotifier(),
+        checkpoint_store=FakeCheckpointStore(),
     )
 
 

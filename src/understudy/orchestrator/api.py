@@ -11,11 +11,16 @@ from understudy.graph.api import BlastRadiusCalculator, DependencyGraph
 from understudy.kernel.api import SafetyKernel
 from understudy.mirror.api import MirrorRegistry
 from understudy.notify.api import Notifier
+from understudy.orchestrator.checkpoint import (
+    PostgresCheckpointSaver,
+    StoreCheckpointSaver,
+    create_checkpointer,
+)
 from understudy.orchestrator.state import State
 from understudy.planner.api import Planner
 from understudy.playbook.api import PlaybookLibrary
 from understudy.signals.api import AlertSource, DeployHistory, ObservabilityAdapter
-from understudy.store.api import EvalStore, PlaybookStore, RunStore
+from understudy.store.api import CheckpointStore, EvalStore, PlaybookStore, RunStore
 from understudy.tournament.api import Tournament
 
 
@@ -39,6 +44,7 @@ class Deps:
     safety_kernel: SafetyKernel
     actuator: Actuator
     notifier: Notifier
+    checkpoint_store: CheckpointStore | None = None
 
 
 @runtime_checkable
@@ -50,11 +56,13 @@ class Orchestrator(Protocol):
         raise NotImplementedError
 
 
-def build_graph(deps: Deps) -> Any:
+def build_graph(deps: Deps, checkpointer: Any = ...) -> Any:
     """Compile and return the executable LangGraph state graph using provided dependencies."""
     from understudy.orchestrator.graph import build_graph as _build_graph
 
-    return _build_graph(deps)
+    if checkpointer is ...:
+        return _build_graph(deps)
+    return _build_graph(deps, checkpointer=checkpointer)
 
 
 async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
@@ -67,7 +75,10 @@ async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
 __all__ = [
     "Deps",
     "Orchestrator",
+    "PostgresCheckpointSaver",
     "State",
+    "StoreCheckpointSaver",
     "build_graph",
+    "create_checkpointer",
     "run_incident",
 ]

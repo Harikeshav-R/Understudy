@@ -16,7 +16,7 @@ from understudy.planner.api import Planner
 from understudy.playbook.api import PlaybookLibrary
 from understudy.shadow.api import ShadowLoop
 from understudy.signals.api import AlertSource, DeployHistory, ObservabilityAdapter
-from understudy.store.api import EvalStore, PlaybookStore, RunStore
+from understudy.store.api import CheckpointStore, EvalStore, PlaybookStore, RunStore
 from understudy.tournament.api import Tournament
 
 
@@ -26,6 +26,7 @@ def test_all_protocols_are_protocols() -> None:
         RunStore,
         PlaybookStore,
         EvalStore,
+        CheckpointStore,
         AlertSource,
         ObservabilityAdapter,
         DeployHistory,

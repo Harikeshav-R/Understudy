@@ -8,12 +8,16 @@ Implements build-plan step B1.3 and architecture §2.2 & §2.9:
 """
 
 from collections.abc import Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
+if TYPE_CHECKING:
+    from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from understudy.common.errors import OrchestratorError
+from understudy.common.ids import new_incident_id
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import (
     KernelVerdictType,
@@ -23,6 +27,7 @@ from understudy.contracts.enums import (
 from understudy.contracts.incident import Alert
 from understudy.contracts.run import RunRecord
 from understudy.orchestrator.api import Deps
+from understudy.orchestrator.checkpoint import create_checkpointer
 from understudy.orchestrator.nodes import ALL_NODES, NodeFunc
 from understudy.orchestrator.state import State
 
@@ -88,10 +93,24 @@ def route_safety_kernel(state: State) -> str:
 
 
 CompiledGraph = CompiledStateGraph[State, None, State, State]
+_DEFAULT_CHECKPOINTER = object()
 
 
-def build_graph(deps: Deps) -> CompiledGraph:
+def build_graph(
+    deps: Deps,
+    checkpointer: BaseCheckpointSaver[Any] | object | None = _DEFAULT_CHECKPOINTER,
+) -> CompiledGraph:
     """Compile and return the executable LangGraph state graph using provided dependencies."""
+    resolved_checkpointer: BaseCheckpointSaver[Any] | None
+    if checkpointer is _DEFAULT_CHECKPOINTER:
+        resolved_checkpointer = (
+            create_checkpointer(deps) if deps.checkpoint_store is not None else None
+        )
+    else:
+        resolved_checkpointer = (
+            checkpointer if isinstance(checkpointer, BaseCheckpointSaver) else None
+        )
+
     builder: StateGraph[State, None, State, State] = StateGraph(State)
 
     for name, fn in ALL_NODES.items():
@@ -163,14 +182,16 @@ def build_graph(deps: Deps) -> CompiledGraph:
     builder.add_edge("record_run", END)
     builder.add_edge("handle_failure", END)
 
-    return builder.compile()
+    return builder.compile(checkpointer=resolved_checkpointer)
 
 
 async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
     """Execute the full incident control loop given an alert and dependencies."""
     graph = build_graph(deps)
-    initial_state = State(alert=alert)
-    final_output = await graph.ainvoke(initial_state)
+    incident_id = f"inc_{alert.alert_id}" if alert.alert_id else new_incident_id()
+    initial_state = State(alert=alert, incident_id=incident_id)
+    config: RunnableConfig = {"configurable": {"thread_id": incident_id}}
+    final_output = await graph.ainvoke(initial_state, config=config)
     final_state = (
         final_output if isinstance(final_output, State) else State.model_validate(final_output)
     )
