@@ -5,7 +5,7 @@ from typing import Any, TypedDict
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
-from understudy.store.api import EvalStore, PlaybookStore, RunStore
+from understudy.store.api import CheckpointStore, EvalStore, PlaybookStore, RunStore
 
 
 class _PlaybookRecord(TypedDict):
@@ -144,3 +144,142 @@ class FakeEvalStore(EvalStore):
         if scenario_id is None:
             return list(self._results)
         return [r for r in self._results if r["scenario_id"] == scenario_id]
+
+
+class FakeCheckpointStore(CheckpointStore):
+    """In-memory deterministic fake checkpoint store for LangGraph executions."""
+
+    def __init__(self) -> None:
+        self.checkpoints: dict[
+            tuple[str, str, str], tuple[tuple[str, bytes], tuple[str, bytes], str | None]
+        ] = {}
+        self.blobs: dict[tuple[str, str, str, str | int | float], tuple[str, bytes]] = {}
+        self.writes: dict[
+            tuple[str, str, str],
+            dict[tuple[str, int], tuple[str, str, tuple[str, bytes], str]],
+        ] = {}
+
+    async def put_checkpoint(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        checkpoint_id: str,
+        parent_checkpoint_id: str | None,
+        checkpoint: tuple[str, bytes],
+        metadata: tuple[str, bytes],
+    ) -> None:
+        """Store serialized checkpoint data and metadata."""
+        self.checkpoints[(thread_id, checkpoint_ns, checkpoint_id)] = (
+            checkpoint,
+            metadata,
+            parent_checkpoint_id,
+        )
+
+    async def get_checkpoint(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        checkpoint_id: str | None = None,
+    ) -> tuple[str, tuple[str, bytes], tuple[str, bytes], str | None] | None:
+        """Retrieve checkpoint by id, or latest checkpoint if checkpoint_id is None."""
+        if checkpoint_id is not None:
+            key = (thread_id, checkpoint_ns, checkpoint_id)
+            if key in self.checkpoints:
+                cp, md, pid = self.checkpoints[key]
+                return (checkpoint_id, cp, md, pid)
+            return None
+
+        matching = [
+            (cid, cp, md, pid)
+            for (tid, ns, cid), (cp, md, pid) in self.checkpoints.items()
+            if tid == thread_id and ns == checkpoint_ns
+        ]
+        if not matching:
+            return None
+        matching.sort(key=lambda x: x[0])
+        return matching[-1]
+
+    async def list_checkpoints(
+        self,
+        thread_id: str | None = None,
+        checkpoint_ns: str | None = None,
+        before_checkpoint_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[tuple[str, str, str, tuple[str, bytes], tuple[str, bytes], str | None]]:
+        """List checkpoints matching filters in reverse chronological order."""
+        items = [
+            (tid, ns, cid, cp, md, pid)
+            for (tid, ns, cid), (cp, md, pid) in self.checkpoints.items()
+            if (thread_id is None or tid == thread_id)
+            and (checkpoint_ns is None or ns == checkpoint_ns)
+            and (before_checkpoint_id is None or cid < before_checkpoint_id)
+        ]
+        items.sort(key=lambda x: x[2], reverse=True)
+        if limit is not None:
+            items = items[:limit]
+        return items
+
+    async def put_blobs(
+        self,
+        blobs: list[tuple[str, str, str, str | int | float, tuple[str, bytes]]],
+    ) -> None:
+        """Store channel version blobs."""
+        for tid, ns, ch, ver, blob in blobs:
+            self.blobs[(tid, ns, ch, ver)] = blob
+
+    async def get_blobs(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        channel_versions: dict[str, str | int | float],
+    ) -> dict[str, tuple[str, bytes]]:
+        """Retrieve channel blobs for the given channel versions."""
+        res: dict[str, tuple[str, bytes]] = {}
+        for ch, ver in channel_versions.items():
+            key = (thread_id, checkpoint_ns, ch, ver)
+            if key in self.blobs:
+                res[ch] = self.blobs[key]
+        return res
+
+    async def put_writes(
+        self,
+        writes: list[tuple[str, str, str, str, int, str, tuple[str, bytes], str]],
+    ) -> None:
+        """Store task execution writes."""
+        for tid, ns, cid, task_id, idx, ch, val, task_path in writes:
+            outer_key = (tid, ns, cid)
+            if outer_key not in self.writes:
+                self.writes[outer_key] = {}
+            self.writes[outer_key][(task_id, idx)] = (task_id, ch, val, task_path)
+
+    async def get_writes(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        checkpoint_id: str,
+    ) -> list[tuple[str, str, tuple[str, bytes], str]]:
+        """Retrieve pending writes for a checkpoint."""
+        outer_key = (thread_id, checkpoint_ns, checkpoint_id)
+        if outer_key not in self.writes:
+            return []
+        return list(self.writes[outer_key].values())
+
+    async def delete_thread(self, thread_id: str) -> None:
+        """Delete all checkpoints, blobs, and writes for thread_id."""
+        for kc in list(self.checkpoints.keys()):
+            if kc[0] == thread_id:
+                del self.checkpoints[kc]
+        for kb in list(self.blobs.keys()):
+            if kb[0] == thread_id:
+                del self.blobs[kb]
+        for kw in list(self.writes.keys()):
+            if kw[0] == thread_id:
+                del self.writes[kw]
+
+
+__all__ = [
+    "FakeCheckpointStore",
+    "FakeEvalStore",
+    "FakePlaybookStore",
+    "FakeRunStore",
+]

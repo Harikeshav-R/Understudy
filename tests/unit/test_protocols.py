@@ -2,9 +2,6 @@
 
 import inspect
 from datetime import UTC, datetime
-from typing import cast
-
-import pytest
 
 from understudy.actuator.api import Actuator
 from understudy.contracts.incident import Alert
@@ -14,12 +11,12 @@ from understudy.graph.api import BlastRadiusCalculator, DependencyGraph
 from understudy.kernel.api import SafetyKernel
 from understudy.mirror.api import MirrorRegistry
 from understudy.notify.api import Notifier
-from understudy.orchestrator.api import Deps, Orchestrator, build_graph, run_incident
+from understudy.orchestrator.api import Orchestrator, build_graph, run_incident
 from understudy.planner.api import Planner
 from understudy.playbook.api import PlaybookLibrary
 from understudy.shadow.api import ShadowLoop
 from understudy.signals.api import AlertSource, DeployHistory, ObservabilityAdapter
-from understudy.store.api import EvalStore, PlaybookStore, RunStore
+from understudy.store.api import CheckpointStore, EvalStore, PlaybookStore, RunStore
 from understudy.tournament.api import Tournament
 
 
@@ -29,6 +26,7 @@ def test_all_protocols_are_protocols() -> None:
         RunStore,
         PlaybookStore,
         EvalStore,
+        CheckpointStore,
         AlertSource,
         ObservabilityAdapter,
         DeployHistory,
@@ -51,11 +49,13 @@ def test_all_protocols_are_protocols() -> None:
         assert hasattr(proto, "_is_protocol") or hasattr(proto, "_is_runtime_protocol")
 
 
-def test_orchestrator_function_stubs() -> None:
-    """Verify that function stubs raise NotImplementedError."""
-    deps = cast("Deps", object())
-    with pytest.raises(NotImplementedError):
-        build_graph(deps)
+def test_orchestrator_functions() -> None:
+    """Verify that build_graph and run_incident can be called from orchestrator api."""
+    from understudy.orchestrator.fakes import create_fake_deps
+
+    deps = create_fake_deps()
+    graph = build_graph(deps)
+    assert graph is not None
 
     now = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
     alert = Alert(
@@ -66,7 +66,7 @@ def test_orchestrator_function_stubs() -> None:
         severity="error",
         fired_at=now,
     )
-    with pytest.raises(NotImplementedError):
-        import asyncio
+    import asyncio
 
-        asyncio.run(run_incident(alert, deps))
+    record = asyncio.run(run_incident(alert, deps))
+    assert record.outcome.value in ("executed", "escalated", "failed")

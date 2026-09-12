@@ -93,3 +93,89 @@ class EvalStore(Protocol):
     async def get_scenario_results(self, scenario_id: str | None = None) -> list[dict[str, Any]]:
         """Retrieve evaluation results across scenarios."""
         raise NotImplementedError
+
+
+@runtime_checkable
+class CheckpointStore(Protocol):
+    """Storage interface for LangGraph state checkpoints, blobs, and pending writes."""
+
+    async def put_checkpoint(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        checkpoint_id: str,
+        parent_checkpoint_id: str | None,
+        checkpoint: tuple[str, bytes],
+        metadata: tuple[str, bytes],
+    ) -> None:
+        """Store serialized checkpoint data and metadata."""
+        raise NotImplementedError
+
+    async def get_checkpoint(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        checkpoint_id: str | None = None,
+    ) -> tuple[str, tuple[str, bytes], tuple[str, bytes], str | None] | None:
+        """Retrieve checkpoint by id, or latest checkpoint if checkpoint_id is None.
+
+        Returns (checkpoint_id, checkpoint, metadata, parent_checkpoint_id) or None.
+        """
+        raise NotImplementedError
+
+    async def list_checkpoints(
+        self,
+        thread_id: str | None = None,
+        checkpoint_ns: str | None = None,
+        before_checkpoint_id: str | None = None,
+        limit: int | None = None,
+    ) -> list[tuple[str, str, str, tuple[str, bytes], tuple[str, bytes], str | None]]:
+        """List checkpoints matching filters.
+
+        Returns list of (thread_id, checkpoint_ns, checkpoint_id, checkpoint, metadata, parent_id).
+        """
+        raise NotImplementedError
+
+    async def put_blobs(
+        self,
+        blobs: list[tuple[str, str, str, str | int | float, tuple[str, bytes]]],
+    ) -> None:
+        """Store channel version blobs as (thread_id, checkpoint_ns, channel, version, blob)."""
+        raise NotImplementedError
+
+    async def get_blobs(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        channel_versions: dict[str, str | int | float],
+    ) -> dict[str, tuple[str, bytes]]:
+        """Retrieve channel blobs for the given channel versions."""
+        raise NotImplementedError
+
+    async def put_writes(
+        self,
+        writes: list[tuple[str, str, str, str, int, str, tuple[str, bytes], str]],
+    ) -> None:
+        """Store task execution writes as (thread_id, ns, cid, task_id, idx, channel, val, path)."""
+        raise NotImplementedError
+
+    async def get_writes(
+        self,
+        thread_id: str,
+        checkpoint_ns: str,
+        checkpoint_id: str,
+    ) -> list[tuple[str, str, tuple[str, bytes], str]]:
+        """Retrieve pending writes as (task_id, channel, value_tuple, task_path)."""
+        raise NotImplementedError
+
+    async def delete_thread(self, thread_id: str) -> None:
+        """Delete all checkpoints, blobs, and writes for thread_id."""
+        raise NotImplementedError
+
+
+__all__ = [
+    "CheckpointStore",
+    "EvalStore",
+    "PlaybookStore",
+    "RunStore",
+]

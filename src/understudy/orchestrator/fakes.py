@@ -2,7 +2,7 @@
 
 from understudy.actuator.fakes import FakeActuator
 from understudy.common.clock import Clock, resolve_clock
-from understudy.contracts.enums import RunOutcome
+from understudy.contracts.enums import KernelVerdictType, RunOutcome
 from understudy.contracts.incident import (
     Alert,
     IncidentContext,
@@ -22,13 +22,23 @@ from understudy.signals.fakes import (
     FakeDeployHistory,
     FakeObservabilityAdapter,
 )
-from understudy.store.fakes import FakeEvalStore, FakePlaybookStore, FakeRunStore
+from understudy.store.fakes import (
+    FakeCheckpointStore,
+    FakeEvalStore,
+    FakePlaybookStore,
+    FakeRunStore,
+)
 from understudy.tournament.fakes import FakeTournament
 
 
-def create_fake_deps(seed: int = 42, clock: Clock | None = None) -> Deps:
+def create_fake_deps(
+    seed: int = 42,
+    clock: Clock | None = None,
+    force_veto: bool = False,
+) -> Deps:
     """Construct and return a Deps container wired entirely with deterministic fakes."""
     active_clock = resolve_clock(clock)
+    verdict = KernelVerdictType.VETO if force_veto else None
     return Deps(
         run_store=FakeRunStore(),
         playbook_store=FakePlaybookStore(),
@@ -43,9 +53,11 @@ def create_fake_deps(seed: int = 42, clock: Clock | None = None) -> Deps:
         fleet_controller=FakeFleetController(clock=active_clock),
         mirror_registry=FakeMirrorRegistry(),
         tournament=FakeTournament(seed=seed, clock=active_clock),
-        safety_kernel=FakeSafetyKernel(),
+        safety_kernel=FakeSafetyKernel(force_verdict=verdict),
         actuator=FakeActuator(),
         notifier=FakeNotifier(),
+        clock=active_clock,
+        checkpoint_store=FakeCheckpointStore(),
     )
 
 
@@ -57,6 +69,7 @@ class FakeOrchestrator(Orchestrator):
         deps: Deps | None = None,
         seed: int = 42,
         clock: Clock | None = None,
+        force_veto: bool = False,
     ) -> None:
         if clock is not None:
             self.clock = clock
@@ -64,7 +77,7 @@ class FakeOrchestrator(Orchestrator):
             self.clock = deps.dependency_graph.clock
         else:
             self.clock = resolve_clock(None)
-        self.deps = deps or create_fake_deps(seed=seed, clock=self.clock)
+        self.deps = deps or create_fake_deps(seed=seed, clock=self.clock, force_veto=force_veto)
         self.seed = seed
 
     async def run_incident(self, alert: Alert) -> RunRecord:

@@ -33,3 +33,7 @@ class ActuationError(UnderstudyError):
 
 class EvidenceError(UnderstudyError):
     """Raised when tournament evidence fails fidelity or observation checks."""
+
+
+class OrchestratorError(UnderstudyError):
+    """Raised on orchestrator state transition or control loop failure."""

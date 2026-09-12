@@ -39,7 +39,12 @@ from understudy.signals.fakes import (
     FakeDeployHistory,
     FakeObservabilityAdapter,
 )
-from understudy.store.fakes import FakeEvalStore, FakePlaybookStore, FakeRunStore
+from understudy.store.fakes import (
+    FakeCheckpointStore,
+    FakeEvalStore,
+    FakePlaybookStore,
+    FakeRunStore,
+)
 from understudy.tournament.fakes import FakeTournament
 
 FIXED_NOW = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
@@ -154,6 +159,101 @@ async def test_fake_eval_store() -> None:
     assert len(filtered) == 1
     none_filtered = await store.get_scenario_results("other")
     assert len(none_filtered) == 0
+
+
+@pytest.mark.asyncio
+async def test_fake_checkpoint_store() -> None:
+    store = FakeCheckpointStore()
+
+    # Initial state empty
+    assert await store.get_checkpoint("inc_1", "") is None
+    assert await store.list_checkpoints() == []
+    assert await store.get_blobs("inc_1", "", {"ch": 1}) == {}
+    assert await store.get_writes("inc_1", "", "cp_1") == []
+
+    # Put checkpoint and query
+    await store.put_checkpoint(
+        thread_id="inc_1",
+        checkpoint_ns="",
+        checkpoint_id="cp_001",
+        parent_checkpoint_id=None,
+        checkpoint=("msgpack", b"cp1"),
+        metadata=("msgpack", b"md1"),
+    )
+    await store.put_checkpoint(
+        thread_id="inc_1",
+        checkpoint_ns="",
+        checkpoint_id="cp_002",
+        parent_checkpoint_id="cp_001",
+        checkpoint=("msgpack", b"cp2"),
+        metadata=("msgpack", b"md2"),
+    )
+
+    # Get specific and latest
+    latest = await store.get_checkpoint("inc_1", "")
+    assert latest is not None
+    assert latest[0] == "cp_002"
+    assert latest[3] == "cp_001"
+
+    specific = await store.get_checkpoint("inc_1", "", "cp_001")
+    assert specific is not None
+    assert specific[0] == "cp_001"
+    assert specific[3] is None
+
+    assert await store.get_checkpoint("inc_1", "", "cp_missing") is None
+    assert await store.get_checkpoint("inc_other", "") is None
+
+    # List with filters and limits
+    all_cps = await store.list_checkpoints(thread_id="inc_1")
+    assert len(all_cps) == 2
+    assert all_cps[0][2] == "cp_002"  # Reverse chronological
+
+    before_cps = await store.list_checkpoints(thread_id="inc_1", before_checkpoint_id="cp_002")
+    assert len(before_cps) == 1
+    assert before_cps[0][2] == "cp_001"
+
+    limited = await store.list_checkpoints(thread_id="inc_1", limit=1)
+    assert len(limited) == 1
+    assert limited[0][2] == "cp_002"
+
+    # Blobs
+    await store.put_blobs(
+        [
+            ("inc_1", "", "channel_a", 1, ("msgpack", b"blob_a")),
+            ("inc_1", "", "channel_b", "v1.0", ("msgpack", b"blob_b")),
+        ]
+    )
+    blobs = await store.get_blobs("inc_1", "", {"channel_a": 1, "channel_b": "v1.0", "ch_c": 2})
+    assert len(blobs) == 2
+    assert blobs["channel_a"] == ("msgpack", b"blob_a")
+    assert blobs["channel_b"] == ("msgpack", b"blob_b")
+
+    # Writes
+    await store.put_writes(
+        [
+            ("inc_1", "", "cp_002", "task_1", 0, "out", ("msgpack", b"val"), "step_a"),
+        ]
+    )
+    writes = await store.get_writes("inc_1", "", "cp_002")
+    assert len(writes) == 1
+    assert writes[0] == ("task_1", "out", ("msgpack", b"val"), "step_a")
+    assert await store.get_writes("inc_1", "", "cp_empty") == []
+
+    # Put data for a second thread to test delete_thread non-matching key branches
+    await store.put_checkpoint("inc_2", "", "cp_inc2", None, ("msgpack", b"cp"), ("msgpack", b"md"))
+    await store.put_blobs([("inc_2", "", "channel_2", 1, ("msgpack", b"blob_2"))])
+    await store.put_writes(
+        [("inc_2", "", "cp_inc2", "task_2", 0, "out", ("msgpack", b"val"), "step")]
+    )
+
+    # Delete thread inc_1 (inc_2 remains)
+    await store.delete_thread("inc_1")
+    assert await store.get_checkpoint("inc_1", "") is None
+    assert await store.get_blobs("inc_1", "", {"channel_a": 1}) == {}
+    assert await store.get_writes("inc_1", "", "cp_002") == []
+    assert await store.get_checkpoint("inc_2", "") is not None
+    assert await store.get_blobs("inc_2", "", {"channel_2": 1}) != {}
+    assert await store.get_writes("inc_2", "", "cp_inc2") != []
 
 
 @pytest.mark.asyncio
