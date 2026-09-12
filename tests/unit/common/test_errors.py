@@ -6,6 +6,7 @@ from understudy.common.errors import (
     EvidenceError,
     FleetError,
     KernelError,
+    OrchestratorError,
     UnderstudyError,
 )
 
@@ -25,3 +26,4 @@ def test_understudy_error_hierarchy() -> None:
     assert issubclass(KernelError, UnderstudyError)
     assert issubclass(ActuationError, UnderstudyError)
     assert issubclass(EvidenceError, UnderstudyError)
+    assert issubclass(OrchestratorError, UnderstudyError)
