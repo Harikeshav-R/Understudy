@@ -179,7 +179,15 @@ async def test_fake_deps_and_orchestrator_force_veto() -> None:
 @pytest.mark.asyncio
 async def test_run_demo_custom_clock() -> None:
     """Verify run_demo respects injected custom clock for deterministic alert creation."""
-    frozen = FrozenClock(datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC))
+    moment = datetime(2026, 1, 1, 12, 0, 0, tzinfo=UTC)
+    frozen = FrozenClock(moment)
     transitions, record = await run_demo(seed=42, clock=frozen)
     assert len(transitions) == 13
     assert record.outcome == RunOutcome.EXECUTED
+
+    # Every timestamp the loop stamps comes from the injected clock, not wall time,
+    # so an eval-harness replay of the same seed is byte-identical.
+    assert record.context.alert.fired_at == moment
+    assert record.context.gathered_at == moment
+    assert record.started_at == moment
+    assert record.finished_at == moment

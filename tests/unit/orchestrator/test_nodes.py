@@ -22,7 +22,10 @@ from understudy.contracts.incident import (
 from understudy.contracts.kernel import KernelVerdict
 from understudy.contracts.plan import ActionParams, RemediationPlan, ResourceRef
 from understudy.contracts.twin import MirrorStats, TwinHandle
+from understudy.fleet.fakes import FakeFleetController
 from understudy.kernel.fakes import FakeSafetyKernel
+from understudy.mirror.fakes import FakeMirrorRegistry
+from understudy.notify.fakes import FakeNotifier
 from understudy.orchestrator.api import Deps
 from understudy.orchestrator.fakes import create_fake_deps
 from understudy.orchestrator.nodes import (
@@ -323,10 +326,10 @@ async def test_apply_candidates_node() -> None:
     t0 = _sample_twin("twin_0", 0)
     t1 = _sample_twin("twin_1", 1)
 
-    # Case 1: Mismatched counts
-    state_mismatch = State(incident_id="inc_123", plans=[p0], twins=[t0, t1])
-    with pytest.raises(OrchestratorError, match="Mismatched plans"):
-        await apply_candidates(state_mismatch, deps)
+    # Case 1: A plan with no twin at its candidate_index
+    state_missing = State(incident_id="inc_123", plans=[p0, p1], twins=[t0])
+    with pytest.raises(OrchestratorError, match=r"No twin forked for candidate_index \[1\]"):
+        await apply_candidates(state_missing, deps)
 
     # Case 2: Matching apply
     state = State(incident_id="inc_123", plans=[p0, p1], twins=[t0, t1])
@@ -334,6 +337,18 @@ async def test_apply_candidates_node() -> None:
     assert len(res["twins"]) == 2
     assert res["twins"][0].state == "applied"
     assert res["twins"][1].state == "applied"
+
+    # Case 3: Twins out of list order still pair by candidate_index, not position
+    state_unordered = State(incident_id="inc_123", plans=[p0, p1], twins=[t1, t0])
+    res_unordered = await apply_candidates_node(state_unordered, deps)
+    assert [t.twin_id for t in res_unordered["twins"]] == ["twin_0", "twin_1"]
+    assert [t.candidate_index for t in res_unordered["twins"]] == [0, 1]
+
+    # Case 4: A stale twin left over from an earlier fork is superseded, not applied to
+    stale = _sample_twin("twin_stale_1", 1)
+    state_extra = State(incident_id="inc_123", plans=[p0, p1], twins=[stale, t0, t1])
+    res_extra = await apply_candidates_node(state_extra, deps)
+    assert [t.twin_id for t in res_extra["twins"]] == ["twin_0", "twin_1"]
 
 
 @pytest.mark.asyncio
@@ -349,7 +364,7 @@ async def test_observe_node() -> None:
     assert "tournament" in res
     assert len(res["evidence"]) == 1
 
-    # Case 2: Evidence already recorded
+    # Case 2: Evidence inherited from a previous attempt is re-observed, not reused
     ev0 = CandidateEvidence(
         plan_id="plan_0",
         twin_id="twin_0",
@@ -363,9 +378,11 @@ async def test_observe_node() -> None:
         mirror_stats=MirrorStats(twin_id="twin_0", delivered=100, dropped=0),
         evidence_complete=True,
     )
-    state_recorded = State(incident_id="inc_123", evidence=[ev0])
+    state_recorded = State(incident_id="inc_123", plans=[p0], twins=[t0], evidence=[ev0])
     res_recorded = await observe(state_recorded, deps)
-    assert res_recorded == {}
+    assert len(res_recorded["evidence"]) == 1
+    assert res_recorded["evidence"][0] != ev0
+    assert res_recorded["tournament"] is not None
 
 
 @pytest.mark.asyncio
@@ -569,7 +586,11 @@ async def test_actuate_node() -> None:
     )
     res_fail = await actuate(state_ok, deps_fail)
     assert res_fail["prod_outcome"] == "not_resolved"
-    assert res_fail["outcome"] == RunOutcome.FAILED
+    assert res_fail["prod_applied_plan_id"] == "plan_0"
+    # Outcome is left to escalate_pagerduty: production is still broken, so the run
+    # must reach a human rather than terminate here.
+    assert "outcome" not in res_fail
+    assert "did not resolve incident" in res_fail["escalation_reason"]
 
 
 @pytest.mark.asyncio
@@ -714,3 +735,90 @@ async def test_handle_failure_node() -> None:
     state2 = State(incident_id="", errors=[])
     res2 = await handle_failure(state2, deps)
     assert res2["outcome"] == RunOutcome.FAILED
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_unregisters_mirrors() -> None:
+    """Mirror registrations must not outlive the twins the failure path destroys."""
+    deps = create_fake_deps()
+    twin = _sample_twin("twin_0", 0)
+    registry = deps.mirror_registry
+    assert isinstance(registry, FakeMirrorRegistry)
+    await registry.register_twin(twin)
+
+    state = State(
+        incident_id="inc_123",
+        context=_sample_context("inc_123"),
+        twins=[twin],
+        errors=["apply_candidates blew up"],
+    )
+    await handle_failure_node(state, deps)
+
+    stats = await registry.get_stats(twin.twin_id)
+    assert stats.delivered == 0  # unregistered: no traffic is mirrored to a dead twin
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_after_escalation_does_not_page_twice() -> None:
+    """A teardown crash after a successful escalation keeps ESCALATED and pages once."""
+    deps = create_fake_deps()
+    notifier = deps.notifier
+    assert isinstance(notifier, FakeNotifier)
+
+    state = State(
+        incident_id="inc_123",
+        context=_sample_context("inc_123"),
+        outcome=RunOutcome.ESCALATED,
+        escalation_reason="K3 blast radius exceeded",
+        escalated=True,
+        errors=["RuntimeError: teardown_fleet exploded"],
+    )
+    res = await handle_failure_node(state, deps)
+
+    assert notifier.pagerduty_escalations == []
+    assert res["outcome"] == RunOutcome.ESCALATED
+    assert res["escalation_reason"].startswith("K3 blast radius exceeded | ")
+    assert "teardown_fleet exploded" in res["escalation_reason"]
+
+    run_rec = await deps.run_store.get_run("run_inc_123")
+    assert run_rec is not None
+    assert run_rec.outcome == RunOutcome.ESCALATED
+    assert run_rec.escalation_reason == res["escalation_reason"]
+
+
+@pytest.mark.asyncio
+async def test_handle_failure_records_run_when_cleanup_raises() -> None:
+    """Cleanup failures are collected into the reason, never allowed to skip the record."""
+    deps = create_fake_deps()
+    twin = _sample_twin("twin_0", 0)
+
+    class ExplodingRegistry(FakeMirrorRegistry):
+        async def unregister_twin(self, twin_id: str) -> None:
+            raise RuntimeError(f"gateway unreachable for {twin_id}")
+
+    class ExplodingFleet(FakeFleetController):
+        async def teardown_all(self, incident_id: str) -> None:
+            raise RuntimeError(f"k8s api down for {incident_id}")
+
+    deps_broken = Deps(
+        **{
+            **deps.__dict__,
+            "mirror_registry": ExplodingRegistry(),
+            "fleet_controller": ExplodingFleet(clock=deps.clock),
+        }
+    )
+    state = State(
+        incident_id="inc_123",
+        context=_sample_context("inc_123"),
+        twins=[twin],
+        errors=["original failure"],
+    )
+    res = await handle_failure_node(state, deps_broken)
+
+    assert res["outcome"] == RunOutcome.FAILED
+    assert "gateway unreachable for twin_0" in res["escalation_reason"]
+    assert "k8s api down for inc_123" in res["escalation_reason"]
+
+    run_rec = await deps_broken.run_store.get_run("run_inc_123")
+    assert run_rec is not None
+    assert run_rec.outcome == RunOutcome.FAILED

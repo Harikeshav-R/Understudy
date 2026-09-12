@@ -1,6 +1,5 @@
 """Ingest node: acquires the initial incident alert and initializes tracking state."""
 
-from datetime import UTC, datetime
 from typing import Any
 
 from understudy.common.ids import new_incident_id
@@ -22,7 +21,7 @@ async def ingest(state: State, deps: Deps) -> dict[str, Any]:
     else:
         incident_id = new_incident_id()
 
-    started_at = state.started_at or datetime.now(UTC)
+    started_at = state.started_at or deps.clock.now()
     logger = get_logger(incident_id=incident_id)
     logger.info("incident_ingested", alert_id=alert.alert_id, service=alert.service)
 

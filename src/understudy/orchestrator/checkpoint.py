@@ -10,6 +10,7 @@ Implements build-plan step B1.4:
 
 import asyncio
 import concurrent.futures
+import random
 from collections.abc import AsyncIterator, Coroutine, Iterator, Sequence
 from typing import Any
 
@@ -66,7 +67,11 @@ class StoreCheckpointSaver(BaseCheckpointSaver[str]):
             except ValueError:
                 current_v = 0
         next_v = current_v + 1
-        return f"{next_v:032}"
+        # Random suffix mirrors LangGraph's own savers: blobs are keyed by
+        # (thread_id, ns, channel, version), so a bare counter makes two branches of the
+        # same thread collide on one key and silently overwrite each other's channel values.
+        next_h = random.random()
+        return f"{next_v:032}.{next_h:016}"
 
     async def aput(
         self,

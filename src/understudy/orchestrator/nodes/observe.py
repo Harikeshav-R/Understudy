@@ -11,10 +11,6 @@ async def observe(state: State, deps: Deps) -> dict[str, Any]:
     """Collect candidate evidence from twin observation probes."""
     logger = get_logger(incident_id=state.incident_id)
 
-    if state.evidence:
-        logger.info("observation_already_recorded", count=len(state.evidence))
-        return {}
-
     evidence, tournament_result = await deps.tournament.observe_and_score(state.twins, state.plans)
     logger.info("twins_observed", evidence_count=len(evidence))
 

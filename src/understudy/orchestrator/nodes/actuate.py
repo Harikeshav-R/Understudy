@@ -29,20 +29,30 @@ async def actuate(state: State, deps: Deps) -> dict[str, Any]:
 
     success = await deps.actuator.apply_to_production(winner_plan, state.verdict)
     prod_outcome = "resolved" if success else "not_resolved"
-    outcome = RunOutcome.EXECUTED if success else RunOutcome.FAILED
 
     logger.info(
         "production_actuated",
         plan_id=winner_plan.plan_id,
         prod_outcome=prod_outcome,
-        outcome=outcome.value,
     )
 
-    return {
+    updates: dict[str, Any] = {
         "prod_applied_plan_id": winner_plan.plan_id,
         "prod_outcome": prod_outcome,
-        "outcome": outcome,
     }
+
+    if success:
+        updates["outcome"] = RunOutcome.EXECUTED
+        return updates
+
+    # Production is still broken: the run must reach a human, so leave the outcome
+    # unset and let the escalation branch own it (graph.route_actuation).
+    updates["escalation_reason"] = (
+        f"Production remediation did not resolve incident "
+        f"(plan {winner_plan.plan_id}, prod_outcome {prod_outcome})"
+    )
+    logger.info("actuation_unresolved", plan_id=winner_plan.plan_id)
+    return updates
 
 
 node = actuate

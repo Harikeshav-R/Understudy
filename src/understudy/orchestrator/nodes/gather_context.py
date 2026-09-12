@@ -1,6 +1,5 @@
 """Gather context node: collects metrics, logs, deploys, and graph topology."""
 
-from datetime import UTC, datetime
 from typing import Any
 
 from understudy.common.errors import OrchestratorError
@@ -25,7 +24,7 @@ async def gather_context(state: State, deps: Deps) -> dict[str, Any]:
     recent_deploys = await deps.deploy_history.recent_deploys(limit=5)
     dep_graph = deps.dependency_graph.snapshot()
 
-    now = datetime.now(UTC)
+    now = deps.clock.now()
     context = IncidentContext(
         incident_id=incident_id,
         alert=alert,

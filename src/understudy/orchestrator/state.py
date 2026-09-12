@@ -159,6 +159,11 @@ def reduce_errors(current: list[str], update: Sequence[str] | str | None) -> lis
     return [*current, *update]
 
 
+def reduce_escalated(current: bool, update: bool | None) -> bool:
+    """Latch the escalation flag on; a page that was sent can never be un-sent."""
+    return current or bool(update)
+
+
 def reduce_started_at(current: datetime | None, update: datetime | None) -> datetime | None:
     """Preserve the earliest non-None start timestamp."""
     if current is not None:
@@ -213,9 +218,23 @@ class State(BaseModel):
         Literal["resolved", "not_resolved", "worsened"] | None, reduce_prod_outcome
     ] = None
     escalation_reason: Annotated[str | None, reduce_optional_str] = None
+    escalated: Annotated[bool, reduce_escalated] = False
     scenario_id: Annotated[str | None, reduce_optional_str] = None
 
-    def to_run_record(self, run_id: str | None = None) -> RunRecord:
+    def resolved_outcome(self) -> RunOutcome:
+        """Derive the terminal outcome, letting errors downgrade a non-escalated run.
+
+        An ESCALATED run stays escalated: a human already owns the incident, and that
+        fact outranks any later cleanup failure. Otherwise accumulated errors force
+        FAILED, so a run that actuated and then broke is never recorded as EXECUTED.
+        """
+        if self.outcome == RunOutcome.ESCALATED:
+            return RunOutcome.ESCALATED
+        if self.errors:
+            return RunOutcome.FAILED
+        return self.outcome or RunOutcome.EXECUTED
+
+    def to_run_record(self, run_id: str | None = None, now: datetime | None = None) -> RunRecord:
         """Convert current state to immutable RunRecord contract.
 
         Raises OrchestratorError if context is absent, ensuring incomplete runs
@@ -223,14 +242,14 @@ class State(BaseModel):
         """
         if self.context is None:
             raise OrchestratorError("Cannot convert State to RunRecord without context")
-        now = datetime.now(UTC)
+        now = now or datetime.now(UTC)
         return RunRecord(
             run_id=run_id or f"run_{self.incident_id}",
             incident_id=self.incident_id,
             scenario_id=self.scenario_id,
             started_at=self.started_at or now,
             finished_at=self.finished_at or now,
-            outcome=self.outcome or (RunOutcome.FAILED if self.errors else RunOutcome.EXECUTED),
+            outcome=self.resolved_outcome(),
             context=self.context,
             plans=self.plans,
             evidence=self.evidence,

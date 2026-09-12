@@ -34,10 +34,21 @@ def test_get_next_version() -> None:
     store = FakeCheckpointStore()
     saver = StoreCheckpointSaver(store)
 
-    assert saver.get_next_version(None, None) == f"{1:032}"
-    assert saver.get_next_version(5, None) == f"{6:032}"
-    assert saver.get_next_version("2.0", None) == f"{3:032}"
-    assert saver.get_next_version("invalid_str", None) == f"{1:032}"
+    assert saver.get_next_version(None, None).startswith(f"{1:032}.")
+    assert saver.get_next_version(5, None).startswith(f"{6:032}.")
+    assert saver.get_next_version("2.0", None).startswith(f"{3:032}.")
+    assert saver.get_next_version("invalid_str", None).startswith(f"{1:032}.")
+
+
+def test_get_next_version_is_unique_per_call() -> None:
+    """Two branches of one thread must not produce the same channel version (blob key)."""
+    saver = StoreCheckpointSaver(FakeCheckpointStore())
+
+    branch_a = saver.get_next_version(f"{1:032}.0", None)
+    branch_b = saver.get_next_version(f"{1:032}.0", None)
+
+    assert branch_a != branch_b
+    assert branch_a.split(".")[0] == branch_b.split(".")[0] == f"{2:032}"
 
 
 def test_init_with_custom_serde() -> None:

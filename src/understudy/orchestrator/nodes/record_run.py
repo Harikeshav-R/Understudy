@@ -1,6 +1,5 @@
 """Record run node: persists immutable execution history to append-only store."""
 
-from datetime import UTC, datetime
 from typing import Any
 
 from understudy.common.logging import get_logger
@@ -11,10 +10,10 @@ from understudy.orchestrator.state import State
 async def record_run(state: State, deps: Deps) -> dict[str, Any]:
     """Construct and persist RunRecord, recording playbook outcomes if applicable."""
     logger = get_logger(incident_id=state.incident_id)
-    finished_at = datetime.now(UTC)
+    finished_at = deps.clock.now()
 
     updated_state = state.model_copy(update={"finished_at": finished_at})
-    record = updated_state.to_run_record()
+    record = updated_state.to_run_record(now=finished_at)
 
     await deps.run_store.record_run(record)
 

@@ -79,6 +79,15 @@ def route_tournament(state: State) -> str:
     return "safety_kernel"
 
 
+def route_actuation(state: State) -> str:
+    """Route post-actuation: resolved production to Slack, anything else to on-call."""
+    if state.errors:
+        return "handle_failure"
+    if state.prod_outcome != "resolved":
+        return "escalate_pagerduty"
+    return "notify_slack"
+
+
 def route_safety_kernel(state: State) -> str:
     """Route kernel verdict: PASS to actuate, VETO/UNCERTAIN to escalate."""
     if state.errors:
@@ -106,9 +115,11 @@ def build_graph(
         resolved_checkpointer = (
             create_checkpointer(deps) if deps.checkpoint_store is not None else None
         )
+    elif checkpointer is None or isinstance(checkpointer, BaseCheckpointSaver):
+        resolved_checkpointer = checkpointer
     else:
-        resolved_checkpointer = (
-            checkpointer if isinstance(checkpointer, BaseCheckpointSaver) else None
+        raise TypeError(
+            f"checkpointer must be a BaseCheckpointSaver or None, got {type(checkpointer).__name__}"
         )
 
     builder: StateGraph[State, None, State, State] = StateGraph(State)
@@ -159,8 +170,12 @@ def build_graph(
     # Post-actuation and escalation convergence
     builder.add_conditional_edges(
         "actuate",
-        route_linear("notify_slack"),
-        path_map={"notify_slack": "notify_slack", "handle_failure": "handle_failure"},
+        route_actuation,
+        path_map={
+            "notify_slack": "notify_slack",
+            "escalate_pagerduty": "escalate_pagerduty",
+            "handle_failure": "handle_failure",
+        },
     )
     builder.add_conditional_edges(
         "notify_slack",
@@ -179,7 +194,11 @@ def build_graph(
         route_linear("record_run"),
         path_map={"record_run": "record_run", "handle_failure": "handle_failure"},
     )
-    builder.add_edge("record_run", END)
+    builder.add_conditional_edges(
+        "record_run",
+        route_linear(END),
+        path_map={END: END, "handle_failure": "handle_failure"},
+    )
     builder.add_edge("handle_failure", END)
 
     return builder.compile(checkpointer=resolved_checkpointer)
@@ -202,13 +221,17 @@ async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
             return existing
 
     if final_state.context is None:
-        raise OrchestratorError("Cannot produce RunRecord: incident context was not gathered")
+        detail = "; ".join(final_state.errors) if final_state.errors else "no errors reported"
+        raise OrchestratorError(
+            f"Cannot produce RunRecord: incident context was not gathered ({detail})"
+        )
 
-    return final_state.to_run_record()
+    return final_state.to_run_record(now=deps.clock.now())
 
 
 __all__ = [
     "build_graph",
+    "route_actuation",
     "route_linear",
     "route_safety_kernel",
     "route_tournament",

@@ -1,12 +1,12 @@
 """Orchestrator component protocol interfaces and dependency seam."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from understudy.actuator.api import Actuator
-from understudy.common.clock import Clock
+from understudy.common.clock import Clock, SystemClock
 from understudy.contracts.incident import Alert
 from understudy.contracts.run import RunRecord
 from understudy.fleet.api import FleetController
@@ -47,6 +47,7 @@ class Deps:
     safety_kernel: SafetyKernel
     actuator: Actuator
     notifier: Notifier
+    clock: Clock = field(default_factory=SystemClock)
     checkpoint_store: CheckpointStore | None = None
 
 

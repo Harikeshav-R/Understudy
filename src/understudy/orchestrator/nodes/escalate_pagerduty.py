@@ -32,6 +32,7 @@ async def escalate_pagerduty(state: State, deps: Deps) -> dict[str, Any]:
     return {
         "outcome": RunOutcome.ESCALATED,
         "escalation_reason": reason,
+        "escalated": True,
     }
 
 

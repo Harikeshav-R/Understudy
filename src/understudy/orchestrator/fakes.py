@@ -56,6 +56,7 @@ def create_fake_deps(
         safety_kernel=FakeSafetyKernel(force_verdict=verdict),
         actuator=FakeActuator(),
         notifier=FakeNotifier(),
+        clock=active_clock,
         checkpoint_store=FakeCheckpointStore(),
     )
 

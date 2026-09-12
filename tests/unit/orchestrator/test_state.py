@@ -28,6 +28,7 @@ from understudy.orchestrator.state import (
     reduce_alert,
     reduce_context,
     reduce_errors,
+    reduce_escalated,
     reduce_evidence,
     reduce_finished_at,
     reduce_incident_id,
@@ -449,6 +450,52 @@ def test_to_run_record() -> None:
     assert record_full.prod_outcome == "resolved"
     assert record_full.escalation_reason == "K3 veto"
     assert record_full.scenario_id == "scenario_42"
+
+
+def test_resolved_outcome_rules() -> None:
+    """Errors downgrade a run to FAILED, but never override an escalation."""
+    ctx = _sample_context("inc_123")
+
+    # Errors override an EXECUTED outcome: the run acted, then something broke.
+    executed_with_errors = State(
+        incident_id="inc_123",
+        context=ctx,
+        outcome=RunOutcome.EXECUTED,
+        errors=["record_run failed"],
+    )
+    assert executed_with_errors.resolved_outcome() == RunOutcome.FAILED
+    assert executed_with_errors.to_run_record().outcome == RunOutcome.FAILED
+
+    # An escalated run stays escalated: a human already owns the incident.
+    escalated_with_errors = State(
+        incident_id="inc_123",
+        context=ctx,
+        outcome=RunOutcome.ESCALATED,
+        errors=["teardown_fleet failed"],
+    )
+    assert escalated_with_errors.resolved_outcome() == RunOutcome.ESCALATED
+
+    # No outcome and no errors still means EXECUTED.
+    assert State(incident_id="inc_123", context=ctx).resolved_outcome() == RunOutcome.EXECUTED
+
+
+def test_to_run_record_accepts_injected_now() -> None:
+    """Timestamp fallbacks come from the caller's clock, not wall time."""
+    frozen = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    state = State(incident_id="inc_123", context=_sample_context("inc_123"))
+
+    record = state.to_run_record(now=frozen)
+
+    assert record.started_at == frozen
+    assert record.finished_at == frozen
+
+
+def test_reduce_escalated_latches_on() -> None:
+    """Once a page has been sent, no later update may clear the flag."""
+    assert reduce_escalated(False, None) is False
+    assert reduce_escalated(False, True) is True
+    assert reduce_escalated(True, False) is True
+    assert reduce_escalated(True, None) is True
 
 
 def test_langgraph_stategraph_integration() -> None:

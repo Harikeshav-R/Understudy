@@ -72,7 +72,10 @@ async def run_demo(
 
     record = await active_deps.run_store.get_run(f"run_{incident_id}")
     if record is None:
-        raise OrchestratorError(f"Run record run_{incident_id} not found in store")
+        raise OrchestratorError(
+            f"Run record run_{incident_id} not found in store "
+            f"(last node: {transitions[-1] if transitions else 'none'})"
+        )
 
     return transitions, record
 

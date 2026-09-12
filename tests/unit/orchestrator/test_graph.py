@@ -7,8 +7,12 @@ from unittest.mock import AsyncMock
 if TYPE_CHECKING:
     from langchain_core.runnables import RunnableConfig
 
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.contracts.run import RunRecord
+
 import pytest
 
+from understudy.actuator.fakes import FakeActuator
 from understudy.common.errors import OrchestratorError
 from understudy.contracts.enums import (
     InvariantTier,
@@ -20,11 +24,13 @@ from understudy.contracts.evidence import CandidateEvidence, TournamentResult
 from understudy.contracts.incident import Alert
 from understudy.contracts.kernel import InvariantResult, KernelVerdict
 from understudy.kernel.fakes import FakeSafetyKernel
+from understudy.notify.fakes import FakeNotifier
 from understudy.orchestrator.api import build_graph as api_build_graph
 from understudy.orchestrator.api import run_incident as api_run_incident
 from understudy.orchestrator.fakes import create_fake_deps
 from understudy.orchestrator.graph import (
     build_graph,
+    route_actuation,
     route_linear,
     route_safety_kernel,
     route_tournament,
@@ -32,6 +38,7 @@ from understudy.orchestrator.graph import (
 )
 from understudy.orchestrator.nodes import ALL_NODES
 from understudy.orchestrator.state import State
+from understudy.store.fakes import FakeRunStore
 from understudy.tournament.fakes import FakeTournament
 
 
@@ -407,6 +414,76 @@ async def test_node_runner_empty_incident_id_logging() -> None:
     assert "ValueError: alert source unreachable" in res["errors"][0]
 
 
+def test_route_actuation_branches() -> None:
+    """Verify route_actuation pages on-call unless production came back resolved."""
+    assert route_actuation(State(errors=["boom"], prod_outcome="resolved")) == "handle_failure"
+    assert route_actuation(State(prod_outcome="resolved")) == "notify_slack"
+    assert route_actuation(State(prod_outcome="not_resolved")) == "escalate_pagerduty"
+    assert route_actuation(State(prod_outcome=None)) == "escalate_pagerduty"
+
+
+@pytest.mark.asyncio
+async def test_unresolved_production_escalates() -> None:
+    """A remediation that applies but does not resolve production must page a human."""
+
+    class UnresolvingActuator(FakeActuator):
+        async def apply_to_production(self, plan: RemediationPlan, verdict: KernelVerdict) -> bool:
+            await super().apply_to_production(plan, verdict)
+            return False
+
+    deps = create_fake_deps()
+    deps = deps.__class__(**{**deps.__dict__, "actuator": UnresolvingActuator()})
+
+    record = await run_incident(_sample_alert("alt_unresolved"), deps)
+
+    notifier = deps.notifier
+    assert isinstance(notifier, FakeNotifier)
+    assert len(notifier.pagerduty_escalations) == 1
+    assert "did not resolve incident" in notifier.pagerduty_escalations[0]["reason"]
+    assert notifier.slack_posts == []
+
+    assert record.outcome == RunOutcome.ESCALATED
+    assert record.prod_outcome == "not_resolved"
+    assert record.prod_applied_plan_id is not None
+    assert record.escalation_reason is not None
+
+
+@pytest.mark.asyncio
+async def test_record_run_failure_reaches_handle_failure() -> None:
+    """A persistence failure in record_run must not end the graph silently."""
+
+    class FlakyRunStore(FakeRunStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.attempts = 0
+
+        async def record_run(self, record: RunRecord) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("run store unavailable")
+            await super().record_run(record)
+
+    store = FlakyRunStore()
+    deps = create_fake_deps()
+    deps = deps.__class__(**{**deps.__dict__, "run_store": store})
+
+    record = await run_incident(_sample_alert("alt_flaky"), deps)
+
+    # record_run raised, so the error edge ran handle_failure, which paged and
+    # persisted the run instead of the loop returning an unpersisted EXECUTED record.
+    assert store.attempts == 2
+    assert record.outcome == RunOutcome.FAILED
+    assert "run store unavailable" in (record.escalation_reason or "")
+
+    notifier = deps.notifier
+    assert isinstance(notifier, FakeNotifier)
+    assert len(notifier.pagerduty_escalations) == 1
+
+    stored = await store.get_run(record.run_id)
+    assert stored is not None
+    assert stored.outcome == RunOutcome.FAILED
+
+
 def test_build_graph_checkpointer_variants() -> None:
     """Verify build_graph handles various checkpointer configurations."""
     from understudy.orchestrator.checkpoint import StoreCheckpointSaver
@@ -428,9 +505,9 @@ def test_build_graph_checkpointer_variants() -> None:
     g3 = build_graph(deps, checkpointer=saver)
     assert g3.checkpointer is saver
 
-    # 4. invalid checkpointer argument falls back to None
-    g4 = build_graph(deps, checkpointer="invalid_saver")
-    assert g4.checkpointer is None
+    # 4. invalid checkpointer argument is rejected rather than silently dropped
+    with pytest.raises(TypeError, match="must be a BaseCheckpointSaver or None"):
+        build_graph(deps, checkpointer="invalid_saver")
 
 
 @pytest.mark.asyncio

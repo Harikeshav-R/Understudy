@@ -1,6 +1,5 @@
 """Safety kernel node: evaluates formal Z3 invariants on winning remediation plan."""
 
-from datetime import UTC, datetime
 from typing import Any
 
 from understudy.common.logging import get_logger
@@ -25,7 +24,7 @@ async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
             "escalation_reason": reason,
         }
 
-    now = datetime.now(UTC)
+    now = deps.clock.now()
     target_namespaces = {r.namespace for r in winner_plan.target_resources} or {"ust-prod"}
     has_inverse = winner_plan.inverse is not None or winner_plan.action == ActionType.NO_ACTION
 
