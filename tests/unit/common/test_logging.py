@@ -35,3 +35,19 @@ def test_get_logger_unbound(capsys: "pytest.CaptureFixture[str]") -> None:
     data = json.loads(captured.out.strip())
     assert data["event"] == "system_booted"
     assert "incident_id" not in data
+
+
+def test_configure_logging_custom_stream() -> None:
+    import io
+
+    stream = io.StringIO()
+    try:
+        configure_logging(log_level="INFO", file=stream)
+        logger = get_logger(incident_id="inc_stderr")
+        logger.info("custom_stream_event")
+
+        data = json.loads(stream.getvalue().strip())
+        assert data["event"] == "custom_stream_event"
+        assert data["incident_id"] == "inc_stderr"
+    finally:
+        configure_logging(log_level="INFO")

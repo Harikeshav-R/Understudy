@@ -1,9 +1,12 @@
 """Orchestrator component protocol interfaces and dependency seam."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from understudy.actuator.api import Actuator
+from understudy.common.clock import Clock
 from understudy.contracts.incident import Alert
 from understudy.contracts.run import RunRecord
 from understudy.fleet.api import FleetController
@@ -72,6 +75,42 @@ async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
     return await _run_incident(alert, deps)
 
 
+async def run_demo(
+    seed: int = 42,
+    force_veto: bool = False,
+    on_transition: Callable[[str], None] | None = None,
+    deps: Deps | None = None,
+    clock: Clock | None = None,
+) -> tuple[list[str], RunRecord]:
+    """Execute a synthetic demo through the full control loop on fakes."""
+    from understudy.orchestrator.demo import run_demo as _run_demo
+
+    return await _run_demo(
+        seed=seed,
+        force_veto=force_veto,
+        on_transition=on_transition,
+        deps=deps,
+        clock=clock,
+    )
+
+
+def render_graph_png(
+    output_path: Path | str | None = None,
+    deps: Deps | None = None,
+) -> bytes:
+    """Render the orchestrator StateGraph to PNG, optionally saving to output_path."""
+    from understudy.orchestrator.demo import render_graph_png as _render_graph_png
+
+    return _render_graph_png(output_path=output_path, deps=deps)
+
+
+def render_graph_mermaid(deps: Deps | None = None) -> str:
+    """Return the Mermaid diagram definition string for the orchestrator StateGraph."""
+    from understudy.orchestrator.demo import render_graph_mermaid as _render_graph_mermaid
+
+    return _render_graph_mermaid(deps=deps)
+
+
 __all__ = [
     "Deps",
     "Orchestrator",
@@ -80,5 +119,8 @@ __all__ = [
     "StoreCheckpointSaver",
     "build_graph",
     "create_checkpointer",
+    "render_graph_mermaid",
+    "render_graph_png",
+    "run_demo",
     "run_incident",
 ]

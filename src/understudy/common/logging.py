@@ -1,13 +1,13 @@
 """Structured JSON logging configuration using structlog."""
 
 import logging
-from typing import Any
+from typing import Any, TextIO
 
 import structlog
 
 
-def configure_logging(log_level: str = "INFO") -> None:
-    """Configure structlog to emit one JSON event per line to stdout."""
+def configure_logging(log_level: str = "INFO", file: TextIO | None = None) -> None:
+    """Configure structlog to emit one JSON event per line to stdout or specified stream."""
     level = getattr(logging, log_level.upper(), logging.INFO)
 
     processors: list[structlog.types.Processor] = [
@@ -19,9 +19,15 @@ def configure_logging(log_level: str = "INFO") -> None:
         structlog.processors.JSONRenderer(),
     ]
 
+    factory = (
+        structlog.PrintLoggerFactory(file=file)
+        if file is not None
+        else structlog.PrintLoggerFactory()
+    )
+
     structlog.configure(
         processors=processors,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=factory,
         wrapper_class=structlog.make_filtering_bound_logger(level),
         cache_logger_on_first_use=False,
     )
