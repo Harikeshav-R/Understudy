@@ -1,6 +1,7 @@
 """Orchestrator package holding LangGraph loop, nodes, and state."""
 
 from understudy.common.errors import OrchestratorError
+from understudy.orchestrator.graph import build_graph, run_incident
 from understudy.orchestrator.state import (
     State,
     reduce_alert,
@@ -22,6 +23,7 @@ from understudy.orchestrator.state import (
 __all__ = [
     "OrchestratorError",
     "State",
+    "build_graph",
     "reduce_alert",
     "reduce_context",
     "reduce_errors",
@@ -36,4 +38,5 @@ __all__ = [
     "reduce_tournament",
     "reduce_twins",
     "reduce_verdict",
+    "run_incident",
 ]

@@ -99,7 +99,7 @@ Phase 0 is not done.
 
 - [x] B1.1 `orchestrator/state.py` with explicit reducers
 - [x] B1.2 One node module per node in architecture §2.2; `Deps` injection seam
-- [ ] B1.3 `build_graph()` with conditional edges, error edge, guaranteed terminal nodes
+- [x] B1.3 `build_graph()` with conditional edges, error edge, guaranteed terminal nodes
 - [ ] B1.4 LangGraph checkpointing into the store, keyed by `incident_id`
 - [ ] B1.5 `ust demo --fake`
 

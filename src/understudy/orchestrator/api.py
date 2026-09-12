@@ -52,12 +52,16 @@ class Orchestrator(Protocol):
 
 def build_graph(deps: Deps) -> Any:
     """Compile and return the executable LangGraph state graph using provided dependencies."""
-    raise NotImplementedError
+    from understudy.orchestrator.graph import build_graph as _build_graph
+
+    return _build_graph(deps)
 
 
 async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
     """Execute the full incident control loop given an alert and dependencies."""
-    raise NotImplementedError
+    from understudy.orchestrator.graph import run_incident as _run_incident
+
+    return await _run_incident(alert, deps)
 
 
 __all__ = [
