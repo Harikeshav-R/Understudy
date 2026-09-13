@@ -1162,3 +1162,133 @@ def test_cli_mirror_compare_with_paths(monkeypatch: "pytest.MonkeyPatch") -> Non
         "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
         in res.stdout
     )
+
+
+def test_cli_tournament_replay_three_candidates() -> None:
+    """Verify ust tournament replay on three candidates fixture."""
+    res = runner.invoke(
+        app,
+        ["tournament", "replay", "--fixture", "fixtures/evidence_three_candidates.json"],
+    )
+    assert res.exit_code == 0
+    assert "Scoreboard:" in res.stdout
+    assert "plan_rollback" in res.stdout
+    assert "plan_restart" in res.stdout
+    assert "plan_no_action" in res.stdout
+    assert "outcome=decided" in res.stdout
+    assert "winner: plan_rollback" in res.stdout
+    assert "runner-up: plan_restart" in res.stdout
+    assert "margin: 0.1744" in res.stdout
+
+
+def test_cli_tournament_replay_near_tie() -> None:
+    """Verify ust tournament replay on near tie fixture reports ambiguous outcome."""
+    res = runner.invoke(
+        app,
+        ["tournament", "replay", "--fixture", "fixtures/evidence_near_tie.json"],
+    )
+    assert res.exit_code == 0
+    assert "Scoreboard:" in res.stdout
+    assert "outcome=ambiguous, no winner" in res.stdout
+    assert "margin: 0.0378" in res.stdout
+
+    # With margin override smaller than delta
+    res_override = runner.invoke(
+        app,
+        [
+            "tournament",
+            "replay",
+            "--fixture",
+            "fixtures/evidence_near_tie.json",
+            "--margin",
+            "0.02",
+        ],
+    )
+    assert res_override.exit_code == 0
+    assert "outcome=decided" in res_override.stdout
+    assert "winner: plan_rollback" in res_override.stdout
+
+
+def test_cli_tournament_replay_high_drop() -> None:
+    """Verify ust tournament replay on high drop candidate disqualifies with evidence_incomplete."""
+    res = runner.invoke(
+        app,
+        ["tournament", "replay", "--fixture", "fixtures/evidence_high_drop.json"],
+    )
+    assert res.exit_code == 0
+    assert "Scoreboard:" in res.stdout
+    assert 'Candidate plan_unreliable disqualified with reason "evidence_incomplete"' in res.stdout
+    assert "outcome=decided" in res.stdout
+    assert "winner: plan_rollback" in res.stdout
+
+
+def test_cli_tournament_replay_dict_envelope(tmp_path: Path) -> None:
+    """Verify ust tournament replay accepts dictionary with evidence key."""
+    import json
+
+    orig_fixture = Path("fixtures/evidence_three_candidates.json")
+    with orig_fixture.open(encoding="utf-8") as f:
+        data = json.load(f)
+    env_file = tmp_path / "envelope.json"
+    env_file.write_text(json.dumps({"evidence": data}), encoding="utf-8")
+
+    res = runner.invoke(app, ["tournament", "replay", "--fixture", str(env_file)])
+    assert res.exit_code == 0
+    assert "outcome=decided" in res.stdout
+    assert "winner: plan_rollback" in res.stdout
+
+
+def test_cli_tournament_replay_no_viable_candidate(tmp_path: Path) -> None:
+    """Verify ust tournament replay reports no_viable_candidate when all are disqualified."""
+    import json
+
+    orig_fixture = Path("fixtures/evidence_high_drop.json")
+    with orig_fixture.open(encoding="utf-8") as f:
+        data = json.load(f)
+    # Mark all evidence incomplete
+    for item in data:
+        item["evidence_complete"] = False
+    all_disq_file = tmp_path / "all_disq.json"
+    all_disq_file.write_text(json.dumps(data), encoding="utf-8")
+
+    res = runner.invoke(app, ["tournament", "replay", "--fixture", str(all_disq_file)])
+    assert res.exit_code == 0
+    assert "outcome=no_viable_candidate, no winner" in res.stdout
+
+
+def test_cli_tournament_replay_errors(tmp_path: Path) -> None:
+    """Verify error handling in ust tournament replay."""
+    # 1. Missing file
+    res_not_found = runner.invoke(app, ["tournament", "replay", "--fixture", "nonexistent.json"])
+    assert res_not_found.exit_code == 1
+    assert "Error: fixture file not found" in (res_not_found.stderr or res_not_found.stdout)
+
+    # 2. Malformed JSON
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("invalid json", encoding="utf-8")
+    res_bad_json = runner.invoke(app, ["tournament", "replay", "--fixture", str(bad_json)])
+    assert res_bad_json.exit_code == 1
+    assert "Error reading JSON from fixture" in (res_bad_json.stderr or res_bad_json.stdout)
+
+    # 3. Invalid structure (not list or dict with evidence)
+    bad_struct = tmp_path / "bad_struct.json"
+    bad_struct.write_text('"a string"', encoding="utf-8")
+    res_bad_struct = runner.invoke(app, ["tournament", "replay", "--fixture", str(bad_struct)])
+    assert res_bad_struct.exit_code == 1
+    assert "Error: expected list of candidate evidences" in (
+        res_bad_struct.stderr or res_bad_struct.stdout
+    )
+
+    # 4. Empty list
+    empty_list = tmp_path / "empty.json"
+    empty_list.write_text("[]", encoding="utf-8")
+    res_empty = runner.invoke(app, ["tournament", "replay", "--fixture", str(empty_list)])
+    assert res_empty.exit_code == 1
+    assert "Error: no candidate evidence found" in (res_empty.stderr or res_empty.stdout)
+
+    # 5. Schema validation error
+    invalid_schema = tmp_path / "invalid_schema.json"
+    invalid_schema.write_text('[{"missing_fields": true}]', encoding="utf-8")
+    res_invalid = runner.invoke(app, ["tournament", "replay", "--fixture", str(invalid_schema)])
+    assert res_invalid.exit_code == 1
+    assert "Error validating CandidateEvidence" in (res_invalid.stderr or res_invalid.stdout)

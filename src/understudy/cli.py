@@ -1008,5 +1008,127 @@ def signals_deploys(
                     typer.echo(f"    {svc}: {digest}")
 
 
+tournament_app = typer.Typer(
+    name="tournament",
+    help="Candidate rehearsal tournament replay, scoring, and arbitration.",
+)
+app.add_typer(tournament_app, name="tournament")
+
+
+@tournament_app.command("replay")
+def tournament_replay(
+    fixture: Annotated[
+        Path,
+        typer.Option(
+            "--fixture",
+            "-f",
+            help="Path to JSON fixture file containing candidate rehearsal evidence.",
+        ),
+    ],
+    margin: Annotated[
+        float | None,
+        typer.Option(
+            "--margin",
+            "-m",
+            help="Ambiguity margin threshold override (defaults to 0.15).",
+        ),
+    ] = None,
+) -> None:
+    """Replay candidate rehearsal evidence and arbitrate tournament outcome."""
+    import json
+
+    from understudy.contracts.enums import TournamentOutcome
+    from understudy.contracts.evidence import CandidateEvidence
+    from understudy.tournament.arbiter import ArbiterConfig, arbitrate
+    from understudy.tournament.scorer import score_candidates
+
+    if not fixture.is_file():
+        typer.echo(f"Error: fixture file not found: {fixture}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        with fixture.open(encoding="utf-8") as f:
+            raw_data = json.load(f)
+    except Exception as exc:
+        typer.echo(f"Error reading JSON from fixture {fixture}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    raw_list: list[Any]
+    if isinstance(raw_data, list):
+        raw_list = raw_data
+    elif (
+        isinstance(raw_data, dict)
+        and "evidence" in raw_data
+        and isinstance(raw_data["evidence"], list)
+    ):
+        raw_list = raw_data["evidence"]
+    else:
+        typer.echo(f"Error: expected list of candidate evidences in {fixture}", err=True)
+        raise typer.Exit(code=1)
+
+    if not raw_list:
+        typer.echo(f"Error: no candidate evidence found in {fixture}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        evidences = [CandidateEvidence.model_validate(item) for item in raw_list]
+    except Exception as exc:
+        typer.echo(f"Error validating CandidateEvidence from {fixture}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    scores = score_candidates(evidences)
+    config = ArbiterConfig.from_settings()
+    if margin is not None:
+        config = ArbiterConfig(ambiguity_margin=float(margin))
+
+    result = arbitrate(scores=scores, evidence=evidences, config=config)
+    scores_by_plan = {s.plan_id: s for s in scores}
+
+    # Print Scoreboard table
+    typer.echo("Scoreboard:")
+    typer.echo(
+        f"{'plan_id':<20} {'recovery':>10} {'blast':>10} {'downstream':>10} "
+        f"{'violations':>10} {'drop_ratio':>10} {'composite':>10} {'status':<35}"
+    )
+    typer.echo("-" * 120)
+    for ev in evidences:
+        sc = scores_by_plan.get(ev.plan_id)
+        comp_str = f"{sc.composite:.4f}" if sc else "N/A"
+        rec_str = f"{sc.components.get('recovery', 0.0):.4f}" if sc else "N/A"
+        blast_str = f"{sc.components.get('blast', 0.0):.4f}" if sc else "N/A"
+        down_str = f"{sc.components.get('downstream', 0.0):.4f}" if sc else "N/A"
+        viol_str = f"{sc.components.get('violations', 0.0):.4f}" if sc else "N/A"
+        drop_str = f"{ev.mirror_stats.drop_ratio:.4f}"
+        if sc and sc.disqualified:
+            status_str = f"disqualified ({sc.disqualification_reason})"
+        else:
+            status_str = "viable"
+
+        typer.echo(
+            f"{ev.plan_id:<20} {rec_str:>10} {blast_str:>10} {down_str:>10} "
+            f"{viol_str:>10} {drop_str:>10} {comp_str:>10} {status_str:<35}"
+        )
+
+    # Report any disqualified candidates explicitly
+    for sc in scores:
+        if sc.disqualified:
+            typer.echo(
+                f'Candidate {sc.plan_id} disqualified with reason "{sc.disqualification_reason}"'
+            )
+
+    # Report Tournament outcome
+    if result.outcome == TournamentOutcome.DECIDED:
+        typer.echo("outcome=decided")
+        typer.echo(f"winner: {result.winner_plan_id}")
+        typer.echo(f"runner-up: {result.runner_up_plan_id}")
+        typer.echo(f"margin: {result.margin:.4f}" if result.margin is not None else "margin: N/A")
+    elif result.outcome == TournamentOutcome.AMBIGUOUS:
+        typer.echo("outcome=ambiguous, no winner")
+        margin_val = f"{result.margin:.4f}" if result.margin is not None else "0.0000"
+        typer.echo(f"margin: {margin_val} (threshold: {config.ambiguity_margin:.2f})")
+    else:
+        typer.echo("outcome=no_viable_candidate, no winner")
+
+
 if __name__ == "__main__":
     app()

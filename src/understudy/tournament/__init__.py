@@ -7,6 +7,12 @@ from understudy.tournament.api import (
     LLMJudge,
     Tournament,
 )
+from understudy.tournament.arbiter import (
+    ArbiterConfig,
+    RehearsalTournament,
+    TournamentArbiter,
+    arbitrate,
+)
 from understudy.tournament.blast import (
     BlastConfig,
     BlastCoordinator,
@@ -59,6 +65,7 @@ from understudy.tournament.scorer import (
 
 __all__ = [
     "AdvisoryLLMJudge",
+    "ArbiterConfig",
     "BlastConfig",
     "BlastCoordinator",
     "BlastEvaluation",
@@ -82,8 +89,11 @@ __all__ = [
     "ProbeConfig",
     "ProbeResult",
     "ProbeSampler",
+    "RehearsalTournament",
     "ScoringConfig",
     "Tournament",
+    "TournamentArbiter",
+    "arbitrate",
     "build_judge_system_prompt",
     "build_judge_user_prompt",
     "check_disqualification",

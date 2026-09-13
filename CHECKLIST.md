@@ -225,15 +225,15 @@ validated, normalised, invertible plans against the real cluster.
 - [x] A4.2 **[P0]** Blast-radius computation with per-environment pre-apply baselines
 - [x] A4.3 **[P0]** Deterministic scorer, weights from config, disqualification rules
 - [x] A4.4 **[P1]** Advisory LLM judge (no access to deterministic scores)
-- [ ] A4.5 **[P0]** Arbiter with the 0.15 ambiguity margin; winner derives only from `scores`
+- [x] A4.5 **[P0]** Arbiter with the 0.15 ambiguity margin; winner derives only from `scores`
 
 **Checkpoint A4**
 
 - [x] Property tests pass: monotone in recovery time; disqualified never wins; NO_ACTION can win
 
-- [ ] `tournament replay` on the three-candidate fixture → decided, with margin
-- [ ] `tournament replay` on the near-tie fixture → **ambiguous, no winner**
-- [ ] `tournament replay` on the high-drop fixture → that candidate disqualified as `evidence_incomplete`
+- [x] `tournament replay` on the three-candidate fixture → decided, with margin
+- [x] `tournament replay` on the near-tie fixture → **ambiguous, no winner**
+- [x] `tournament replay` on the high-drop fixture → that candidate disqualified as `evidence_incomplete`
 
 ---
 
