@@ -43,19 +43,27 @@ DEFAULT_POLL_INTERVAL_SECONDS = 1.0
 DEFAULT_API_TIMEOUT_SECONDS = 10.0
 
 
-def _camelize_key(key: str) -> str:
-    """Convert snake_case key to camelCase."""
-    parts = key.split("_")
-    return parts[0] + "".join(p.capitalize() for p in parts[1:])
+TERMINAL_POD_PHASES = frozenset({"Succeeded", "Failed"})
 
 
-def _camelize_dict(obj: Any) -> Any:
-    """Recursively convert dictionary keys to camelCase."""
-    if isinstance(obj, dict):
-        return {_camelize_key(k): _camelize_dict(v) for k, v in obj.items() if v is not None}
-    if isinstance(obj, list):
-        return [_camelize_dict(elem) for elem in obj]
-    return obj
+def _is_expected_live_pod(pod: client.V1Pod, expected_selectors: list[dict[str, str]]) -> bool:
+    """Check whether a pod is one this fork is waiting on.
+
+    The deployment-level replica counts already prove the expected pods are healthy, so a
+    leftover pod — evicted, completed, or still terminating from a replace — must not be able
+    to hold readiness open for the full timeout.
+    """
+    if not pod.metadata:
+        return False
+    if pod.metadata.deletion_timestamp is not None:
+        return False
+    if pod.status and pod.status.phase in TERMINAL_POD_PHASES:
+        return False
+
+    pod_labels = pod.metadata.labels or {}
+    return any(
+        all(pod_labels.get(k) == v for k, v in selector.items()) for selector in expected_selectors
+    )
 
 
 class K8sFleetController(FleetController):
@@ -95,8 +103,6 @@ class K8sFleetController(FleetController):
         self._apps_api = apps_api
         self._networking_api = networking_api
         self._rbac_api = rbac_api
-
-        register_teardown_handlers(self._teardown_manager)
 
     @property
     def workload_reader(self) -> WorkloadReader:
@@ -197,6 +203,9 @@ class K8sFleetController(FleetController):
         log = get_logger(incident_id=incident_id)
         log.info("fleet_fork_started", incident_id=incident_id, count=n)
         register_active_incident(incident_id)
+        # Register the resolved manager, not the (usually None) constructor argument, so the
+        # atexit and SIGTERM paths clean up with this controller's injected dependencies.
+        register_teardown_handlers(self.teardown_manager)
 
         # 1. Read production workloads once for all twins to ensure identical base state
         snapshot = await self.workload_reader.read_workloads(
@@ -204,12 +213,40 @@ class K8sFleetController(FleetController):
             exclude_components={"database"},
         )
 
-        # 2. Concurrently fork all N twins
+        # 2. Concurrently fork all N twins. return_exceptions keeps a failing candidate from
+        # abandoning its siblings mid-flight, so nothing is left running untracked.
         tasks = [self._fork_one_twin(snapshot, incident_id, i) for i in range(n)]
-        twins = await asyncio.gather(*tasks)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
+        failures = [r for r in results if isinstance(r, BaseException)]
+        if failures:
+            await self._rollback_partial_fork(incident_id, failures)
+
+        twins = [r for r in results if isinstance(r, TwinHandle)]
         log.info("fleet_fork_completed", incident_id=incident_id, count=len(twins))
         return sorted(twins, key=lambda t: t.candidate_index)
+
+    async def _rollback_partial_fork(self, incident_id: str, failures: list[BaseException]) -> None:
+        """Tear down every twin of a partially failed fork, then raise the first failure."""
+        log = get_logger(incident_id=incident_id)
+        log.warning(
+            "fleet_fork_failed_rolling_back",
+            incident_id=incident_id,
+            failures=[str(exc) for exc in failures],
+        )
+        try:
+            await self.teardown_all(incident_id)
+        except Exception as exc:
+            log.error(
+                "fleet_fork_rollback_failed",
+                incident_id=incident_id,
+                error=str(exc),
+            )
+
+        first = failures[0]
+        if isinstance(first, FleetError):
+            raise first
+        raise FleetError(f"Failed to fork twins for incident {incident_id!r}: {first}") from first
 
     async def _fork_one_twin(
         self,
@@ -392,13 +429,6 @@ class K8sFleetController(FleetController):
 
     async def _apply_deployment(self, manifest: dict[str, Any], namespace: str) -> None:
         name = manifest.get("metadata", {}).get("name", "unknown")
-        spec = manifest.get("spec", {}).get("template", {}).get("spec", {})
-        for container in spec.get("containers", []):
-            if "livenessProbe" in container and isinstance(container["livenessProbe"], dict):
-                container["livenessProbe"] = _camelize_dict(container["livenessProbe"])
-            if "readinessProbe" in container and isinstance(container["readinessProbe"], dict):
-                container["readinessProbe"] = _camelize_dict(container["readinessProbe"])
-
         try:
             await asyncio.to_thread(
                 self.apps_api.create_namespaced_deployment,
@@ -473,6 +503,12 @@ class K8sFleetController(FleetController):
         if not expected_deployments:
             return
 
+        expected_selectors = [
+            selector
+            for dep in deployment_manifests
+            if (selector := dep.get("spec", {}).get("selector", {}).get("matchLabels"))
+        ]
+
         start_time = time.monotonic()
         last_unready_info: list[str] = []
 
@@ -496,7 +532,11 @@ class K8sFleetController(FleetController):
                 ) from exc
 
             live_deps = {d.metadata.name: d for d in (deployments_resp.items or []) if d.metadata}
-            live_pods = list(pods_resp.items or [])
+            live_pods = [
+                pod
+                for pod in (pods_resp.items or [])
+                if _is_expected_live_pod(pod, expected_selectors)
+            ]
 
             all_ready = True
             unready_deps: list[str] = []
@@ -517,21 +557,21 @@ class K8sFleetController(FleetController):
                         f"{name} (ready {ready_reps}/{expected_replicas}, avail {avail_reps})"
                     )
 
-            # Check that pods for these deployments are running and ready
+            # Check that the pods belonging to these deployments are running and ready.
+            # live_pods excludes leftovers (terminal phase, terminating, foreign labels), so a
+            # single evicted pod cannot hold the fork open for the whole timeout.
             if all_ready:
                 for pod in live_pods:
                     phase = pod.status.phase if pod.status else None
                     if phase != "Running":
                         all_ready = False
-                        pod_name = pod.metadata.name if pod.metadata else "unknown"
-                        unready_deps.append(f"pod/{pod_name} ({phase})")
+                        unready_deps.append(f"pod/{pod.metadata.name} ({phase})")
                         break
 
-                    container_statuses = pod.status.container_statuses or [] if pod.status else []
+                    container_statuses = pod.status.container_statuses or []
                     if not container_statuses or not all(cs.ready for cs in container_statuses):
                         all_ready = False
-                        pod_name = pod.metadata.name if pod.metadata else "unknown"
-                        unready_deps.append(f"pod/{pod_name} (containers unready)")
+                        unready_deps.append(f"pod/{pod.metadata.name} (containers unready)")
                         break
 
             if all_ready:

@@ -11,6 +11,7 @@ from understudy.fleet.models import (
     DatabaseSnapshotMetadata,
     EnvVar,
     ResourceSpec,
+    TwinDatabaseInfo,
     TwinManifestBundle,
     WorkloadSnapshot,
 )
@@ -105,6 +106,10 @@ class DatabaseCloner(Protocol):
         """List twin databases matching optional incident_id prefix."""
         raise NotImplementedError
 
+    async def list_twin_databases_with_age(self) -> list[TwinDatabaseInfo]:
+        """List all twin databases with the age recorded at clone time."""
+        raise NotImplementedError
+
     async def get_item_count(self, database_name: str) -> int:
         """Count rows in the items table for fidelity verification."""
         raise NotImplementedError
@@ -121,6 +126,7 @@ __all__ = [
     "ManifestRenderer",
     "ResourceSpec",
     "SnapshotRefresher",
+    "TwinDatabaseInfo",
     "TwinManifestBundle",
     "TwinManifestRenderer",
     "WorkloadReader",

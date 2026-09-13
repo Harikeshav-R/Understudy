@@ -16,6 +16,7 @@ from understudy.fleet.models import (
     DatabaseCloneResult,
     EnvVar,
     ResourceSpec,
+    TwinDatabaseInfo,
     WorkloadSnapshot,
 )
 from understudy.fleet.render import sanitize_database_name
@@ -276,6 +277,7 @@ class FakeDatabaseCommandExecutor(DatabaseCommandExecutor):
         self.pipeline_history: list[str] = []
         self.databases: set[str] = {"postgres", "snapshot_template"}
         self.items_count: dict[str, int] = {"snapshot_template": 207}
+        self.database_comments: dict[str, str] = {}
         self.in_use_counter: int = 0
         self.fail_sql: str | None = None
         self.fail_pipeline: bool = False
@@ -323,7 +325,16 @@ class FakeDatabaseCommandExecutor(DatabaseCommandExecutor):
                 db_name = tokens[-1]
                 self.databases.discard(db_name)
                 self.items_count.pop(db_name, None)
+                self.database_comments.pop(db_name, None)
                 out_lines.append("DROP DATABASE")
+            elif normalized.startswith("COMMENT ON DATABASE"):
+                parts = normalized.split(" IS ", 1)
+                db_name = parts[0].split()[-1]
+                self.database_comments[db_name] = parts[1].rstrip(";").strip().strip("'")
+                out_lines.append("COMMENT")
+            elif "shobj_description" in normalized:
+                for db in sorted(d for d in self.databases if d.startswith("twin_")):
+                    out_lines.append(f"{db}|{self.database_comments.get(db, '')}")
             elif "SELECT datname FROM pg_database" in normalized:
                 twins = sorted([d for d in self.databases if d.startswith("twin_")])
                 out_lines.extend(twins)
@@ -399,6 +410,8 @@ class FakeDatabaseCloner(DatabaseCloner):
         self.cloned_databases: dict[str, DatabaseCloneResult] = {}
         self.simulated_in_use_failures = simulated_in_use_failures
         self.items_count: dict[str, int] = {}
+        # Databases whose creation stamp is missing, i.e. age unknown to garbage collection.
+        self.unknown_age_databases: set[str] = set()
 
     async def clone_twin_database(
         self, incident_id: str, candidate_index: int
@@ -444,6 +457,22 @@ class FakeDatabaseCloner(DatabaseCloner):
             prefix = f"twin_{clean}_"
             return sorted([name for name in self.cloned_databases if name.startswith(prefix)])
         return sorted(self.cloned_databases.keys())
+
+    async def list_twin_databases_with_age(self) -> list[TwinDatabaseInfo]:
+        now = self.clock.now()
+        infos: list[TwinDatabaseInfo] = []
+        for name in sorted(self.cloned_databases):
+            if name in self.unknown_age_databases:
+                infos.append(TwinDatabaseInfo(name=name, age_seconds=None))
+                continue
+            cloned_at = self.cloned_databases[name].cloned_at
+            infos.append(
+                TwinDatabaseInfo(
+                    name=name,
+                    age_seconds=max(0.0, (now - cloned_at).total_seconds()),
+                )
+            )
+        return infos
 
     async def get_item_count(self, database_name: str) -> int:
         return self.items_count.get(database_name, 207)

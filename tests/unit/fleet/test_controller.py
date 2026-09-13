@@ -4,7 +4,7 @@ Enforces 100% line and branch coverage on understudy/fleet/controller.py.
 """
 
 from collections.abc import Generator
-from datetime import datetime
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -631,31 +631,38 @@ async def test_readiness_polling_pod_states() -> None:
         core_api=core_api,
         poll_interval_seconds=0.001,
     )
-    expected = [{"metadata": {"name": "app"}, "spec": {"replicas": 1}}]
+    expected = [
+        {
+            "metadata": {"name": "app"},
+            "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "app"}}},
+        }
+    ]
+
+    def _pod(name: str, phase: str | None) -> MagicMock:
+        pod = MagicMock()
+        pod.metadata.name = name
+        pod.metadata.labels = {"app": "app"}
+        pod.metadata.deletion_timestamp = None
+        pod.status.phase = phase
+        return pod
 
     # Subcase A: Pod in Pending phase
-    pod_pending = MagicMock()
-    pod_pending.metadata.name = "pod-pending"
-    pod_pending.status.phase = "Pending"
+    pod_pending = _pod("pod-pending", "Pending")
     core_api.list_namespaced_pod.return_value = MagicMock(items=[pod_pending])
 
     with pytest.raises(FleetError, match=r"pod/pod-pending \(Pending\)"):
         await controller._wait_for_readiness("test-ns", expected, timeout=0.0)
 
     # Subcase B: Pod running but no container_statuses
-    pod_no_cs = MagicMock()
-    pod_no_cs.metadata = None
-    pod_no_cs.status.phase = "Running"
+    pod_no_cs = _pod("pod-no-cs", "Running")
     pod_no_cs.status.container_statuses = []
     core_api.list_namespaced_pod.return_value = MagicMock(items=[pod_no_cs])
 
-    with pytest.raises(FleetError, match=r"pod/unknown \(containers unready\)"):
+    with pytest.raises(FleetError, match=r"pod/pod-no-cs \(containers unready\)"):
         await controller._wait_for_readiness("test-ns", expected, timeout=0.0)
 
     # Subcase C: Pod running but container not ready
-    pod_not_ready = MagicMock()
-    pod_not_ready.metadata.name = "pod-crashing"
-    pod_not_ready.status.phase = "Running"
+    pod_not_ready = _pod("pod-crashing", "Running")
     cs_not_ready = MagicMock()
     cs_not_ready.ready = False
     pod_not_ready.status.container_statuses = [cs_not_ready]
@@ -663,6 +670,81 @@ async def test_readiness_polling_pod_states() -> None:
 
     with pytest.raises(FleetError, match=r"pod/pod-crashing \(containers unready\)"):
         await controller._wait_for_readiness("test-ns", expected, timeout=0.0)
+
+    # Subcase D: Pod with no status at all
+    pod_no_status = _pod("pod-no-status", None)
+    pod_no_status.status = None
+    core_api.list_namespaced_pod.return_value = MagicMock(items=[pod_no_status])
+
+    with pytest.raises(FleetError, match=r"pod/pod-no-status \(None\)"):
+        await controller._wait_for_readiness("test-ns", expected, timeout=0.0)
+
+
+@pytest.mark.asyncio
+async def test_readiness_ignores_leftover_pods() -> None:
+    """A terminal, terminating, or foreign pod must not hold readiness open."""
+    apps_api = MagicMock()
+    core_api = MagicMock()
+
+    dep = MagicMock()
+    dep.metadata.name = "app"
+    dep.status.ready_replicas = 1
+    dep.status.available_replicas = 1
+    apps_api.list_namespaced_deployment.return_value = MagicMock(items=[dep])
+
+    controller = K8sFleetController(
+        apps_api=apps_api,
+        core_api=core_api,
+        poll_interval_seconds=0.001,
+    )
+    expected = [
+        {
+            "metadata": {"name": "app"},
+            "spec": {"replicas": 1, "selector": {"matchLabels": {"app": "app"}}},
+        }
+    ]
+
+    ready_cs = MagicMock()
+    ready_cs.ready = True
+
+    healthy = MagicMock()
+    healthy.metadata.name = "app-abc"
+    healthy.metadata.labels = {"app": "app"}
+    healthy.metadata.deletion_timestamp = None
+    healthy.status.phase = "Running"
+    healthy.status.container_statuses = [ready_cs]
+
+    # Evicted leftover from a previous replace: Failed phase, must be ignored.
+    evicted = MagicMock()
+    evicted.metadata.name = "app-evicted"
+    evicted.metadata.labels = {"app": "app"}
+    evicted.metadata.deletion_timestamp = None
+    evicted.status.phase = "Failed"
+
+    # Pod still terminating after replace_namespaced_deployment, must be ignored.
+    terminating = MagicMock()
+    terminating.metadata.name = "app-terminating"
+    terminating.metadata.labels = {"app": "app"}
+    terminating.metadata.deletion_timestamp = datetime(2026, 3, 1, tzinfo=UTC)
+    terminating.status.phase = "Running"
+    terminating.status.container_statuses = []
+
+    # Unrelated pod in the namespace (different labels), must be ignored.
+    foreign = MagicMock()
+    foreign.metadata.name = "debug-shell"
+    foreign.metadata.labels = {"app": "other"}
+    foreign.metadata.deletion_timestamp = None
+    foreign.status.phase = "Pending"
+
+    # A pod carrying no metadata at all, must be ignored.
+    no_metadata = MagicMock()
+    no_metadata.metadata = None
+
+    core_api.list_namespaced_pod.return_value = MagicMock(
+        items=[evicted, terminating, foreign, no_metadata, healthy]
+    )
+
+    await controller._wait_for_readiness("test-ns", expected, timeout=0.0)
 
 
 @pytest.mark.asyncio
@@ -760,86 +842,166 @@ async def test_teardown_all_incident() -> None:
         await controller.teardown_all("inc_1")
 
 
-def test_camelize_dict_and_keys() -> None:
-    """Validate _camelize_dict and _camelize_key recursion."""
-    from understudy.fleet.controller import _camelize_dict, _camelize_key
+def _ready_cluster_apis() -> tuple[MagicMock, MagicMock, MagicMock, MagicMock]:
+    """Build k8s API mocks whose namespace always reports one ready deployment and pod."""
+    core_api = MagicMock()
+    apps_api = MagicMock()
+    networking_api = MagicMock()
+    rbac_api = MagicMock()
 
-    assert _camelize_key("simple") == "simple"
-    assert _camelize_key("initial_delay_seconds") == "initialDelaySeconds"
-    assert _camelize_key("http_get") == "httpGet"
+    policy = MagicMock()
+    policy.spec.policy_types = ["Egress"]
+    networking_api.read_namespaced_network_policy.return_value = policy
 
-    data = {
-        "http_get": {
-            "path": "/healthz",
-            "port": 8000,
-            "http_headers": [{"name": "Accept", "value": "json"}],
-        },
-        "initial_delay_seconds": 5,
-        "none_value": None,
-        "scalar_number": 42,
-    }
-    camelized = _camelize_dict(data)
-    assert camelized == {
-        "httpGet": {
-            "path": "/healthz",
-            "port": 8000,
-            "httpHeaders": [{"name": "Accept", "value": "json"}],
-        },
-        "initialDelaySeconds": 5,
-        "scalarNumber": 42,
-    }
-    assert _camelize_dict("raw_string") == "raw_string"
+    dep = MagicMock()
+    dep.metadata.name = "edge-gateway"
+    dep.status.ready_replicas = 1
+    dep.status.available_replicas = 1
+    apps_api.list_namespaced_deployment.return_value = MagicMock(items=[dep])
+    core_api.list_namespaced_pod.return_value = MagicMock(items=[])
+    return core_api, apps_api, networking_api, rbac_api
+
+
+def _minimal_bundle(incident_id: str, candidate_index: int) -> TwinManifestBundle:
+    """Render the smallest bundle the controller can apply."""
+    ns_name = f"ust-twin-{incident_id}-{candidate_index}"
+    return TwinManifestBundle(
+        twin_id=f"twin_{incident_id}_{candidate_index}",
+        incident_id=incident_id,
+        candidate_index=candidate_index,
+        namespace=ns_name,
+        database_name=f"twin_{incident_id}_{candidate_index}",
+        database_dsn="postgresql://postgres@twin-postgres:5432/twin_db",
+        manifests=[
+            {"apiVersion": "v1", "kind": "Namespace", "metadata": {"name": ns_name}},
+            {
+                "apiVersion": "networking.k8s.io/v1",
+                "kind": "NetworkPolicy",
+                "metadata": {"name": "twin-egress-containment"},
+                "spec": {"policyTypes": ["Egress"]},
+            },
+            {
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {"name": "edge-gateway"},
+                "spec": {"replicas": 1},
+            },
+        ],
+    )
+
+
+def _controller_failing_candidate(
+    clock: FrozenClock,
+    failure: BaseException,
+    teardown_manager: MagicMock,
+) -> K8sFleetController:
+    """Build a controller whose candidate 1 fails while its siblings succeed."""
+    workload_reader = MagicMock()
+    workload_reader.read_workloads = AsyncMock(return_value=_make_snapshot(clock))
+
+    async def mock_clone(incident_id: str, candidate_index: int) -> DatabaseCloneResult:
+        if candidate_index == 1:
+            raise failure
+        return DatabaseCloneResult(
+            database_name=f"twin_{incident_id}_{candidate_index}",
+            incident_id=incident_id,
+            candidate_index=candidate_index,
+            forked_from_snapshot_at=clock.now(),
+            cloned_at=clock.now(),
+        )
+
+    database_cloner = MagicMock()
+    database_cloner.clone_twin_database = AsyncMock(side_effect=mock_clone)
+
+    def mock_render(
+        snapshot: ClusterWorkloadSnapshot,
+        incident_id: str,
+        candidate_index: int,
+        database_name: str | None = None,
+    ) -> TwinManifestBundle:
+        _ = (snapshot, database_name)
+        return _minimal_bundle(incident_id, candidate_index)
+
+    manifest_renderer = MagicMock()
+    manifest_renderer.render = MagicMock(side_effect=mock_render)
+
+    core_api, apps_api, networking_api, rbac_api = _ready_cluster_apis()
+    return K8sFleetController(
+        workload_reader=workload_reader,
+        manifest_renderer=manifest_renderer,
+        database_cloner=database_cloner,
+        teardown_manager=teardown_manager,
+        core_api=core_api,
+        apps_api=apps_api,
+        networking_api=networking_api,
+        rbac_api=rbac_api,
+        clock=clock,
+        poll_interval_seconds=0.001,
+        readiness_timeout_seconds=5.0,
+    )
 
 
 @pytest.mark.asyncio
-async def test_apply_deployment_camelizes_probes() -> None:
-    """Verify _apply_deployment transforms snake_case probe dicts to camelCase."""
-    apps_api = MagicMock()
-    controller = K8sFleetController(apps_api=apps_api)
+async def test_fork_partial_failure_tears_down_surviving_twins() -> None:
+    """A failed candidate must not leave its siblings running untracked."""
+    teardown_manager = MagicMock()
+    teardown_manager.teardown_incident = AsyncMock()
+    controller = _controller_failing_candidate(
+        FrozenClock(), FleetError("clone exploded"), teardown_manager
+    )
 
-    manifest = {
-        "metadata": {"name": "test-dep"},
-        "spec": {
-            "template": {
-                "spec": {
-                    "containers": [
-                        {
-                            "name": "c1",
-                            "livenessProbe": {
-                                "initial_delay_seconds": 5,
-                                "http_get": {"path": "/"},
-                            },
-                            "readinessProbe": {"period_seconds": 10},
-                        },
-                        {
-                            "name": "c2",
-                            "livenessProbe": {"initial_delay_seconds": 3},
-                        },
-                        {
-                            "name": "c3",
-                            "readinessProbe": {"period_seconds": 5},
-                        },
-                        {
-                            "name": "c4",
-                            "livenessProbe": "non_dict",
-                            "readinessProbe": None,
-                        },
-                        {
-                            "name": "c5",
-                        },
-                    ]
-                }
-            }
-        },
-    }
+    with pytest.raises(FleetError, match="clone exploded"):
+        await controller.fork("inc_test", 3)
 
-    await controller._apply_deployment(manifest, "test-ns")
-    apps_api.create_namespaced_deployment.assert_called_once()
-    called_body = apps_api.create_namespaced_deployment.call_args[1]["body"]
-    containers = called_body["spec"]["template"]["spec"]["containers"]
-    assert "initialDelaySeconds" in containers[0]["livenessProbe"]
-    assert "httpGet" in containers[0]["livenessProbe"]
-    assert "periodSeconds" in containers[0]["readinessProbe"]
-    assert "initialDelaySeconds" in containers[1]["livenessProbe"]
-    assert "periodSeconds" in containers[2]["readinessProbe"]
-    assert containers[3]["livenessProbe"] == "non_dict"
+    teardown_manager.teardown_incident.assert_awaited_once_with("inc_test")
+
+
+@pytest.mark.asyncio
+async def test_fork_partial_failure_wraps_unexpected_error() -> None:
+    """A non-FleetError failure is reported as a FleetError naming the incident."""
+    teardown_manager = MagicMock()
+    teardown_manager.teardown_incident = AsyncMock()
+    controller = _controller_failing_candidate(
+        FrozenClock(), RuntimeError("kaboom"), teardown_manager
+    )
+
+    with pytest.raises(FleetError, match="Failed to fork twins for incident 'inc_test': kaboom"):
+        await controller.fork("inc_test", 2)
+
+    teardown_manager.teardown_incident.assert_awaited_once_with("inc_test")
+
+
+@pytest.mark.asyncio
+async def test_fork_rollback_failure_still_raises_original_error() -> None:
+    """A failing rollback is logged, but the original fork failure is what surfaces."""
+    teardown_manager = MagicMock()
+    teardown_manager.teardown_incident = AsyncMock(side_effect=RuntimeError("cluster gone"))
+    controller = _controller_failing_candidate(
+        FrozenClock(), FleetError("clone exploded"), teardown_manager
+    )
+
+    with pytest.raises(FleetError, match="clone exploded"):
+        await controller.fork("inc_test", 2)
+
+
+@pytest.mark.asyncio
+async def test_fork_registers_resolved_teardown_manager() -> None:
+    """The atexit/SIGTERM path must hold this controller's manager, not a default one."""
+    from understudy.fleet import teardown as teardown_module
+
+    teardown_manager = MagicMock()
+    teardown_manager.teardown_incident = AsyncMock()
+    controller = _controller_failing_candidate(
+        FrozenClock(), FleetError("clone exploded"), teardown_manager
+    )
+
+    # Constructing the controller must not register anything: the manager is resolved lazily.
+    before = teardown_module._GLOBAL_TEARDOWN_MANAGER
+    assert before is None
+
+    with pytest.raises(FleetError):
+        await controller.fork("inc_test", 2)
+
+    registered = teardown_module._GLOBAL_TEARDOWN_MANAGER
+    assert registered is controller.teardown_manager
+    assert registered is teardown_manager

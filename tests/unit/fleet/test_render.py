@@ -10,6 +10,7 @@ Validates:
 - 100% line and branch coverage
 """
 
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -30,12 +31,17 @@ from understudy.fleet.models import (
 from understudy.fleet.render import (
     DEFAULT_EGRESS_STUB_URL,
     DEFAULT_TWIN_POSTGRES_HOST,
+    MAX_DNS1123_LABEL_LENGTH,
     build_twin_namespace,
     render_twin_manifests,
     rewrite_database_dsn,
     rewrite_url,
     sanitize_database_name,
+    sanitize_dns1123_label,
 )
+
+# The name format the Kubernetes API server enforces for namespaces.
+DNS1123_LABEL_RE = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
 
 
 def _make_sample_snapshot() -> ClusterWorkloadSnapshot:
@@ -191,15 +197,46 @@ def test_sanitize_database_name() -> None:
 
 
 def test_build_twin_namespace() -> None:
-    """Validate twin namespace name synthesis."""
-    assert build_twin_namespace("ust-twin", "inc_test", 0) == "ust-twin-inc_test-0"
+    """Validate twin namespace names are synthesized as valid DNS-1123 labels."""
+    # Underscores from new_incident_id() are illegal in namespace names and must be folded.
+    assert build_twin_namespace("ust-twin", "inc_test", 0) == "ust-twin-inc-test-0"
     assert build_twin_namespace("ust-twin", "inc-42", 1) == "ust-twin-inc-42-1"
+    assert (
+        build_twin_namespace("ust-twin", "inc_01m2cd54e47r2vx6rr53dgq0td", 2)
+        == "ust-twin-inc-01m2cd54e47r2vx6rr53dgq0td-2"
+    )
+    # Uppercase, dots, and stray separators are all coerced.
+    assert build_twin_namespace("ust-twin", "  INC_Test.42__x  ", 0) == "ust-twin-inc-test-42-x-0"
+
+    # Long incident IDs are truncated so the whole name fits a DNS-1123 label.
+    long_ns = build_twin_namespace("ust-twin", "inc_" + "a" * 80, 3)
+    assert len(long_ns) == MAX_DNS1123_LABEL_LENGTH
+    assert long_ns.startswith("ust-twin-inc-a")
+    assert long_ns.endswith("-3")
+    assert DNS1123_LABEL_RE.match(long_ns)
 
     with pytest.raises(FleetError, match="Incident ID cannot be empty"):
         build_twin_namespace("ust-twin", "", 0)
 
     with pytest.raises(FleetError, match="Candidate index must be non-negative"):
         build_twin_namespace("ust-twin", "inc_test", -2)
+
+    with pytest.raises(FleetError, match="no DNS-1123 usable characters"):
+        build_twin_namespace("ust-twin", "___", 0)
+
+    with pytest.raises(FleetError, match="Twin namespace prefix cannot be empty"):
+        build_twin_namespace("__", "inc_test", 0)
+
+    with pytest.raises(FleetError, match="leaves no room for incident"):
+        build_twin_namespace("p" * 61, "inc_test", 0)
+
+
+def test_sanitize_dns1123_label() -> None:
+    """Validate the DNS-1123 coercion used for every rendered namespace."""
+    assert sanitize_dns1123_label("inc_Test") == "inc-test"
+    assert sanitize_dns1123_label("--inc__test--") == "inc-test"
+    assert sanitize_dns1123_label("a/b:c") == "a-b-c"
+    assert sanitize_dns1123_label("___") == ""
 
 
 def test_rewrite_database_dsn() -> None:
@@ -249,7 +286,7 @@ def test_rewrite_database_dsn_exception(monkeypatch: pytest.MonkeyPatch) -> None
 
 def test_rewrite_url_rules() -> None:
     """Verify URL rewriting matrix for twin isolation."""
-    target_ns = "ust-twin-inc_test-0"
+    target_ns = "ust-twin-inc-test-0"
     prod_ns = "ust-prod"
     known = {"auth-service", "data-service", "edge-gateway", "worker"}
 
@@ -335,14 +372,14 @@ def test_render_twin_manifests_bundle() -> None:
     assert bundle.twin_id == "twin_inc_test_0"
     assert bundle.incident_id == "inc_test"
     assert bundle.candidate_index == 0
-    assert bundle.namespace == "ust-twin-inc_test-0"
+    assert bundle.namespace == "ust-twin-inc-test-0"
     assert bundle.database_name == "twin_inc_test_0"
     assert "twin-postgres.ust-system:5433/twin_inc_test_0" in bundle.database_dsn
 
     # 1. Namespace
     ns = bundle.namespace_manifest
     assert ns is not None
-    assert ns["metadata"]["name"] == "ust-twin-inc_test-0"
+    assert ns["metadata"]["name"] == "ust-twin-inc-test-0"
     assert ns["metadata"]["labels"]["environment"] == "twin"
     assert ns["metadata"]["labels"]["understudy.dev/incident"] == "inc_test"
     assert ns["metadata"]["labels"]["understudy.dev/candidate"] == "0"
@@ -353,17 +390,17 @@ def test_render_twin_manifests_bundle() -> None:
     sa = next(d for d in rbac if d["kind"] == "ServiceAccount")
     rb = next(d for d in rbac if d["kind"] == "RoleBinding")
     assert sa["metadata"]["name"] == "understudy-twin"
-    assert sa["metadata"]["namespace"] == "ust-twin-inc_test-0"
+    assert sa["metadata"]["namespace"] == "ust-twin-inc-test-0"
     assert rb["metadata"]["name"] == "understudy-twin"
-    assert rb["metadata"]["namespace"] == "ust-twin-inc_test-0"
+    assert rb["metadata"]["namespace"] == "ust-twin-inc-test-0"
     assert rb["roleRef"]["name"] == "understudy-twin"
-    assert rb["subjects"][0]["namespace"] == "ust-twin-inc_test-0"
+    assert rb["subjects"][0]["namespace"] == "ust-twin-inc-test-0"
 
     # 3. NetworkPolicy (Golden spec & Invariant K6)
     np = bundle.network_policy_manifest
     assert np is not None
     assert np["metadata"]["name"] == "twin-egress-containment"
-    assert np["metadata"]["namespace"] == "ust-twin-inc_test-0"
+    assert np["metadata"]["namespace"] == "ust-twin-inc-test-0"
     assert np["metadata"]["labels"]["environment"] == "twin"
     egress_rules = np["spec"]["egress"]
     assert len(egress_rules) == 3
@@ -404,7 +441,7 @@ def test_render_twin_manifests_bundle() -> None:
 
     # Verify edge-gateway env rewriting
     gw_dep = dep_map["edge-gateway"]
-    assert gw_dep["metadata"]["namespace"] == "ust-twin-inc_test-0"
+    assert gw_dep["metadata"]["namespace"] == "ust-twin-inc-test-0"
     gw_c = gw_dep["spec"]["template"]["spec"]["containers"][0]
     # Check pinned digest used
     assert "@sha256:333333333333" in gw_c["image"]
@@ -444,7 +481,7 @@ def test_render_twin_manifests_custom_db_name_and_settings() -> None:
         settings=settings,
     )
 
-    assert bundle.namespace == "custom-twin-inc_custom-1"
+    assert bundle.namespace == "custom-twin-inc-custom-1"
     assert bundle.database_name == "custom_db_1"
     assert bundle.database_dsn.endswith("/custom_db_1")
 

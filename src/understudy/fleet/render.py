@@ -7,6 +7,7 @@ external URLs to egress-stub, and applying the twin NetworkPolicy.
 """
 
 import ipaddress
+import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -26,6 +27,10 @@ DEFAULT_EGRESS_STUB_URL = "http://egress-stub.ust-system:8000"
 DEFAULT_TWIN_POSTGRES_HOST = "twin-postgres.ust-system"
 DEFAULT_TWIN_POSTGRES_PORT = 5433
 DEFAULT_TWIN_POSTGRES_USER = "postgres"
+
+MAX_DNS1123_LABEL_LENGTH = 63
+_DNS1123_INVALID_RE = re.compile(r"[^a-z0-9-]")
+_DNS1123_HYPHEN_RUN_RE = re.compile(r"-{2,}")
 
 
 def _find_default_policies_dir() -> Path:
@@ -53,14 +58,51 @@ def sanitize_database_name(incident_id: str, candidate_index: int) -> str:
     return f"twin_{clean_incident}_{candidate_index}"
 
 
+def sanitize_dns1123_label(value: str) -> str:
+    """Coerce an arbitrary string into a DNS-1123 label fragment.
+
+    Kubernetes object names must match `[a-z0-9]([-a-z0-9]*[a-z0-9])?`, so the underscores
+    produced by `new_incident_id()` (e.g. `inc_01m2cd54e47r2vx6rr53dgq0td`) are rejected by
+    the API server. Lowercase, map `_` to `-`, replace every other invalid character with
+    `-`, collapse hyphen runs, and trim to alphanumeric edges.
+    """
+    lowered = value.strip().lower().replace("_", "-")
+    replaced = _DNS1123_INVALID_RE.sub("-", lowered)
+    return _DNS1123_HYPHEN_RUN_RE.sub("-", replaced).strip("-")
+
+
 def build_twin_namespace(twin_prefix: str, incident_id: str, candidate_index: int) -> str:
-    """Derive the isolated twin namespace name."""
-    clean_incident = incident_id.strip()
-    if not clean_incident:
+    """Derive the isolated twin namespace name as a valid DNS-1123 label.
+
+    The incident ID is sanitized because namespace names cannot carry the underscore in
+    `inc_<ulid>`. Two incident IDs differing only in that separator (`inc_test` and
+    `inc-test`) therefore map to the same namespace; the `understudy.dev/incident` label
+    carries the raw ID, so teardown and garbage collection stay exact.
+    """
+    if not incident_id.strip():
         raise FleetError(f"Incident ID cannot be empty, got: {incident_id!r}")
     if candidate_index < 0:
         raise FleetError(f"Candidate index must be non-negative, got: {candidate_index}")
-    return f"{twin_prefix}-{clean_incident}-{candidate_index}"
+
+    clean_prefix = sanitize_dns1123_label(twin_prefix)
+    if not clean_prefix:
+        raise FleetError(f"Twin namespace prefix cannot be empty, got: {twin_prefix!r}")
+
+    clean_incident = sanitize_dns1123_label(incident_id)
+    if not clean_incident:
+        raise FleetError(f"Incident ID has no DNS-1123 usable characters, got: {incident_id!r}")
+
+    suffix = f"-{candidate_index}"
+    incident_budget = MAX_DNS1123_LABEL_LENGTH - len(clean_prefix) - 1 - len(suffix)
+    if incident_budget < 1:
+        raise FleetError(
+            f"Twin namespace prefix {twin_prefix!r} leaves no room for incident "
+            f"{incident_id!r} within {MAX_DNS1123_LABEL_LENGTH} characters"
+        )
+    if len(clean_incident) > incident_budget:
+        clean_incident = clean_incident[:incident_budget].strip("-")
+
+    return f"{clean_prefix}-{clean_incident}{suffix}"
 
 
 def rewrite_database_dsn(
@@ -725,10 +767,12 @@ __all__ = [
     "DEFAULT_TWIN_POSTGRES_HOST",
     "DEFAULT_TWIN_POSTGRES_PORT",
     "DEFAULT_TWIN_POSTGRES_USER",
+    "MAX_DNS1123_LABEL_LENGTH",
     "TwinManifestRenderer",
     "build_twin_namespace",
     "render_twin_manifests",
     "rewrite_database_dsn",
     "rewrite_url",
     "sanitize_database_name",
+    "sanitize_dns1123_label",
 ]

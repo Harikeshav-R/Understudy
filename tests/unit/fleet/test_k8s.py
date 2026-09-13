@@ -3,6 +3,8 @@
 Enforces 100% line and branch coverage on fleet/k8s.py and fleet/models.py.
 """
 
+from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -13,6 +15,9 @@ from understudy.common.clock import FrozenClock
 from understudy.common.errors import FleetError
 from understudy.fleet.k8s import (
     K8sWorkloadReader,
+    _camelize_dict,
+    _camelize_key,
+    _current_pod_template_hash,
     _extract_ports,
     _extract_probes,
     _extract_volumes,
@@ -320,10 +325,19 @@ def test_extract_probes_and_ports_and_volumes() -> None:
         ),
     )
     lp, rp = _extract_probes(c_http)
-    assert lp is not None
-    assert lp["http_get"]["path"] == "/healthz"
+    # Probes must be emitted in the manifest's camelCase spelling: the API server rejects
+    # the client's snake_case attribute names outright.
+    assert lp == {
+        "httpGet": {"path": "/healthz", "port": 8080, "scheme": "HTTP"},
+        "initialDelaySeconds": 2,
+        "periodSeconds": 5,
+        "timeoutSeconds": 1,
+        "failureThreshold": 3,
+        "successThreshold": 1,
+    }
     assert rp is not None
     assert rp["exec"]["command"] == ["echo", "ready"]
+    assert rp["initialDelaySeconds"] == 3
 
     # Container with empty probes and ports
     c_empty = client.V1Container(name="empty")
@@ -345,9 +359,10 @@ def test_extract_probes_and_ports_and_volumes() -> None:
         ),
     )
     lp_tcp, rp_tcp = _extract_probes(c_tcp)
+    # Unset nested fields (host) are dropped rather than serialized as null.
     assert lp_tcp == {
-        "period_seconds": 5,
-        "tcp_socket": {"host": None, "port": 8000},
+        "periodSeconds": 5,
+        "tcpSocket": {"port": 8000},
     }
     assert rp_tcp is not None
 
@@ -357,19 +372,110 @@ def test_extract_probes_and_ports_and_volumes() -> None:
     pod_spec = client.V1PodSpec(
         containers=[c_http],
         volumes=[
-            client.V1Volume(name="v1", config_map=client.V1ConfigMapVolumeSource(name="cm1")),
+            client.V1Volume(
+                name="v1",
+                config_map=client.V1ConfigMapVolumeSource(
+                    name="cm1",
+                    default_mode=420,
+                    items=[client.V1KeyToPath(key="app.yaml", path="conf/app.yaml")],
+                ),
+            ),
             client.V1Volume(name="v2", secret=client.V1SecretVolumeSource(secret_name="sec1")),
             client.V1Volume(name="v3", empty_dir=client.V1EmptyDirVolumeSource()),
+            client.V1Volume(
+                name="v4",
+                downward_api=client.V1DownwardAPIVolumeSource(
+                    items=[
+                        client.V1DownwardAPIVolumeFile(
+                            path="labels",
+                            field_ref=client.V1ObjectFieldSelector(field_path="metadata.labels"),
+                        )
+                    ]
+                ),
+            ),
+            client.V1Volume(
+                name="v5",
+                projected=client.V1ProjectedVolumeSource(
+                    sources=[
+                        client.V1VolumeProjection(
+                            config_map=client.V1ConfigMapProjection(name="cm2")
+                        )
+                    ]
+                ),
+            ),
         ],
     )
     vols = _extract_volumes(pod_spec)
-    assert len(vols) == 3
-    assert vols[0]["configMap"]["name"] == "cm1"
+    assert len(vols) == 5
+    # items/defaultMode must survive: a workload mounting one key must not get all of them.
+    assert vols[0]["configMap"] == {
+        "name": "cm1",
+        "defaultMode": 420,
+        "items": [{"key": "app.yaml", "path": "conf/app.yaml"}],
+    }
     assert vols[1]["secret"]["secretName"] == "sec1"  # pragma: allowlist secret
     assert vols[2]["emptyDir"] == {}
+    assert vols[3]["downwardAPI"]["items"][0]["fieldRef"]["fieldPath"] == "metadata.labels"
+    assert vols[4]["projected"]["sources"][0]["configMap"]["name"] == "cm2"
 
     empty_spec = client.V1PodSpec(containers=[c_http], volumes=None)
     assert _extract_volumes(empty_spec) == []
+
+
+def test_camelize_dict_and_keys() -> None:
+    """Validate the camelCase conversion every serialized manifest fragment relies on."""
+    assert _camelize_key("simple") == "simple"
+    assert _camelize_key("initial_delay_seconds") == "initialDelaySeconds"
+    assert _camelize_key("http_get") == "httpGet"
+    # The client spells the probe's exec handler '_exec'.
+    assert _camelize_key("_exec") == "exec"
+
+    data = {
+        "http_get": {
+            "path": "/healthz",
+            "port": 8000,
+            "http_headers": [{"name": "Accept", "value": "json"}],
+        },
+        "initial_delay_seconds": 5,
+        "none_value": None,
+        "scalar_number": 42,
+    }
+    assert _camelize_dict(data) == {
+        "httpGet": {
+            "path": "/healthz",
+            "port": 8000,
+            "httpHeaders": [{"name": "Accept", "value": "json"}],
+        },
+        "initialDelaySeconds": 5,
+        "scalarNumber": 42,
+    }
+    assert _camelize_dict("raw_string") == "raw_string"
+
+
+def test_extract_volumes_rejects_unsupported_source() -> None:
+    """A volume a twin cannot honestly reproduce must fail the fork, not emit a bad manifest."""
+    pvc_spec = client.V1PodSpec(
+        containers=[client.V1Container(name="c1")],
+        volumes=[
+            client.V1Volume(
+                name="data",
+                persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
+                    claim_name="prod-data"
+                ),
+            )
+        ],
+    )
+    with pytest.raises(FleetError, match="unsupported volume source"):
+        _extract_volumes(pvc_spec)
+
+    host_path_spec = client.V1PodSpec(
+        containers=[client.V1Container(name="c1")],
+        volumes=[
+            client.V1Volume(name="hp", host_path=client.V1HostPathVolumeSource(path="/var/run"))
+        ],
+    )
+    with pytest.raises(FleetError, match="hostPath"):
+        _extract_volumes(host_path_spec)
 
 
 def test_get_k8s_clients() -> None:
@@ -536,10 +642,11 @@ async def test_k8s_workload_reader_success() -> None:
 
 
 @pytest.mark.asyncio
-async def test_k8s_workload_reader_pod_matching_errors() -> None:
-    """Test errors when pods or container statuses cannot be matched."""
+async def test_k8s_workload_reader_unpinnable_and_invalid_workloads() -> None:
+    """Test degradation when no pod can pin a digest, and failure on an empty pod template."""
     apps_mock = MagicMock()
     core_mock = MagicMock()
+    apps_mock.list_namespaced_replica_set.return_value = client.V1ReplicaSetList(items=[])
 
     dep = client.V1Deployment(
         metadata=client.V1ObjectMeta(name="svc-a", labels={"app": "svc-a"}),
@@ -553,23 +660,28 @@ async def test_k8s_workload_reader_pod_matching_errors() -> None:
         ),
     )
     apps_mock.list_namespaced_deployment.return_value = client.V1DeploymentList(items=[dep])
-
-    # Case 1: No pods match selector
-    core_mock.list_namespaced_pod.return_value = client.V1PodList(items=[])
     reader = K8sWorkloadReader(apps_api=apps_mock, core_api=core_mock)
-    with pytest.raises(FleetError, match="No running pod with container statuses found"):
-        await reader.read_workloads("ust-prod")
 
-    # Case 2: Matching pod has no container statuses
-    pod_no_status = client.V1Pod(
+    # Case 1: no pods match the selector at all. A prod deployment whose pods are all
+    # unschedulable is the incident Understudy exists to remediate, so the snapshot degrades
+    # to the spec's tag and records that the image is not digest-pinned.
+    core_mock.list_namespaced_pod.return_value = client.V1PodList(items=[])
+    snap = await reader.read_workloads("ust-prod")
+    container = snap.workloads["svc-a"].containers[0]
+    assert container.digest_pinned is False
+    assert container.image_digest == ""
+    assert container.pinned_image == "svc-a:good"
+
+    # Case 2: the matching pod is Pending (ImagePullBackOff), so it has no imageID to read.
+    pod_pending = client.V1Pod(
         metadata=client.V1ObjectMeta(name="svc-a-pod", labels={"app": "svc-a"}),
         status=client.V1PodStatus(phase="Pending", container_statuses=None),
     )
-    core_mock.list_namespaced_pod.return_value = client.V1PodList(items=[pod_no_status])
-    with pytest.raises(FleetError, match="No running pod with container statuses found"):
-        await reader.read_workloads("ust-prod")
+    core_mock.list_namespaced_pod.return_value = client.V1PodList(items=[pod_pending])
+    snap = await reader.read_workloads("ust-prod")
+    assert snap.workloads["svc-a"].containers[0].digest_pinned is False
 
-    # Case 3: Pod spec has no containers
+    # Case 3: pod spec has no containers -- a genuinely unusable workload
     dep_no_containers = client.V1Deployment(
         metadata=client.V1ObjectMeta(name="svc-a", labels={"app": "svc-a"}),
         spec=client.V1DeploymentSpec(
@@ -599,12 +711,134 @@ async def test_k8s_workload_reader_pod_matching_errors() -> None:
     with pytest.raises(FleetError, match="has no containers in pod template"):
         await reader.read_workloads("ust-prod")
 
-    # Case 4: Container status name does not match container spec name
+    # Case 4: the only running pod reports a different image than the spec, so its digest
+    # cannot be trusted for this deployment.
     apps_mock.list_namespaced_deployment.return_value = client.V1DeploymentList(items=[dep])
-    with pytest.raises(FleetError, match="has no matching container status in pod"):
-        await reader.read_workloads("ust-prod")
+    snap = await reader.read_workloads("ust-prod")
+    assert snap.workloads["svc-a"].containers[0].digest_pinned is False
 
 
+def _running_pod(name: str, image: str, image_id: str, template_hash: str, start: int) -> Any:
+    """Build a Running pod carrying a container status for the 'svc-a' container."""
+    return client.V1Pod(
+        metadata=client.V1ObjectMeta(
+            name=name,
+            labels={"app": "svc-a", "pod-template-hash": template_hash},
+        ),
+        status=client.V1PodStatus(
+            phase="Running",
+            start_time=datetime(2026, 3, 1, 12, start, tzinfo=UTC),
+            container_statuses=[
+                client.V1ContainerStatus(
+                    name="svc-a",
+                    image=image,
+                    image_id=image_id,
+                    ready=True,
+                    restart_count=0,
+                )
+            ],
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_k8s_workload_reader_pins_current_replica_set_during_rollout() -> None:
+    """Mid-rollout, the digest must come from the Deployment's current ReplicaSet."""
+    apps_mock = MagicMock()
+    core_mock = MagicMock()
+
+    dep = client.V1Deployment(
+        metadata=client.V1ObjectMeta(
+            name="svc-a",
+            uid="dep-uid-1",
+            labels={"app": "svc-a"},
+            annotations={"deployment.kubernetes.io/revision": "2"},
+        ),
+        spec=client.V1DeploymentSpec(
+            selector=client.V1LabelSelector(match_labels={"app": "svc-a"}),
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(
+                    containers=[client.V1Container(name="svc-a", image="svc-a:v2")]
+                )
+            ),
+        ),
+    )
+    owner = client.V1OwnerReference(
+        api_version="apps/v1", kind="Deployment", name="svc-a", uid="dep-uid-1", controller=True
+    )
+    old_rs = client.V1ReplicaSet(
+        metadata=client.V1ObjectMeta(
+            name="svc-a-old",
+            labels={"pod-template-hash": "old"},
+            annotations={"deployment.kubernetes.io/revision": "1"},
+            owner_references=[owner],
+        )
+    )
+    new_rs = client.V1ReplicaSet(
+        metadata=client.V1ObjectMeta(
+            name="svc-a-new",
+            labels={"pod-template-hash": "new"},
+            annotations={"deployment.kubernetes.io/revision": "2"},
+            owner_references=[owner],
+        )
+    )
+    unrelated_rs = client.V1ReplicaSet(metadata=client.V1ObjectMeta(name="other"))
+
+    old_digest = "sha256:" + "a" * 64
+    new_digest = "sha256:" + "b" * 64
+    apps_mock.list_namespaced_deployment.return_value = client.V1DeploymentList(items=[dep])
+    apps_mock.list_namespaced_replica_set.return_value = client.V1ReplicaSetList(
+        items=[unrelated_rs, old_rs, new_rs]
+    )
+    # The old pod is listed first and started earlier; neither must win.
+    core_mock.list_namespaced_pod.return_value = client.V1PodList(
+        items=[
+            _running_pod("svc-a-old-1", "svc-a:v1", f"svc-a@{old_digest}", "old", 0),
+            _running_pod("svc-a-new-1", "svc-a:v2", f"svc-a@{new_digest}", "new", 5),
+        ]
+    )
+
+    reader = K8sWorkloadReader(apps_api=apps_mock, core_api=core_mock)
+    snap = await reader.read_workloads("ust-prod")
+    container = snap.workloads["svc-a"].containers[0]
+    assert container.image_digest == new_digest
+    assert container.digest_pinned is True
+
+
+@pytest.mark.asyncio
+async def test_k8s_workload_reader_falls_back_to_image_matching_pod() -> None:
+    """Without ReplicaSet information, only a pod running the spec's image may be trusted."""
+    apps_mock = MagicMock()
+    core_mock = MagicMock()
+
+    dep = client.V1Deployment(
+        metadata=client.V1ObjectMeta(name="svc-a", labels={"app": "svc-a"}),
+        spec=client.V1DeploymentSpec(
+            selector=client.V1LabelSelector(match_labels={"app": "svc-a"}),
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(
+                    containers=[client.V1Container(name="svc-a", image="svc-a:v2")]
+                )
+            ),
+        ),
+    )
+    stale_digest = "sha256:" + "c" * 64
+    current_digest = "sha256:" + "d" * 64
+    apps_mock.list_namespaced_deployment.return_value = client.V1DeploymentList(items=[dep])
+    apps_mock.list_namespaced_replica_set.return_value = client.V1ReplicaSetList(items=[])
+    core_mock.list_namespaced_pod.return_value = client.V1PodList(
+        items=[
+            _running_pod("other-1", "sidecar:v9", f"sidecar@{stale_digest}", "x", 0),
+            _running_pod("svc-a-1", "svc-a:v2", f"svc-a@{current_digest}", "y", 1),
+        ]
+    )
+
+    reader = K8sWorkloadReader(apps_api=apps_mock, core_api=core_mock)
+    snap = await reader.read_workloads("ust-prod")
+    assert snap.workloads["svc-a"].containers[0].image_digest == current_digest
+
+
+@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_k8s_read_config_maps_errors() -> None:
     """Test reading config maps with 404, 500, and generic exceptions."""
@@ -646,3 +880,100 @@ async def test_read_prod_workloads_convenience() -> None:
         res = await read_prod_workloads(exclude_components={"database"}, clock=clock)
         assert res.namespace == "ust-prod"
         mock_read.assert_called_once_with(namespace="ust-prod", exclude_components={"database"})
+
+
+@pytest.mark.asyncio
+async def test_k8s_workload_reader_replica_set_resolution_edge_cases() -> None:
+    """ReplicaSet lookups that cannot identify the current revision fall back to labels."""
+    apps_mock = MagicMock()
+    core_mock = MagicMock()
+
+    digest = "sha256:" + "e" * 64
+    pod = _running_pod("svc-a-1", "svc-a:v2", f"svc-a@{digest}", "hash-1", 0)
+    core_mock.list_namespaced_pod.return_value = client.V1PodList(items=[pod])
+
+    def _dep(uid: str | None, revision: str | None) -> client.V1Deployment:
+        annotations = {"deployment.kubernetes.io/revision": revision} if revision else {}
+        return client.V1Deployment(
+            metadata=client.V1ObjectMeta(
+                name="svc-a", uid=uid, labels={"app": "svc-a"}, annotations=annotations
+            ),
+            spec=client.V1DeploymentSpec(
+                selector=client.V1LabelSelector(match_labels={"app": "svc-a"}),
+                template=client.V1PodTemplateSpec(
+                    spec=client.V1PodSpec(
+                        containers=[client.V1Container(name="svc-a", image="svc-a:v2")]
+                    )
+                ),
+            ),
+        )
+
+    owner = client.V1OwnerReference(
+        api_version="apps/v1", kind="Deployment", name="svc-a", uid="dep-uid-1", controller=True
+    )
+    reader = K8sWorkloadReader(apps_api=apps_mock, core_api=core_mock)
+
+    # 1. Deployment carries no revision annotation, and 2. no uid: nothing to match a RS on.
+    for dep in (_dep("dep-uid-1", None), _dep(None, "2")):
+        apps_mock.list_namespaced_deployment.return_value = client.V1DeploymentList(items=[dep])
+        apps_mock.list_namespaced_replica_set.return_value = client.V1ReplicaSetList(items=[])
+        snap = await reader.read_workloads("ust-prod")
+        assert snap.workloads["svc-a"].containers[0].image_digest == digest
+
+    apps_mock.list_namespaced_deployment.return_value = client.V1DeploymentList(
+        items=[_dep("dep-uid-1", "2")]
+    )
+
+    # 3. A ReplicaSet without metadata, one owned by another Deployment, and one stuck on an
+    # older revision: none identifies the current revision.
+    apps_mock.list_namespaced_replica_set.return_value = client.V1ReplicaSetList(
+        items=[
+            client.V1ReplicaSet(metadata=None),
+            client.V1ReplicaSet(
+                metadata=client.V1ObjectMeta(
+                    name="other-rs",
+                    owner_references=[
+                        client.V1OwnerReference(
+                            api_version="apps/v1",
+                            kind="Deployment",
+                            name="other",
+                            uid="dep-uid-other",
+                        )
+                    ],
+                    annotations={"deployment.kubernetes.io/revision": "2"},
+                )
+            ),
+            client.V1ReplicaSet(
+                metadata=client.V1ObjectMeta(
+                    name="svc-a-old",
+                    owner_references=[owner],
+                    annotations={"deployment.kubernetes.io/revision": "1"},
+                    labels={"pod-template-hash": "hash-0"},
+                )
+            ),
+        ]
+    )
+    snap = await reader.read_workloads("ust-prod")
+    assert snap.workloads["svc-a"].containers[0].image_digest == digest
+
+    # 4. The current ReplicaSet is known but none of its pods are running yet, so the
+    # label-matched pods are used rather than discarding the only digest available.
+    apps_mock.list_namespaced_replica_set.return_value = client.V1ReplicaSetList(
+        items=[
+            client.V1ReplicaSet(
+                metadata=client.V1ObjectMeta(
+                    name="svc-a-new",
+                    owner_references=[owner],
+                    annotations={"deployment.kubernetes.io/revision": "2"},
+                    labels={"pod-template-hash": "hash-new"},
+                )
+            )
+        ]
+    )
+    snap = await reader.read_workloads("ust-prod")
+    assert snap.workloads["svc-a"].containers[0].image_digest == digest
+
+
+def test_current_pod_template_hash_without_metadata() -> None:
+    """A Deployment with no metadata yields no revision to match ReplicaSets against."""
+    assert _current_pod_template_hash(client.V1Deployment(metadata=None), []) is None

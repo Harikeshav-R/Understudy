@@ -360,6 +360,7 @@ class FleetTeardownManager:
         reaped_namespaces: list[str] = []
         reaped_incidents: set[str] = set()
         active_incident_namespaces: dict[str, set[str]] = {}
+        active_incidents = get_active_incidents()
 
         items = list(ns_resp.items or [])
         for ns in items:
@@ -371,6 +372,12 @@ class FleetTeardownManager:
 
             if inc_id:
                 active_incident_namespaces.setdefault(inc_id, set()).add(name)
+
+            # An incident this process is still working on keeps its twins, however old they
+            # are: a human-in-the-loop remediation routinely outlives the retention window.
+            if inc_id and inc_id in active_incidents:
+                logger.info("fleet_gc_skipped_active", namespace=name, incident=inc_id)
+                continue
 
             creation_ts = ns.metadata.creation_timestamp
             if creation_ts:
@@ -406,26 +413,49 @@ class FleetTeardownManager:
             dropped_databases.extend(dbs)
             unregister_active_incident(inc_id)
 
-        # Reap orphaned twin databases that have no surviving namespaces in the cluster
-        all_twin_dbs = await self.database_cloner.list_twin_databases()
+        # Reap orphaned twin databases that have no surviving namespaces in the cluster.
+        # A fork clones its database before creating its namespace (ADR-009), so "no
+        # namespace" alone does not mean abandoned: the incident must also be inactive and
+        # the database must itself be older than the retention threshold.
+        all_twin_dbs = await self.database_cloner.list_twin_databases_with_age()
         reaped_set = set(reaped_namespaces)
+        active_clean = {inc.replace("-", "_").strip(): inc for inc in active_incidents}
 
-        for db in all_twin_dbs:
-            if db in dropped_databases:
+        for info in all_twin_dbs:
+            if info.name in dropped_databases:
                 continue
 
-            match = TWIN_DB_REGEX.match(db)
-            if match:
-                db_incident_clean = match.group(1)
-                # Check if any namespace for this incident is still active and not reaped
-                has_active_ns = any(
-                    ns_inc.replace("-", "_").strip() == db_incident_clean
-                    and bool(active_incident_namespaces[ns_inc] - reaped_set)
-                    for ns_inc in active_incident_namespaces
+            match = TWIN_DB_REGEX.match(info.name)
+            if not match:
+                continue
+
+            db_incident_clean = match.group(1)
+            # Check if any namespace for this incident is still active and not reaped
+            has_active_ns = any(
+                ns_inc.replace("-", "_").strip() == db_incident_clean
+                and bool(active_incident_namespaces[ns_inc] - reaped_set)
+                for ns_inc in active_incident_namespaces
+            )
+            if has_active_ns:
+                continue
+
+            if db_incident_clean in active_clean:
+                logger.info(
+                    "fleet_gc_skipped_active_database",
+                    database=info.name,
+                    incident=active_clean[db_incident_clean],
                 )
-                if not has_active_ns:
-                    await self.database_cloner.drop_twin_database(db)
-                    dropped_databases.append(db)
+                continue
+
+            if info.age_seconds is None:
+                logger.warning("fleet_gc_orphan_age_unknown", database=info.name)
+                continue
+
+            if info.age_seconds < older_than_seconds:
+                continue
+
+            await self.database_cloner.drop_twin_database(info.name)
+            dropped_databases.append(info.name)
 
         logger.info(
             "fleet_gc_completed",

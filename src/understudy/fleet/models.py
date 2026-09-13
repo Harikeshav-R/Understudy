@@ -26,7 +26,12 @@ class EnvVar(BaseModel):
 
 
 class ContainerSnapshot(BaseModel):
-    """Snapshot of a container in a workload with resolved digest."""
+    """Snapshot of a container in a workload with resolved digest.
+
+    `digest_pinned` is False when no running pod could be trusted to supply an imageID, so
+    `pinned_image` carries the spec's tag and `image_digest` is empty. A report covering the
+    twin must disclose that rather than claim the image was pinned to prod's digest.
+    """
 
     model_config = ConfigDict(frozen=True)
 
@@ -34,6 +39,7 @@ class ContainerSnapshot(BaseModel):
     image_tag: str
     image_digest: str
     pinned_image: str
+    digest_pinned: bool = True
     resources: ResourceSpec
     env: list[EnvVar] = Field(default_factory=list)
     ports: list[dict[str, Any]] = Field(default_factory=list)
@@ -132,6 +138,19 @@ class DatabaseSnapshotMetadata(BaseModel):
     source_namespace: str
     refreshed_at: datetime
     duration_seconds: float = 0.0
+
+
+class TwinDatabaseInfo(BaseModel):
+    """A twin database with the age derived from its creation-stamp comment.
+
+    `age_seconds` is None when the database carries no parseable `understudy:created_at=`
+    comment, which garbage collection treats as "age unknown, do not reap".
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    name: str
+    age_seconds: float | None = None
 
 
 class DatabaseCloneResult(BaseModel):

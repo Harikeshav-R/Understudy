@@ -492,6 +492,15 @@ async def test_fake_database_cloner() -> None:
     count = await cloner.get_item_count("twin_inc_001_0")
     assert count == 207
 
+    # Ages are reported for garbage collection; an unstamped database reports None.
+    infos = await cloner.list_twin_databases_with_age()
+    assert [i.name for i in infos] == ["twin_inc_001_0"]
+    assert infos[0].age_seconds is not None
+    assert infos[0].age_seconds < 60.0
+    cloner.unknown_age_databases.add("twin_inc_001_0")
+    assert (await cloner.list_twin_databases_with_age())[0].age_seconds is None
+    cloner.unknown_age_databases.clear()
+
     dropped = await cloner.drop_all_incident_databases("inc-001")
     assert dropped == ["twin_inc_001_0"]
     assert await cloner.list_twin_databases("inc-001") == []

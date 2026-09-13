@@ -16,6 +16,7 @@ from understudy.common.clock import FrozenClock
 from understudy.common.config import ClusterSettings, Settings
 from understudy.common.errors import FleetError
 from understudy.contracts.twin import TwinHandle
+from understudy.fleet.models import TwinDatabaseInfo
 from understudy.fleet.teardown import (
     DEFAULT_API_TIMEOUT_SECONDS,
     DEFAULT_RETENTION_SECONDS,
@@ -477,11 +478,16 @@ async def test_gc_logic() -> None:
     # - twin_inc_orphan_0 (orphan, dropped)
     # - twin_unmatched_name (ignored by regex)
     database_cloner.drop_all_incident_databases.side_effect = lambda inc: [f"twin_{inc}_0"]
-    database_cloner.list_twin_databases.return_value = [
-        "twin_inc_expired_0",
-        "twin_inc_fresh_0",
-        "twin_inc_orphan_0",
-        "twin_unmatched_name",
+    database_cloner.list_twin_databases_with_age.return_value = [
+        TwinDatabaseInfo(name="twin_inc_expired_0", age_seconds=7200.0),
+        TwinDatabaseInfo(name="twin_inc_fresh_0", age_seconds=600.0),
+        TwinDatabaseInfo(name="twin_inc_orphan_0", age_seconds=7200.0),
+        # Orphaned but still young: a fork clones its database before creating its namespace,
+        # so dropping this would destroy a twin mid-fork.
+        TwinDatabaseInfo(name="twin_inc_inflight_0", age_seconds=3.0),
+        # Age unknown (no creation stamp): never reaped by the orphan sweep.
+        TwinDatabaseInfo(name="twin_inc_unstamped_0", age_seconds=None),
+        TwinDatabaseInfo(name="twin_unmatched_name", age_seconds=7200.0),
     ]
 
     gc_res = await manager.gc(older_than_seconds=DEFAULT_RETENTION_SECONDS)
@@ -496,6 +502,8 @@ async def test_gc_logic() -> None:
     database_cloner.drop_twin_database.assert_called_once_with("twin_inc_orphan_0")
     assert "twin_inc_orphan_0" in gc_res.dropped_databases
     assert "twin_inc_fresh_0" not in gc_res.dropped_databases
+    assert "twin_inc_inflight_0" not in gc_res.dropped_databases
+    assert "twin_inc_unstamped_0" not in gc_res.dropped_databases
     assert "twin_unmatched_name" not in gc_res.dropped_databases
 
     # Case: delete_namespace error handling during GC (404/409 ignored, 500 raises)
@@ -533,6 +541,52 @@ async def test_gc_with_naive_clock() -> None:
     )
 
     core_api.list_namespace.return_value = MagicMock(items=[])
-    database_cloner.list_twin_databases.return_value = []
+    database_cloner.list_twin_databases_with_age.return_value = []
     gc_res = await manager.gc()
     assert gc_res.reaped_namespaces == []
+
+
+@pytest.mark.asyncio
+async def test_gc_never_reaps_an_active_incident() -> None:
+    """An incident this process is still working on keeps its namespaces and databases."""
+    now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+    core_api = MagicMock()
+    database_cloner = AsyncMock()
+    manager = FleetTeardownManager(
+        core_api=core_api,
+        database_cloner=database_cloner,
+        clock=FrozenClock(now),
+    )
+
+    # Old enough to be reaped on age alone, but the incident is still open: a human-in-the-loop
+    # remediation routinely outlives the retention window.
+    ns_active = MagicMock()
+    ns_active.metadata.name = "ust-twin-inc-live-0"
+    ns_active.metadata.labels = {"understudy.dev/incident": "inc_live"}
+    ns_active.metadata.creation_timestamp = now - timedelta(seconds=7200)
+    core_api.list_namespace.return_value = MagicMock(items=[ns_active])
+    database_cloner.list_twin_databases_with_age.return_value = [
+        TwinDatabaseInfo(name="twin_inc_live_0", age_seconds=7200.0),
+        # Database of an active incident whose namespace does not exist yet (mid-fork).
+        TwinDatabaseInfo(name="twin_inc_live_1", age_seconds=7200.0),
+    ]
+
+    register_active_incident("inc_live")
+    try:
+        gc_res = await manager.gc(older_than_seconds=DEFAULT_RETENTION_SECONDS)
+
+        # The in-flight case: the database exists but its namespace has not been created yet,
+        # so only the active-incident registration can save it from the orphan sweep.
+        core_api.list_namespace.return_value = MagicMock(items=[])
+        database_cloner.list_twin_databases_with_age.return_value = [
+            TwinDatabaseInfo(name="twin_inc_live_0", age_seconds=7200.0)
+        ]
+        inflight_res = await manager.gc(older_than_seconds=DEFAULT_RETENTION_SECONDS)
+    finally:
+        unregister_active_incident("inc_live")
+
+    assert gc_res.reaped_namespaces == []
+    assert gc_res.dropped_databases == []
+    assert inflight_res.dropped_databases == []
+    core_api.delete_namespace.assert_not_called()
+    database_cloner.drop_twin_database.assert_not_called()

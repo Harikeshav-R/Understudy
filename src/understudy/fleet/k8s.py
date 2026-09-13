@@ -6,7 +6,7 @@ Read ust-prod workloads via the Kubernetes API, extracting image digests
 """
 
 import asyncio
-from typing import Any
+from typing import Any, cast
 
 from kubernetes import client, config
 from kubernetes.client.exceptions import ApiException
@@ -14,6 +14,7 @@ from kubernetes.client.exceptions import ApiException
 from understudy.common.clock import Clock, resolve_clock
 from understudy.common.config import get_settings
 from understudy.common.errors import FleetError
+from understudy.common.logging import get_logger
 from understudy.fleet.api import WorkloadReader
 from understudy.fleet.models import (
     ClusterWorkloadSnapshot,
@@ -23,7 +24,45 @@ from understudy.fleet.models import (
     WorkloadSnapshot,
 )
 
+logger = get_logger(__name__)
+
 DEFAULT_K8S_TIMEOUT_SECONDS = 10.0
+REVISION_ANNOTATION = "deployment.kubernetes.io/revision"
+POD_TEMPLATE_HASH_LABEL = "pod-template-hash"
+
+# Volume sources a twin can reproduce faithfully, mapped to their manifest field names.
+_SUPPORTED_VOLUME_SOURCES: tuple[tuple[str, str], ...] = (
+    ("config_map", "configMap"),
+    ("secret", "secret"),
+    ("empty_dir", "emptyDir"),
+    ("downward_api", "downwardAPI"),
+    ("projected", "projected"),
+)
+
+
+def _camelize_key(key: str) -> str:
+    """Convert a snake_case Kubernetes client attribute name to its manifest spelling."""
+    parts = key.lstrip("_").split("_")
+    return parts[0] + "".join(p.capitalize() for p in parts[1:])
+
+
+def _camelize_dict(obj: Any) -> Any:
+    """Recursively convert dictionary keys to camelCase, dropping None values."""
+    if isinstance(obj, dict):
+        return {_camelize_key(k): _camelize_dict(v) for k, v in obj.items() if v is not None}
+    if isinstance(obj, list):
+        return [_camelize_dict(elem) for elem in obj]
+    return obj
+
+
+def _serialize_k8s_obj(obj: Any) -> dict[str, Any]:
+    """Serialize a Kubernetes client model into apply-ready manifest form.
+
+    `to_dict()` yields snake_case attribute names (`http_get`, `initial_delay_seconds`)
+    which the API server does not recognize, so keys are camelCased recursively and unset
+    fields dropped.
+    """
+    return cast("dict[str, Any]", _camelize_dict(obj.to_dict()))
 
 
 def _parse_image_repo_and_tag(image_spec: str) -> tuple[str, str | None]:
@@ -43,16 +82,45 @@ def _parse_image_repo_and_tag(image_spec: str) -> tuple[str, str | None]:
     return image_spec, None
 
 
-def resolve_image_digest(image_spec: str, container_status_image_id: str | None) -> tuple[str, str]:
+def resolve_image_digest(
+    image_spec: str,
+    container_status_image_id: str | None,
+    allow_unpinned: bool = False,
+) -> tuple[str, str]:
     """Resolve an image spec and container status imageID to a pinned image and digest.
 
+    Args:
+        image_spec: The image reference from the Deployment's pod template.
+        container_status_image_id: The running container's resolved imageID, if any.
+        allow_unpinned: When True, degrade to the spec's tag instead of raising if no
+            digest can be derived. A prod Deployment whose pods are all Pending
+            (ImagePullBackOff, unschedulable) has no imageID to read, and that is exactly
+            the incident class Understudy exists to remediate, so the fork must proceed.
+
     Returns:
-        tuple[str, str]: (pinned_image_reference, raw_sha256_digest)
-        e.g. ('localhost:5001/worker@sha256:2e2519...', 'sha256:2e2519...')
+        tuple[str, str]: (pinned_image_reference, raw_sha256_digest). The digest is an
+        empty string when the image could not be pinned and `allow_unpinned` is True.
 
     Raises:
-        FleetError: If no valid digest can be resolved from the container status or spec.
+        FleetError: If no valid digest can be resolved and `allow_unpinned` is False.
     """
+    try:
+        return _resolve_pinned_image(image_spec, container_status_image_id)
+    except FleetError:
+        if not allow_unpinned:
+            raise
+        logger.warning(
+            "image_digest_unpinned",
+            image=image_spec,
+            image_id=container_status_image_id,
+        )
+        return image_spec, ""
+
+
+def _resolve_pinned_image(
+    image_spec: str, container_status_image_id: str | None
+) -> tuple[str, str]:
+    """Derive the digest-pinned image reference, raising if no digest is available."""
     repo, tag_or_digest = _parse_image_repo_and_tag(image_spec)
 
     # If the deployment spec itself is already pinned with a sha256 digest
@@ -172,12 +240,101 @@ def extract_config_map_refs(pod_spec: client.V1PodSpec) -> list[str]:
     return sorted(names)
 
 
+def _current_pod_template_hash(
+    dep: client.V1Deployment, replica_sets: list[client.V1ReplicaSet]
+) -> str | None:
+    """Find the pod-template-hash of the ReplicaSet holding the Deployment's current revision.
+
+    Mid-rollout both the old and the new ReplicaSet's pods satisfy the Deployment's
+    `matchLabels`, so selecting on labels alone can pair the new spec's image with an old
+    pod's digest. Returns None when the revision cannot be determined, leaving the caller to
+    fall back to label matching.
+    """
+    if not dep.metadata:
+        return None
+
+    dep_uid = dep.metadata.uid
+    dep_revision = (dep.metadata.annotations or {}).get(REVISION_ANNOTATION)
+    if not dep_uid or not dep_revision:
+        return None
+
+    for rs in replica_sets:
+        if not rs.metadata:
+            continue
+        owners = rs.metadata.owner_references or []
+        if not any(o.kind == "Deployment" and o.uid == dep_uid for o in owners):
+            continue
+        if (rs.metadata.annotations or {}).get(REVISION_ANNOTATION) != dep_revision:
+            continue
+        return (rs.metadata.labels or {}).get(POD_TEMPLATE_HASH_LABEL)
+
+    return None
+
+
+def _image_name(image_spec: str) -> str:
+    """Return the bare image name, ignoring registry host and tag or digest."""
+    repo, _ = _parse_image_repo_and_tag(image_spec)
+    return repo.rsplit("/", 1)[-1]
+
+
+def _pod_images_match_spec(pod: client.V1Pod, spec_containers: list[client.V1Container]) -> bool:
+    """Check that every spec container has a running status for the same image name."""
+    statuses = {cs.name: cs for cs in (pod.status.container_statuses or [])} if pod.status else {}
+    for c in spec_containers:
+        status = statuses.get(c.name)
+        if status is None or not status.image:
+            return False
+        if _image_name(status.image) != _image_name(c.image):
+            return False
+    return True
+
+
+def _select_digest_source_pod(
+    dep: client.V1Deployment,
+    pods: list[client.V1Pod],
+    replica_sets: list[client.V1ReplicaSet],
+    match_labels: dict[str, str],
+    spec_containers: list[client.V1Container],
+) -> client.V1Pod | None:
+    """Pick the pod whose container statuses may be trusted to pin the Deployment's digests.
+
+    Candidates must be Running with container statuses, belong to the Deployment's current
+    ReplicaSet when that can be established, and report images corresponding to the current
+    spec. The newest candidate wins. Returns None when no pod can be trusted.
+    """
+    candidates = [
+        pod
+        for pod in pods
+        if pod.metadata
+        and pod.metadata.labels
+        and all(pod.metadata.labels.get(k) == v for k, v in match_labels.items())
+        and pod.status
+        and pod.status.phase == "Running"
+        and pod.status.container_statuses
+    ]
+
+    template_hash = _current_pod_template_hash(dep, replica_sets)
+    if template_hash:
+        current_revision = [
+            pod
+            for pod in candidates
+            if (pod.metadata.labels or {}).get(POD_TEMPLATE_HASH_LABEL) == template_hash
+        ]
+        if current_revision:
+            candidates = current_revision
+
+    candidates = [pod for pod in candidates if _pod_images_match_spec(pod, spec_containers)]
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda p: (p.status.start_time is not None, p.status.start_time))
+
+
 def _extract_probe(probe: client.V1Probe | None) -> dict[str, Any] | None:
-    """Extract probe configuration as a serialized dictionary with None values stripped."""
+    """Extract probe configuration in apply-ready camelCase manifest form."""
     if probe is None:
         return None
-    data = probe.to_dict()
-    return {k.lstrip("_"): v for k, v in data.items() if v is not None}
+    return _serialize_k8s_obj(probe)
 
 
 def _extract_probes(
@@ -209,12 +366,20 @@ def _extract_volumes(pod_spec: client.V1PodSpec) -> list[dict[str, Any]]:
     volumes: list[dict[str, Any]] = []
     for vol in pod_spec.volumes:
         vol_dict: dict[str, Any] = {"name": vol.name}
-        if vol.config_map:
-            vol_dict["configMap"] = {"name": vol.config_map.name}
-        if vol.secret:
-            vol_dict["secret"] = {"secretName": vol.secret.secret_name}
-        if vol.empty_dir:
-            vol_dict["emptyDir"] = {}
+        for attr, manifest_key in _SUPPORTED_VOLUME_SOURCES:
+            source = getattr(vol, attr, None)
+            if source is not None:
+                vol_dict[manifest_key] = _serialize_k8s_obj(source)
+
+        if len(vol_dict) == 1:
+            present = sorted(
+                _camelize_key(k) for k, v in vol.to_dict().items() if v is not None and k != "name"
+            )
+            raise FleetError(
+                f"Volume {vol.name!r} uses an unsupported volume source {present}: a twin "
+                "cannot honestly reproduce this source, so the fork is refused rather than "
+                "substituting an empty volume"
+            )
         volumes.append(vol_dict)
     return volumes
 
@@ -304,7 +469,7 @@ class K8sWorkloadReader(WorkloadReader):
             FleetError: If the Kubernetes API call fails or an image cannot be resolved.
         """
         try:
-            deployments_resp, pods_resp = await asyncio.gather(
+            deployments_resp, pods_resp, replica_sets_resp = await asyncio.gather(
                 asyncio.to_thread(
                     self.apps_api.list_namespaced_deployment,
                     namespace=namespace,
@@ -312,6 +477,11 @@ class K8sWorkloadReader(WorkloadReader):
                 ),
                 asyncio.to_thread(
                     self.core_api.list_namespaced_pod,
+                    namespace=namespace,
+                    _request_timeout=self.timeout_seconds,
+                ),
+                asyncio.to_thread(
+                    self.apps_api.list_namespaced_replica_set,
                     namespace=namespace,
                     _request_timeout=self.timeout_seconds,
                 ),
@@ -328,6 +498,7 @@ class K8sWorkloadReader(WorkloadReader):
 
         deployments: list[client.V1Deployment] = deployments_resp.items or []
         pods: list[client.V1Pod] = pods_resp.items or []
+        replica_sets: list[client.V1ReplicaSet] = replica_sets_resp.items or []
 
         workload_snapshots: dict[str, WorkloadSnapshot] = {}
         all_referenced_cm_names: set[str] = set()
@@ -345,57 +516,41 @@ class K8sWorkloadReader(WorkloadReader):
                 dep.spec.selector.match_labels or {} if dep.spec and dep.spec.selector else {}
             )
 
-            # Find matching pods
-            matching_pods = [
-                pod
-                for pod in pods
-                if pod.metadata
-                and pod.metadata.labels
-                and all(pod.metadata.labels.get(k) == v for k, v in match_labels.items())
-            ]
-
-            # Prefer pods in Running phase with ready container statuses
-            running_pods = [
-                p
-                for p in matching_pods
-                if p.status and p.status.phase == "Running" and p.status.container_statuses
-            ]
-            selected_pod = (
-                running_pods[0] if running_pods else (matching_pods[0] if matching_pods else None)
-            )
-
-            if (
-                selected_pod is None
-                or not selected_pod.status
-                or not selected_pod.status.container_statuses
-            ):
-                raise FleetError(
-                    f"No running pod with container statuses found for deployment '{dep_name}'"
-                )
-
-            container_status_by_name = {
-                cs.name: cs for cs in (selected_pod.status.container_statuses or [])
-            }
-
             container_snapshots: list[ContainerSnapshot] = []
             pod_spec = dep.spec.template.spec if dep.spec and dep.spec.template else None
             if not pod_spec or not pod_spec.containers:
                 raise FleetError(f"Deployment '{dep_name}' has no containers in pod template")
 
+            selected_pod = _select_digest_source_pod(
+                dep=dep,
+                pods=pods,
+                replica_sets=replica_sets,
+                match_labels=match_labels,
+                spec_containers=pod_spec.containers,
+            )
+            container_status_by_name = (
+                {cs.name: cs for cs in (selected_pod.status.container_statuses or [])}
+                if selected_pod and selected_pod.status
+                else {}
+            )
+            if selected_pod is None:
+                # Every matching pod is Pending or reports images that do not correspond to
+                # the current spec (ImagePullBackOff, unschedulable, mid-rollout). Degrade to
+                # the spec's tag rather than failing the whole fork; the snapshot records
+                # digest_pinned=False so the twin's provenance stays honest.
+                logger.warning(
+                    "workload_digest_unpinned",
+                    namespace=namespace,
+                    deployment=dep_name,
+                )
+
             for c in pod_spec.containers:
                 c_status = container_status_by_name.get(c.name)
-                if not c_status:
-                    pod_desc = (
-                        selected_pod.metadata.name
-                        if selected_pod.metadata and selected_pod.metadata.name
-                        else "unknown"
-                    )
-                    raise FleetError(
-                        f"Container '{c.name}' in deployment '{dep_name}' has no matching "
-                        f"container status in pod '{pod_desc}'"
-                    )
-
-                pinned_image, digest = resolve_image_digest(c.image, c_status.image_id)
+                pinned_image, digest = resolve_image_digest(
+                    c.image,
+                    c_status.image_id if c_status else None,
+                    allow_unpinned=True,
+                )
                 resources = extract_resource_spec(c.resources)
                 env = extract_env_vars(c.env)
                 ports = _extract_ports(c)
@@ -407,6 +562,7 @@ class K8sWorkloadReader(WorkloadReader):
                         image_tag=c.image,
                         image_digest=digest,
                         pinned_image=pinned_image,
+                        digest_pinned=bool(digest),
                         resources=resources,
                         env=env,
                         ports=ports,

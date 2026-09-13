@@ -12,6 +12,7 @@ Tests:
 """
 
 import asyncio
+import shlex
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -21,6 +22,8 @@ import pytest
 from understudy.common.clock import FrozenClock
 from understudy.common.errors import FleetError
 from understudy.fleet.database import (
+    CREATED_AT_COMMENT_PREFIX,
+    SNAPSHOT_DUMP_PATH,
     DatabaseCommandExecutor,
     KubectlDatabaseExecutor,
     PostgresDatabaseCloner,
@@ -76,10 +79,34 @@ async def test_snapshot_refresher_pipeline_building() -> None:
     assert "DROP DATABASE IF EXISTS snapshot_staging" in pipeline
     assert "CREATE DATABASE snapshot_staging" in pipeline
     assert "pg_dump -h prod-postgres.ust-prod" in pipeline
-    assert "psql -U postgres -d snapshot_staging" in pipeline
+    assert "psql -v ON_ERROR_STOP=1 -U postgres -d snapshot_staging" in pipeline
     assert "pg_terminate_backend" in pipeline
     assert "DROP DATABASE IF EXISTS snapshot_template" in pipeline
     assert "ALTER DATABASE snapshot_staging RENAME TO snapshot_template" in pipeline
+
+    # Every psql must abort on the first error; otherwise psql exits 0 even when every
+    # statement of the restore failed and an empty database is published as the template.
+    assert pipeline.count("psql -v ON_ERROR_STOP=1") == pipeline.count("psql ")
+
+    # pg_dump must write to a file, not a pipe: /bin/sh is dash and has no pipefail, so a
+    # piped pg_dump failure would be masked by psql's exit status.
+    assert f"-d ust_prod > {SNAPSHOT_DUMP_PATH} &&" in pipeline
+    assert f"-q -f {SNAPSHOT_DUMP_PATH}" in pipeline
+    assert "|" not in pipeline
+
+    # The restored staging database is probed before it is renamed over the template.
+    assert (
+        "psql -v ON_ERROR_STOP=1 -U postgres -d snapshot_staging "
+        "-c 'SELECT 1 FROM items LIMIT 1;'" in pipeline
+    )
+
+    # Tokenize the way /bin/sh will: the datname must reach psql as a single-quoted SQL
+    # string literal. Double quotes would make it an identifier, and the pg_terminate_backend
+    # safety net would then error on every refresh cycle without failing the pipeline.
+    tokens = shlex.split(pipeline)
+    terminate_sql = next(tok for tok in tokens if "pg_terminate_backend(pid)" in tok)
+    assert "WHERE datname = 'snapshot_template'" in terminate_sql
+    assert 'datname = "snapshot_template"' not in pipeline
 
 
 @pytest.mark.asyncio
@@ -414,3 +441,103 @@ async def test_kubectl_executor_oserror() -> None:
         pytest.raises(FleetError, match="Failed to execute kubectl subprocess"),
     ):
         await executor.run_sql(["SELECT 1;"])
+
+
+@pytest.mark.asyncio
+async def test_clone_stamps_creation_time_and_reports_age() -> None:
+    """A cloned twin database records when it was created so GC can judge its age."""
+    clock = FrozenClock(datetime(2026, 9, 12, 20, 0, 0, tzinfo=UTC))
+    executor = FakeDatabaseCommandExecutor()
+    cloner = PostgresDatabaseCloner(executor=executor, clock=clock)
+
+    await cloner.clone_twin_database("inc_test", 0)
+    stamped = [
+        sql
+        for _db, cmds in executor.sql_history
+        for sql in cmds
+        if sql.startswith("COMMENT ON DATABASE")
+    ]
+    assert stamped == [
+        f"COMMENT ON DATABASE twin_inc_test_0 IS "
+        f"'{CREATED_AT_COMMENT_PREFIX}2026-09-12T20:00:00+00:00';"
+    ]
+
+    # Age is measured from the stamp, not from the listing time.
+    later = PostgresDatabaseCloner(
+        executor=executor,
+        clock=FrozenClock(datetime(2026, 9, 12, 21, 0, 0, tzinfo=UTC)),
+    )
+    infos = await later.list_twin_databases_with_age()
+    assert [(i.name, i.age_seconds) for i in infos] == [("twin_inc_test_0", 3600.0)]
+
+
+@pytest.mark.asyncio
+async def test_list_twin_databases_with_age_edge_cases() -> None:
+    """Unstamped, malformed, naive, and failing listings are all handled explicitly."""
+    clock = FrozenClock(datetime(2026, 9, 12, 20, 0, 0, tzinfo=UTC))
+    executor = FakeDatabaseCommandExecutor()
+    cloner = PostgresDatabaseCloner(executor=executor, clock=clock)
+
+    executor.databases.update(
+        {"twin_unstamped_0", "twin_malformed_0", "twin_naive_0", "twin_future_0"}
+    )
+    executor.database_comments["twin_malformed_0"] = f"{CREATED_AT_COMMENT_PREFIX}not-a-date"
+    # A stamp written without an offset is read as UTC.
+    executor.database_comments["twin_naive_0"] = f"{CREATED_AT_COMMENT_PREFIX}2026-09-12T19:00:00"
+    # A stamp in the future clamps to zero rather than going negative.
+    executor.database_comments["twin_future_0"] = (
+        f"{CREATED_AT_COMMENT_PREFIX}2026-09-12T21:00:00+00:00"
+    )
+
+    ages = {i.name: i.age_seconds for i in await cloner.list_twin_databases_with_age()}
+    assert ages["twin_unstamped_0"] is None
+    assert ages["twin_malformed_0"] is None
+    assert ages["twin_naive_0"] == 3600.0
+    assert ages["twin_future_0"] == 0.0
+
+    # A naive clock is treated as UTC too.
+    class NaiveClock:
+        def now(self) -> datetime:
+            return datetime(2026, 9, 12, 20, 0, 0)
+
+        async def sleep(self, seconds: float) -> None:
+            pass
+
+    naive_cloner = PostgresDatabaseCloner(executor=executor, clock=NaiveClock())
+    naive_ages = {i.name: i.age_seconds for i in await naive_cloner.list_twin_databases_with_age()}
+    assert naive_ages["twin_naive_0"] == 3600.0
+
+    executor.fail_sql = "connection refused"
+    with pytest.raises(FleetError, match="Failed to list twin databases with age"):
+        await cloner.list_twin_databases_with_age()
+
+
+@pytest.mark.asyncio
+async def test_list_twin_databases_with_age_skips_blank_rows() -> None:
+    """Blank rows in psql output are ignored rather than becoming nameless databases."""
+
+    class BlankRowExecutor:
+        """Executor whose listing output contains blank and whitespace-only rows."""
+
+        async def run_sql(
+            self,
+            sql_commands: Any,
+            database: str = "postgres",
+            timeout: float = 30.0,
+        ) -> tuple[int, str, str]:
+            _ = (sql_commands, database, timeout)
+            return 0, "twin_a_0|\n\n   \ntwin_b_0|", ""
+
+        async def run_pipeline(
+            self, shell_script: str, timeout: float = 120.0
+        ) -> tuple[int, str, str]:
+            _ = (shell_script, timeout)
+            return 0, "", ""
+
+    cloner = PostgresDatabaseCloner(
+        executor=BlankRowExecutor(),
+        clock=FrozenClock(datetime(2026, 9, 12, 20, 0, 0, tzinfo=UTC)),
+    )
+    infos = await cloner.list_twin_databases_with_age()
+    assert [i.name for i in infos] == ["twin_a_0", "twin_b_0"]
+    assert all(i.age_seconds is None for i in infos)

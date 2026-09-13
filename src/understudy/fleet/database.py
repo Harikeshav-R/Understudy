@@ -16,14 +16,14 @@ import asyncio
 import contextlib
 import re
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Protocol, runtime_checkable
 
 from understudy.common.clock import Clock, resolve_clock
 from understudy.common.errors import FleetError
 from understudy.common.logging import get_logger
 from understudy.fleet.api import DatabaseCloner, SnapshotRefresher
-from understudy.fleet.models import DatabaseCloneResult
+from understudy.fleet.models import DatabaseCloneResult, TwinDatabaseInfo
 from understudy.fleet.render import sanitize_database_name
 
 logger = get_logger(__name__)
@@ -34,6 +34,8 @@ DEFAULT_BASE_BACKOFF_SECONDS = 0.1
 DEFAULT_MAX_BACKOFF_SECONDS = 2.0
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 30.0
 DEFAULT_PIPELINE_TIMEOUT_SECONDS = 120.0
+SNAPSHOT_DUMP_PATH = "/tmp/ust_snapshot.sql"
+CREATED_AT_COMMENT_PREFIX = "understudy:created_at="
 
 SAFE_DB_NAME_RE = re.compile(r"^[a-zA-Z0-9_]+$")
 
@@ -179,16 +181,30 @@ class PostgresSnapshotRefresher(SnapshotRefresher):
         self._loop_task: asyncio.Task[None] | None = None
 
     def build_refresh_pipeline(self) -> str:
-        """Construct the atomic shell pipeline for staging dump and swap by rename."""
+        """Construct the atomic shell pipeline for staging dump and swap by rename.
+
+        Every step must be able to fail the whole refresh:
+        - `-v ON_ERROR_STOP=1` on every psql, because psql otherwise exits 0 even when all of
+          its statements error, and `run_pipeline` reports only the last command's status.
+        - the dump goes to a file rather than a pipe, so `pg_dump`'s exit status is the one
+          the `&&` chain sees (`/bin/sh` here is dash, which has no `pipefail`).
+        - a guard query against the restored staging database, so an empty restore can never
+          be renamed over the template that every twin clones from.
+        """
+        psql = "psql -v ON_ERROR_STOP=1 -U postgres"
         return (
-            f"psql -U postgres -c 'DROP DATABASE IF EXISTS {self.target_staging_db};' "
+            f"{psql} -c 'DROP DATABASE IF EXISTS {self.target_staging_db};' "
             f"-c 'CREATE DATABASE {self.target_staging_db};' && "
             f"pg_dump -h {self.source_host} -p {self.source_port} -U {self.source_user} "
-            f"-d {self.source_db} | psql -U postgres -d {self.target_staging_db} -q && "
-            f"psql -U postgres -c 'SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-            f'WHERE datname = "{self.target_template_db}" AND pid <> pg_backend_pid();\' '
+            f"-d {self.source_db} > {SNAPSHOT_DUMP_PATH} && "
+            f"{psql} -d {self.target_staging_db} -q -f {SNAPSHOT_DUMP_PATH} && "
+            f"{psql} -d {self.target_staging_db} -c 'SELECT 1 FROM items LIMIT 1;' && "
+            f"{psql} -c 'SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+            f"WHERE datname = '\"'\"'{self.target_template_db}'\"'\"' "
+            f"AND pid <> pg_backend_pid();' "
             f"-c 'DROP DATABASE IF EXISTS {self.target_template_db};' "
-            f"-c 'ALTER DATABASE {self.target_staging_db} RENAME TO {self.target_template_db};'"
+            f"-c 'ALTER DATABASE {self.target_staging_db} RENAME TO {self.target_template_db};' "
+            f"&& rm -f {SNAPSHOT_DUMP_PATH}"
         )
 
     async def refresh_snapshot(self) -> datetime:
@@ -304,11 +320,19 @@ class PostgresDatabaseCloner(DatabaseCloner):
                 attempt=attempt,
             )
 
+            created_at = self.clock.now()
             clone_sql = f"CREATE DATABASE {db_name} TEMPLATE {self.template_db};"
-            code, stdout, stderr = await self.executor.run_sql([clone_sql])
+            # Stamp the creation time so garbage collection can tell an abandoned twin
+            # database from one whose namespace has not been created yet (ADR-009 clones the
+            # database before the namespace exists).
+            stamp_sql = (
+                f"COMMENT ON DATABASE {db_name} IS "
+                f"'{CREATED_AT_COMMENT_PREFIX}{created_at.isoformat()}';"
+            )
+            code, stdout, stderr = await self.executor.run_sql([clone_sql, stamp_sql])
 
             if code == 0:
-                now = self.clock.now()
+                now = created_at
                 forked_at = (
                     await self.refresher.get_last_snapshot_time()
                     if self.refresher is not None
@@ -401,6 +425,48 @@ class PostgresDatabaseCloner(DatabaseCloner):
             return [name for name in names if name.startswith(prefix)]
         return names
 
+    async def list_twin_databases_with_age(self) -> list[TwinDatabaseInfo]:
+        """List twin databases alongside the age recorded in their creation stamp."""
+        code, stdout, stderr = await self.executor.run_sql(
+            [
+                "SELECT d.datname, coalesce(shobj_description(d.oid, 'pg_database'), '') "
+                "FROM pg_database d WHERE d.datname LIKE 'twin_%' ORDER BY d.datname;"
+            ]
+        )
+        if code != 0:
+            raise FleetError(f"Failed to list twin databases with age: {stderr or stdout}")
+
+        now = self.clock.now()
+        infos: list[TwinDatabaseInfo] = []
+        for line in stdout.splitlines():
+            raw = line.strip()
+            if not raw:
+                continue
+            name, _, comment = raw.partition("|")
+            infos.append(
+                TwinDatabaseInfo(
+                    name=name.strip(),
+                    age_seconds=self._comment_age_seconds(comment, now),
+                )
+            )
+        return infos
+
+    def _comment_age_seconds(self, comment: str, now: datetime) -> float | None:
+        """Derive an age in seconds from a twin database's creation-stamp comment."""
+        stamp = comment.strip()
+        if not stamp.startswith(CREATED_AT_COMMENT_PREFIX):
+            return None
+        try:
+            created = datetime.fromisoformat(stamp[len(CREATED_AT_COMMENT_PREFIX) :])
+        except ValueError:
+            return None
+
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=UTC)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=UTC)
+        return max(0.0, (now - created).total_seconds())
+
     async def get_item_count(self, database_name: str) -> int:
         """Count items in a database for verification assertions."""
         self._validate_db_name(database_name)
@@ -440,12 +506,14 @@ class PostgresDatabaseCloner(DatabaseCloner):
 
 
 __all__ = [
+    "CREATED_AT_COMMENT_PREFIX",
     "DEFAULT_BASE_BACKOFF_SECONDS",
     "DEFAULT_COMMAND_TIMEOUT_SECONDS",
     "DEFAULT_MAX_BACKOFF_SECONDS",
     "DEFAULT_MAX_CLONE_RETRIES",
     "DEFAULT_PIPELINE_TIMEOUT_SECONDS",
     "DEFAULT_SNAPSHOT_REFRESH_INTERVAL_SECONDS",
+    "SNAPSHOT_DUMP_PATH",
     "DatabaseCommandExecutor",
     "KubectlDatabaseExecutor",
     "PostgresDatabaseCloner",
