@@ -237,6 +237,24 @@ def get_k8s_core_client(context: str | None = None) -> client.CoreV1Api:
     return client.CoreV1Api()
 
 
+def get_k8s_networking_client(context: str | None = None) -> client.NetworkingV1Api:
+    """Create a Kubernetes NetworkingV1Api client with local kubeconfig or incluster fallback."""
+    try:
+        config.load_incluster_config()
+    except config.ConfigException:
+        config.load_kube_config(context=context)
+    return client.NetworkingV1Api()
+
+
+def get_k8s_rbac_client(context: str | None = None) -> client.RbacAuthorizationV1Api:
+    """Create a Kubernetes RbacAuthorizationV1Api client with kubeconfig or fallback."""
+    try:
+        config.load_incluster_config()
+    except config.ConfigException:
+        config.load_kube_config(context=context)
+    return client.RbacAuthorizationV1Api()
+
+
 class K8sWorkloadReader(WorkloadReader):
     """Kubernetes API workload reader and digest resolver."""
 

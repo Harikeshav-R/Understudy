@@ -120,15 +120,15 @@ terminal paths. Neither stream blocked the other.
 - [x] A2.2 Twin manifest rendering: namespace, role, DSN, egress-stub, NetworkPolicy
 - [x] A2.3 Snapshot refresher (staging + rename, never a live connection to the template)
 - [x] A2.3a Twin DB cloner with retry on "source database is being accessed"
-- [ ] A2.4 `fork(incident_id, n)` concurrent, 120 s readiness, K6 policy confirmed before ready
-- [ ] A2.5 Idempotent teardown by label, `ust fleet gc`, atexit + SIGTERM handlers
+- [x] A2.4 `fork(incident_id, n)` concurrent, 120 s readiness, K6 policy confirmed before ready
+- [x] A2.5 Idempotent teardown by label, `ust fleet gc`, atexit + SIGTERM handlers
 
 **Checkpoint A2**
-- [ ] Three twin namespaces Ready within 120 s; three twin databases exist
-- [ ] Twin item count equals prod item count at fork time
-- [ ] **A write to a twin is invisible in production** ← if this fails, stop everything
-- [ ] **Twin cannot reach `ust-prod`** (curl from twin pod times out) ← same
-- [ ] Teardown removes all namespaces and all twin databases
+- [x] Three twin namespaces Ready within 120 s; three twin databases exist
+- [x] Twin item count equals prod item count at fork time
+- [x] **A write to a twin is invisible in production** ← if this fails, stop everything
+- [x] **Twin cannot reach `ust-prod`** (curl from twin pod times out) ← same
+- [x] Teardown removes all namespaces and all twin databases
 
 ---
 

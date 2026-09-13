@@ -136,6 +136,7 @@ def test_twin_network_policy_golden_spec() -> None:
     }
     sys_ports = {(p["protocol"], p["port"]) for p in sys_rule["ports"]}
     assert ("TCP", 5432) in sys_ports
+    assert ("TCP", 5433) in sys_ports
     assert ("TCP", 8000) in sys_ports
     assert ("TCP", 8080) in sys_ports
 

@@ -367,7 +367,7 @@ class PostgresDatabaseCloner(DatabaseCloner):
         logger.info("twin_database_drop_started", database=database_name)
         await self._terminate_connections(database_name)
         code, stdout, stderr = await self.executor.run_sql(
-            [f"DROP DATABASE IF EXISTS {database_name};"]
+            [f"DROP DATABASE IF EXISTS {database_name} WITH (FORCE);"]
         )
         if code != 0:
             raise FleetError(f"Failed to drop database {database_name}: {stderr or stdout}")

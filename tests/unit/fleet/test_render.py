@@ -206,24 +206,31 @@ def test_rewrite_database_dsn() -> None:
     """Validate database DSN rewriting across various URI shapes."""
     # 1. Default none
     dsn = rewrite_database_dsn(None, "twin_inc_0")
-    assert dsn == f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5432/twin_inc_0"
+    assert dsn == f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5433/twin_inc_0"
 
     # 2. Standard postgresql DSN
     orig = "postgresql://postgres@prod-postgres:5432/ust_prod"
     dsn = rewrite_database_dsn(orig, "twin_inc_0")
-    assert dsn == f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5432/twin_inc_0"
+    assert dsn == f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5433/twin_inc_0"
 
     # 3. DSN with password
-    orig_auth = "postgresql://myuser:secret123@prod-postgres:5432/ust_prod"
+    orig_auth = (
+        "postgresql://myuser:secret123"  # pragma: allowlist secret
+        "@prod-postgres:5432/ust_prod"
+    )
     dsn_auth = rewrite_database_dsn(orig_auth, "twin_inc_0")
-    assert dsn_auth == f"postgresql://myuser:secret123@{DEFAULT_TWIN_POSTGRES_HOST}:5432/twin_inc_0"
+    expected_auth = (
+        "postgresql://myuser:secret123"  # pragma: allowlist secret
+        f"@{DEFAULT_TWIN_POSTGRES_HOST}:5433/twin_inc_0"
+    )
+    assert dsn_auth == expected_auth
 
     # 4. DSN with query parameters
     orig_q = (
         "postgresql://postgres@prod-postgres:5432/ust_prod?sslmode=disable&application_name=test"
     )
     dsn_q = rewrite_database_dsn(orig_q, "twin_inc_0")
-    assert dsn_q.startswith(f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5432/twin_inc_0?")
+    assert dsn_q.startswith(f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5433/twin_inc_0?")
     assert "sslmode=disable" in dsn_q
     assert "application_name=test" in dsn_q
 
@@ -237,7 +244,7 @@ def test_rewrite_database_dsn_exception(monkeypatch: pytest.MonkeyPatch) -> None
 
     monkeypatch.setattr(render_mod, "urlsplit", mock_broken_split)
     fallback_dsn = rewrite_database_dsn("postgresql://host/db", "twin_inc_0")
-    assert fallback_dsn == f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5432/twin_inc_0"
+    assert fallback_dsn == f"postgresql://postgres@{DEFAULT_TWIN_POSTGRES_HOST}:5433/twin_inc_0"
 
 
 def test_rewrite_url_rules() -> None:
@@ -330,7 +337,7 @@ def test_render_twin_manifests_bundle() -> None:
     assert bundle.candidate_index == 0
     assert bundle.namespace == "ust-twin-inc_test-0"
     assert bundle.database_name == "twin_inc_test_0"
-    assert "twin-postgres.ust-system:5432/twin_inc_test_0" in bundle.database_dsn
+    assert "twin-postgres.ust-system:5433/twin_inc_test_0" in bundle.database_dsn
 
     # 1. Namespace
     ns = bundle.namespace_manifest
@@ -373,7 +380,7 @@ def test_render_twin_manifests_bundle() -> None:
     assert app_cfg["ENVIRONMENT"] == "twin"  # Rewritten from production
     assert app_cfg["FAULT_INJECTION_SEED"] == "1337"
     assert app_cfg["NOTIFICATION_WEBHOOK"].startswith(DEFAULT_EGRESS_STUB_URL)
-    assert "twin-postgres.ust-system:5432/twin_inc_test_0" in app_cfg["INTERNAL_DB_CONFIG"]
+    assert "twin-postgres.ust-system:5433/twin_inc_test_0" in app_cfg["INTERNAL_DB_CONFIG"]
 
     # 5. Services
     svcs = bundle.service_manifests
@@ -413,7 +420,7 @@ def test_render_twin_manifests_bundle() -> None:
     worker_c = worker_dep["spec"]["template"]["spec"]["containers"][0]
     worker_env = {e["name"]: e.get("value") for e in worker_c["env"]}
     assert worker_env["UNDERSTUDY_ROLE"] == "twin"
-    assert "twin-postgres.ust-system:5432/twin_inc_test_0" in str(worker_env["DATABASE_URL"])
+    assert "twin-postgres.ust-system:5433/twin_inc_test_0" in str(worker_env["DATABASE_URL"])
 
     # 7. Helper accessors and YAML dump
     assert len(bundle.all_manifests()) == len(bundle.manifests)

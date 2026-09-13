@@ -115,5 +115,69 @@ def graph(
         typer.echo(mermaid_code)
 
 
+fleet_app = typer.Typer(
+    name="fleet",
+    help="Twin fleet lifecycle management commands.",
+    no_args_is_help=True,
+)
+app.add_typer(fleet_app, name="fleet")
+
+
+@fleet_app.command("fork")
+def fleet_fork(
+    incident: str = typer.Option(..., "--incident", help="Incident ID (e.g. inc_test)."),
+    count: int = typer.Option(3, "--count", help="Number of twin environments to fork."),
+) -> None:
+    """Concurrently fork N isolated twin environments for an incident."""
+    import asyncio
+
+    from understudy.fleet.controller import K8sFleetController
+
+    controller = K8sFleetController()
+    twins = asyncio.run(controller.fork(incident_id=incident, n=count))
+    from understudy.fleet.teardown import unregister_active_incident
+
+    unregister_active_incident(incident)
+    for twin in twins:
+        typer.echo(
+            f"twin_id={twin.twin_id} namespace={twin.namespace} "
+            f"database={twin.database} state={twin.state}"
+        )
+
+
+@fleet_app.command("teardown")
+def fleet_teardown(
+    incident: str = typer.Option(..., "--incident", help="Incident ID (e.g. inc_test)."),
+) -> None:
+    """Tear down all twin environments for an incident."""
+    import asyncio
+
+    from understudy.fleet.controller import K8sFleetController
+
+    controller = K8sFleetController()
+    asyncio.run(controller.teardown_all(incident_id=incident))
+    typer.echo(f"fleet torn down for incident={incident}")
+
+
+@fleet_app.command("gc")
+def fleet_gc(
+    older_than: float = typer.Option(
+        3600.0,
+        "--older-than",
+        help="Reap twin environments older than this many seconds (default: 3600s / 1 hour).",
+    ),
+) -> None:
+    """Garbage collect orphaned twin namespaces and databases older than retention threshold."""
+    import asyncio
+
+    from understudy.fleet.teardown import FleetTeardownManager
+
+    manager = FleetTeardownManager()
+    res = asyncio.run(manager.gc(older_than_seconds=older_than))
+    typer.echo(
+        f"reaped {len(res.reaped_namespaces)} namespaces, {len(res.dropped_databases)} databases"
+    )
+
+
 if __name__ == "__main__":
     app()

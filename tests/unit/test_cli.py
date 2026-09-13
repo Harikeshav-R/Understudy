@@ -164,3 +164,78 @@ def test_cli_graph_render(monkeypatch: "pytest.MonkeyPatch", tmp_path: "Path") -
     assert "Rendered control loop graph to" in result.stdout
     assert out_file.is_file()
     assert out_file.read_bytes() == fake_png
+
+
+def test_cli_fleet_fork(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust fleet fork command outputs twin summaries."""
+    from datetime import datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    import understudy.fleet.controller
+    from understudy.contracts.twin import TwinHandle
+
+    mock_twins = [
+        TwinHandle(
+            twin_id="twin_inc_test_0",
+            incident_id="inc_test",
+            candidate_index=0,
+            namespace="ust-twin-inc_test-0",
+            database="twin_inc_test_0",
+            forked_from_snapshot_at=datetime.now(),
+            ready_at=datetime.now(),
+            state="ready",
+        )
+    ]
+    mock_ctrl = MagicMock()
+    mock_ctrl.fork = AsyncMock(return_value=mock_twins)
+
+    monkeypatch.setattr(understudy.fleet.controller, "K8sFleetController", lambda **_kw: mock_ctrl)
+
+    result = runner.invoke(app, ["fleet", "fork", "--incident", "inc_test", "--count", "1"])
+    assert result.exit_code == 0
+    assert "twin_id=twin_inc_test_0" in result.stdout
+    assert "namespace=ust-twin-inc_test-0" in result.stdout
+    assert "state=ready" in result.stdout
+    mock_ctrl.fork.assert_called_once_with(incident_id="inc_test", n=1)
+
+
+def test_cli_fleet_teardown(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust fleet teardown command calls teardown_all."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import understudy.fleet.controller
+
+    mock_ctrl = MagicMock()
+    mock_ctrl.teardown_all = AsyncMock()
+
+    monkeypatch.setattr(understudy.fleet.controller, "K8sFleetController", lambda **_kw: mock_ctrl)
+
+    result = runner.invoke(app, ["fleet", "teardown", "--incident", "inc_test"])
+    assert result.exit_code == 0
+    assert "fleet torn down for incident=inc_test" in result.stdout
+    mock_ctrl.teardown_all.assert_called_once_with(incident_id="inc_test")
+
+
+def test_cli_fleet_gc(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust fleet gc command calls FleetTeardownManager.gc."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    import understudy.fleet.teardown
+    from understudy.fleet.teardown import GcResult
+
+    mock_mgr = MagicMock()
+    mock_mgr.gc = AsyncMock(
+        return_value=GcResult(
+            reaped_namespaces=["ust-twin-old-0"],
+            dropped_databases=["twin_old_0"],
+            scanned_namespaces=5,
+            scanned_databases=5,
+        )
+    )
+
+    monkeypatch.setattr(understudy.fleet.teardown, "FleetTeardownManager", lambda **_kw: mock_mgr)
+
+    result = runner.invoke(app, ["fleet", "gc", "--older-than", "1800"])
+    assert result.exit_code == 0
+    assert "reaped 1 namespaces, 1 databases" in result.stdout
+    mock_mgr.gc.assert_called_once_with(older_than_seconds=1800.0)

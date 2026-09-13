@@ -22,6 +22,8 @@ from understudy.fleet.k8s import (
     extract_resource_spec,
     get_k8s_apps_client,
     get_k8s_core_client,
+    get_k8s_networking_client,
+    get_k8s_rbac_client,
     read_prod_workloads,
     resolve_image_digest,
 )
@@ -101,7 +103,10 @@ def test_resolve_image_digest_missing_status() -> None:
 
 def test_resolve_image_digest_formats() -> None:
     """Test parsing various container runtime imageID formats."""
-    hex_digest = "1111222233334444555566667777888899990000aaaabbbbccccddddeeeeffff"
+    hex_digest = (
+        "11112222333344445555666677778888"  # pragma: allowlist secret
+        "99990000aaaabbbbccccddddeeeeffff"
+    )
     # Standard containerd / k3s format
     p, d = resolve_image_digest(
         "localhost:5001/svc:good",
@@ -360,7 +365,7 @@ def test_extract_probes_and_ports_and_volumes() -> None:
     vols = _extract_volumes(pod_spec)
     assert len(vols) == 3
     assert vols[0]["configMap"]["name"] == "cm1"
-    assert vols[1]["secret"]["secretName"] == "sec1"
+    assert vols[1]["secret"]["secretName"] == "sec1"  # pragma: allowlist secret
     assert vols[2]["emptyDir"] == {}
 
     empty_spec = client.V1PodSpec(containers=[c_http], volumes=None)
@@ -374,6 +379,10 @@ def test_get_k8s_clients() -> None:
         assert isinstance(apps, client.AppsV1Api)
         core = get_k8s_core_client()
         assert isinstance(core, client.CoreV1Api)
+        net = get_k8s_networking_client()
+        assert isinstance(net, client.NetworkingV1Api)
+        rbac = get_k8s_rbac_client()
+        assert isinstance(rbac, client.RbacAuthorizationV1Api)
         mock_incluster.assert_called()
 
     with (
@@ -382,10 +391,13 @@ def test_get_k8s_clients() -> None:
     ):
         apps2 = get_k8s_apps_client(context="custom-context")
         assert isinstance(apps2, client.AppsV1Api)
-        mock_kube.assert_called_with(context="custom-context")
-
         core2 = get_k8s_core_client(context="custom-context")
         assert isinstance(core2, client.CoreV1Api)
+        net2 = get_k8s_networking_client(context="custom-context")
+        assert isinstance(net2, client.NetworkingV1Api)
+        rbac2 = get_k8s_rbac_client(context="custom-context")
+        assert isinstance(rbac2, client.RbacAuthorizationV1Api)
+        mock_kube.assert_called_with(context="custom-context")
 
 
 @pytest.mark.asyncio

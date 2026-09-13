@@ -315,8 +315,12 @@ class FakeDatabaseCommandExecutor(DatabaseCommandExecutor):
                 self.items_count[db_name] = self.items_count.get("snapshot_template", 207)
                 out_lines.append("CREATE DATABASE")
             elif normalized.startswith("DROP DATABASE"):
-                parts = normalized.replace(";", "").split()
-                db_name = parts[-1]
+                tokens = [
+                    p
+                    for p in normalized.replace(";", "").split()
+                    if p.lower() not in ("with", "(force)") and not p.lower().startswith("with")
+                ]
+                db_name = tokens[-1]
                 self.databases.discard(db_name)
                 self.items_count.pop(db_name, None)
                 out_lines.append("DROP DATABASE")

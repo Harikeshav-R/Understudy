@@ -24,7 +24,7 @@ from understudy.fleet.models import (
 
 DEFAULT_EGRESS_STUB_URL = "http://egress-stub.ust-system:8000"
 DEFAULT_TWIN_POSTGRES_HOST = "twin-postgres.ust-system"
-DEFAULT_TWIN_POSTGRES_PORT = 5432
+DEFAULT_TWIN_POSTGRES_PORT = 5433
 DEFAULT_TWIN_POSTGRES_USER = "postgres"
 
 
@@ -270,6 +270,7 @@ class TwinManifestRenderer:
                         ],
                         "ports": [
                             {"protocol": "TCP", "port": 5432},
+                            {"protocol": "TCP", "port": 5433},
                             {"protocol": "TCP", "port": 8000},
                             {"protocol": "TCP", "port": 8080},
                         ],
