@@ -12,6 +12,9 @@ Implements build-plan step A4.3 and Checkpoint A4 assertions:
 import random
 from datetime import UTC, datetime
 
+from hypothesis import given
+from hypothesis import strategies as st
+
 from understudy.contracts.evidence import CandidateEvidence, ProbeSample
 from understudy.contracts.twin import MirrorStats
 from understudy.tournament.scorer import (
@@ -101,23 +104,22 @@ def test_property_monotone_in_recovery_time() -> None:
     assert unrecovered_score >= max(scores)
 
 
-def test_property_monotone_in_recovery_time_seeded_fuzz() -> None:
-    """Fuzz random pairs of recovery times and assert monotonicity."""
-    rng = random.Random(42)
+@given(
+    t1=st.floats(min_value=0.0, max_value=300.0, allow_nan=False, allow_infinity=False),
+    t2=st.floats(min_value=0.0, max_value=300.0, allow_nan=False, allow_infinity=False),
+)
+def test_property_monotone_in_recovery_time_hypothesis(t1: float, t2: float) -> None:
+    """Hypothesis property test: score is monotone in recovery time."""
     cfg = ScoringConfig()
+    t_low, t_high = min(t1, t2), max(t1, t2)
 
-    for _ in range(200):
-        t1 = rng.uniform(0.0, 300.0)
-        t2 = rng.uniform(0.0, 300.0)
-        t_low, t_high = min(t1, t2), max(t1, t2)
+    ev_low = _base_evidence(recovery_seconds=t_low, recovered=True)
+    ev_high = _base_evidence(recovery_seconds=t_high, recovered=True)
 
-        ev_low = _base_evidence(recovery_seconds=t_low, recovered=True)
-        ev_high = _base_evidence(recovery_seconds=t_high, recovered=True)
+    s_low = score_candidate(ev_low, config=cfg).composite
+    s_high = score_candidate(ev_high, config=cfg).composite
 
-        s_low = score_candidate(ev_low, config=cfg).composite
-        s_high = score_candidate(ev_high, config=cfg).composite
-
-        assert s_low <= s_high + 1e-6, f"Score for {t_low}s ({s_low}) > {t_high}s ({s_high})"
+    assert s_low <= s_high + 1e-6, f"Score for {t_low}s ({s_low}) > {t_high}s ({s_high})"
 
 
 def test_property_disqualified_never_wins() -> None:
@@ -153,6 +155,40 @@ def test_property_disqualified_never_wins() -> None:
             assert viable_score.disqualified is False
             assert viable_score.composite < 1.0
             assert viable_score.composite < disq_score.composite
+
+
+@given(
+    recovery_sec=st.floats(min_value=1.0, max_value=170.0, allow_nan=False, allow_infinity=False),
+    downstream_delta=st.floats(
+        min_value=0.0, max_value=0.08, allow_nan=False, allow_infinity=False
+    ),
+    has_blast=st.booleans(),
+    has_soft_violation=st.booleans(),
+)
+def test_property_disqualified_never_beats_viable_hypothesis(
+    recovery_sec: float,
+    downstream_delta: float,
+    has_blast: bool,
+    has_soft_violation: bool,
+) -> None:
+    """Hypothesis: Disqualified candidate (composite 1.0) never beats viable candidate."""
+    cfg = ScoringConfig()
+    disq_ev = _base_evidence(plan_id="disq", evidence_complete=False)
+    disq_score = score_candidate(disq_ev, config=cfg)
+    assert disq_score.disqualified is True
+    assert disq_score.composite == 1.0
+
+    viable_ev = _base_evidence(
+        plan_id="viable",
+        recovery_seconds=recovery_sec,
+        downstream_error_delta=downstream_delta,
+        observed_blast_set=["data-service"] if has_blast else [],
+        invariant_violations=["soft_warning"] if has_soft_violation else [],
+    )
+    viable_score = score_candidate(viable_ev, config=cfg)
+    assert viable_score.disqualified is False
+    assert viable_score.composite < 1.0
+    assert viable_score.composite < disq_score.composite
 
 
 def test_property_no_action_can_win() -> None:
@@ -248,6 +284,19 @@ def test_property_monotone_in_blast_and_downstream() -> None:
     ]
     for i in range(len(downstream_scores) - 1):
         assert downstream_scores[i] <= downstream_scores[i + 1]
+
+
+@given(
+    d1=st.floats(min_value=-0.05, max_value=0.5, allow_nan=False, allow_infinity=False),
+    d2=st.floats(min_value=-0.05, max_value=0.5, allow_nan=False, allow_infinity=False),
+)
+def test_property_monotone_in_downstream_hypothesis(d1: float, d2: float) -> None:
+    """Hypothesis: Score is monotone in downstream error delta."""
+    cfg = ScoringConfig()
+    d_low, d_high = min(d1, d2), max(d1, d2)
+    s_low = score_candidate(_base_evidence(downstream_error_delta=d_low), config=cfg).composite
+    s_high = score_candidate(_base_evidence(downstream_error_delta=d_high), config=cfg).composite
+    assert s_low <= s_high + 1e-6
 
 
 def test_property_permutation_invariance() -> None:
