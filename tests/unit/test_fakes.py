@@ -6,7 +6,7 @@ import pytest
 
 from understudy.actuator.fakes import FakeActuator
 from understudy.common.clock import SystemClock
-from understudy.common.errors import ActuationError
+from understudy.common.errors import ActuationError, StoreError
 from understudy.contracts.enums import (
     ActionType,
     FailureClass,
@@ -111,6 +111,19 @@ async def test_fake_run_store(sample_run_record: RunRecord) -> None:
     )
     await store.record_run(finished_record)
     assert await store.get_active_runs() == [sample_run_record]
+
+
+@pytest.mark.asyncio
+async def test_fake_run_store_claim_run(sample_run_record: RunRecord) -> None:
+    store = FakeRunStore()
+
+    await store.claim_run(sample_run_record)
+    assert await store.get_active_runs() == [sample_run_record]
+
+    conflicting_record = sample_run_record.model_copy(update={"run_id": "run_002"})
+    with pytest.raises(StoreError, match="Another active run already exists"):
+        await store.claim_run(conflicting_record)
+    assert await store.get_run("run_002") is None
 
 
 @pytest.mark.asyncio

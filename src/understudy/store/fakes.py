@@ -2,6 +2,7 @@
 
 from typing import Any, TypedDict
 
+from understudy.common.errors import StoreError
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
@@ -28,6 +29,15 @@ class FakeRunStore(RunStore):
 
     async def record_run(self, record: RunRecord) -> None:
         """Persist a run record append-only."""
+        self._runs[record.run_id] = record
+
+    async def claim_run(self, record: RunRecord) -> None:
+        """Atomically verify no other active run exists and persist `record`."""
+        if any(run.finished_at is None for run in self._runs.values()):
+            raise StoreError(
+                "Another active run already exists; cannot claim a new run",
+                details={"run_id": record.run_id},
+            )
         self._runs[record.run_id] = record
 
     async def get_run(self, run_id: str) -> RunRecord | None:

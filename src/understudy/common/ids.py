@@ -54,3 +54,8 @@ def new_twin_id() -> str:
 def new_run_id() -> str:
     """Generate a new unique run identifier."""
     return f"run_{generate_ulid()}"
+
+
+def new_alert_id() -> str:
+    """Generate a new unique alert identifier."""
+    return f"alt_{generate_ulid()}"

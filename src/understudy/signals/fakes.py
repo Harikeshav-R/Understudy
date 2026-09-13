@@ -49,9 +49,14 @@ class FakeObservabilityAdapter(ObservabilityAdapter):
         self.clock: Clock = resolve_clock(clock)
 
     async def metric_window(
-        self, service: str, since: datetime, namespace: str = "ust-prod"
+        self,
+        service: str,
+        since: datetime,
+        namespace: str = "ust-prod",
+        until: datetime | None = None,
     ) -> MetricWindow:
         """Return deterministic metrics window."""
+        _ = until
         now = self.clock.now()
         point = MetricPoint(timestamp=now, value=120.0 + (self.seed % 10))
         series = MetricSeries(
@@ -70,10 +75,14 @@ class FakeObservabilityAdapter(ObservabilityAdapter):
         )
 
     async def error_signatures(
-        self, service: str, since: datetime, namespace: str = "ust-prod"
+        self,
+        service: str,
+        since: datetime,
+        namespace: str = "ust-prod",
+        until: datetime | None = None,
     ) -> list[ErrorSignature]:
         """Return deterministic error signatures."""
-        _ = namespace
+        _ = (namespace, until)
         now = self.clock.now()
         return [
             ErrorSignature(

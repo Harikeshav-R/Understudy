@@ -27,3 +27,9 @@ def test_understudy_error_hierarchy() -> None:
     assert issubclass(ActuationError, UnderstudyError)
     assert issubclass(EvidenceError, UnderstudyError)
     assert issubclass(OrchestratorError, UnderstudyError)
+
+    from understudy.common.errors import ObservabilityError, SignalsError, StoreError
+
+    assert issubclass(StoreError, UnderstudyError)
+    assert issubclass(SignalsError, UnderstudyError)
+    assert issubclass(ObservabilityError, SignalsError)

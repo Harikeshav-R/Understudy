@@ -4,6 +4,7 @@ import pytest
 
 from understudy.common.ids import (
     generate_ulid,
+    new_alert_id,
     new_incident_id,
     new_plan_id,
     new_run_id,
@@ -47,3 +48,7 @@ def test_new_id_prefixes() -> None:
     run_id = new_run_id()
     assert run_id.startswith("run_")
     assert len(run_id) == 4 + 26
+
+    alert_id = new_alert_id()
+    assert alert_id.startswith("alt_")
+    assert len(alert_id) == 4 + 26

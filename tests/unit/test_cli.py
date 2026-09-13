@@ -1,7 +1,7 @@
 """Unit tests for Understudy CLI entrypoint and package metadata."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from typer.testing import CliRunner
 
@@ -71,6 +71,13 @@ def test_cli_demo_force_veto() -> None:
     assert expected_transitions in result.stdout
     expected_reason = "outcome=escalated reason=K3 Rollback traverses schema migration boundary"
     assert expected_reason in result.stdout
+
+
+def test_cli_demo_with_datadog() -> None:
+    """Verify ust demo --fake --with-datadog informs user of Datadog optics."""
+    result = runner.invoke(app, ["demo", "--fake", "--with-datadog"])
+    assert result.exit_code == 0
+    assert "Datadog telemetry mirroring enabled" in result.stdout
 
 
 def test_cli_demo_missing_fake() -> None:
@@ -239,3 +246,699 @@ def test_cli_fleet_gc(monkeypatch: "pytest.MonkeyPatch") -> None:
     assert result.exit_code == 0
     assert "reaped 1 namespaces, 1 databases" in result.stdout
     mock_mgr.gc.assert_called_once_with(older_than_seconds=1800.0)
+
+
+def test_cli_store_migrate(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store migrate calls apply_migrations."""
+    from unittest.mock import MagicMock
+
+    import understudy.store.migrations
+
+    mock_apply = MagicMock()
+    monkeypatch.setattr(understudy.store.migrations, "apply_migrations", mock_apply)
+
+    result = runner.invoke(app, ["store", "migrate", "--dsn", "postgresql://test/db"])
+    assert result.exit_code == 0
+    assert "Database migrations applied successfully." in result.stdout
+    mock_apply.assert_called_once_with(dsn="postgresql://test/db")
+
+
+def test_cli_store_verify_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store verify checks runs and rules."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    mock_run = MagicMock()
+    mock_run.run_id = "run_test_1"
+    mock_run.incident_id = "inc_test_1"
+    mock_run.outcome = RunOutcome.EXECUTED
+
+    mock_store = MagicMock()
+    mock_store.list_runs = AsyncMock(return_value=[mock_run])
+
+    mock_session = AsyncMock()
+    rule_res = MagicMock()
+    rule_res.fetchall.return_value = [("runs_no_update",), ("runs_no_delete",)]
+    mock_session.execute = AsyncMock(return_value=rule_res)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        @asynccontextmanager
+        async def session(self) -> Any:
+            yield mock_session
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "verify", "--last", "1"])
+    assert result.exit_code == 0
+    assert "run_id=run_test_1" in result.stdout
+    assert "Verified 1 run records: complete and append-only OK" in result.stdout
+
+
+def test_cli_store_verify_missing_rules(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store verify fails when append-only rules are missing."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_store = MagicMock()
+    mock_store.list_runs = AsyncMock(return_value=[])
+
+    mock_session = AsyncMock()
+    rule_res = MagicMock()
+    rule_res.fetchall.return_value = []  # No rules
+    mock_session.execute = AsyncMock(return_value=rule_res)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        @asynccontextmanager
+        async def session(self) -> Any:
+            yield mock_session
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "verify", "--last", "2"])
+    assert result.exit_code == 1
+    assert "Error: append-only rules missing on runs table" in result.output
+
+
+def test_cli_tunnel_fake(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust tunnel --fake starts fake session and outputs tunnel URLs."""
+    from unittest.mock import AsyncMock
+
+    import understudy.signals.tunnel
+
+    mock_run = AsyncMock(return_value=None)
+    monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "run_until_cancelled", mock_run)
+
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19308", "--secret", "test-secret"])
+    assert result.exit_code == 0
+    assert "Tunnel URL: https://fake-tunnel-19308.understudy.dev" in result.stdout
+    assert "Webhook URL: https://fake-tunnel-19308.understudy.dev/webhook" in result.stdout
+
+
+def test_cli_tunnel_missing_secret() -> None:
+    """Verify ust tunnel fails fast when no webhook secret is configured."""
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19320"])
+    assert result.exit_code == 1
+    assert "Error starting webhook receiver:" in (result.stderr or result.stdout)
+
+
+def test_cli_tunnel_start_failure(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust tunnel reports a clean error when the webhook server fails to start."""
+    import understudy.signals.tunnel
+
+    async def _failing_start(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("Webhook server failed to start: address already in use")
+
+    monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "start", _failing_start)
+
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19321", "--secret", "test-secret"])
+    assert result.exit_code == 1
+    assert "Error starting webhook receiver:" in (result.stderr or result.stdout)
+
+
+def test_cli_tunnel_keyboard_interrupt(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust tunnel handles keyboard interrupt cleanly."""
+
+    import understudy.signals.tunnel
+
+    async def _interrupt(*_args: Any, **_kwargs: Any) -> None:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "run_until_cancelled", _interrupt)
+
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19309", "--secret", "test-secret"])
+    assert result.exit_code == 0
+
+
+def test_cli_alert_inject_print_only() -> None:
+    """Verify ust alert inject --print-only outputs valid Alert JSON."""
+    result = runner.invoke(
+        app, ["alert", "inject", "--scenario", "bad_deploy_data_service", "--print-only"]
+    )
+    assert result.exit_code == 0
+    assert '"scenario_id": "bad_deploy_data_service"' in result.stdout
+    assert '"source": "synthetic"' in result.stdout
+
+
+def test_cli_alert_inject_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject posts to receiver endpoint and echoes confirmation."""
+    import httpx
+
+    captured_url: list[str] = []
+
+    def _mock_post(url: str, **_kwargs: Any) -> httpx.Response:
+        captured_url.append(url)
+        return httpx.Response(200, json={"status": "injected"})
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        [
+            "alert",
+            "inject",
+            "--scenario",
+            "bad_deploy_data_service",
+            "--service",
+            "edge-gateway",
+            "--title",
+            "Custom Title",
+            "--severity",
+            "error",
+            "--port",
+            "19310",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "injected synthetic alert" in result.stdout
+    assert captured_url[0] == "http://127.0.0.1:19310/api/alerts/inject"
+
+
+def test_cli_alert_inject_severity_warning(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject with warning severity."""
+    import httpx
+
+    def _mock_post(_url: str, **_kwargs: Any) -> httpx.Response:
+        return httpx.Response(200, json={"status": "injected"})
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        [
+            "alert",
+            "inject",
+            "--scenario",
+            "flag_plus_latency",
+            "--severity",
+            "warning",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "injected synthetic alert" in result.stdout
+
+
+def test_cli_alert_inject_receiver_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject exits with code 1 when receiver returns error HTTP status."""
+    import httpx
+
+    def _mock_post(*_args: Any, **_kwargs: Any) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        ["alert", "inject", "--scenario", "bad_deploy_data_service"],
+    )
+    assert result.exit_code == 1
+    assert "Receiver returned HTTP 500" in result.output
+
+
+def test_cli_alert_inject_unreachable(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject prints warning when receiver endpoint is unreachable."""
+    import httpx
+
+    def _mock_post(*_args: Any, **_kwargs: Any) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused")
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        ["alert", "inject", "--scenario", "bad_deploy_data_service"],
+    )
+    assert result.exit_code == 0
+    assert "not reachable" in result.output
+    assert "Synthetic Alert generated" in result.output
+
+
+def test_cli_alert_help() -> None:
+    """Verify ust alert --help renders subcommand documentation."""
+    result = runner.invoke(app, ["alert", "--help"])
+    assert result.exit_code == 0
+    assert "inject" in result.stdout
+
+
+def test_cli_signals_help() -> None:
+    """Verify ust signals --help renders subcommand documentation."""
+    result = runner.invoke(app, ["signals", "--help"])
+    assert result.exit_code == 0
+    assert "context" in result.stdout
+
+
+def test_cli_signals_context_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context outputs valid JSON IncidentContext."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import (
+        ErrorSignature,
+        MetricPoint,
+        MetricSeries,
+        MetricWindow,
+    )
+    from understudy.signals.prometheus import PrometheusLokiAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="data-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[
+                MetricSeries(
+                    metric_name="http_requests_total",
+                    labels={"service": "data-service"},
+                    points=[MetricPoint(timestamp=fixed_now, value=100.0)],
+                )
+            ],
+            p99_latency_ms=12.5,
+            error_rate=0.02,
+            request_count=100,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[ErrorSignature]:
+        return [
+            ErrorSignature(
+                fingerprint="fp123456",
+                message="Mock database error",
+                service="data-service",
+                count=3,
+                first_seen=fixed_now,
+                last_seen=fixed_now,
+            )
+        ]
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(PrometheusLokiAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(PrometheusLokiAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(PrometheusLokiAdapter, "close", _mock_close)
+
+    result = runner.invoke(
+        app,
+        [
+            "signals",
+            "context",
+            "--service",
+            "data-service",
+            "--minutes",
+            "10",
+            "--namespace",
+            "ust-prod",
+            "--incident-id",
+            "inc_test_123",
+        ],
+    )
+    assert result.exit_code == 0
+    assert '"incident_id": "inc_test_123"' in result.stdout
+    assert '"service": "data-service"' in result.stdout
+    assert '"fp123456"' in result.stdout
+
+
+def test_cli_signals_context_no_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context --no-json prints human summary."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import MetricWindow
+    from understudy.signals.prometheus import PrometheusLokiAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="auth-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[],
+            p99_latency_ms=5.0,
+            error_rate=0.0,
+            request_count=50,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(PrometheusLokiAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(PrometheusLokiAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(PrometheusLokiAdapter, "close", _mock_close)
+
+    result = runner.invoke(
+        app,
+        [
+            "signals",
+            "context",
+            "--service",
+            "auth-service",
+            "--no-json",
+            "--prometheus-url",
+            "http://custom-prom:9090",
+            "--loki-url",
+            "http://custom-loki:3100",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "IncidentContext gathered for auth-service (ust-prod):" in result.stdout
+    assert "requests=50" in result.stdout
+    assert "p99=5.0ms" in result.stdout
+
+
+def test_cli_signals_context_datadog(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context --adapter datadog uses DatadogAdapter."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import (
+        ErrorSignature,
+        MetricPoint,
+        MetricSeries,
+        MetricWindow,
+    )
+    from understudy.signals.datadog import DatadogAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="data-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[
+                MetricSeries(
+                    metric_name="http_requests_total",
+                    labels={"service": "data-service"},
+                    points=[MetricPoint(timestamp=fixed_now, value=80.0)],
+                )
+            ],
+            p99_latency_ms=22.0,
+            error_rate=0.01,
+            request_count=80,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[ErrorSignature]:
+        return [
+            ErrorSignature(
+                fingerprint="fp_dd_123",
+                message="Datadog aggregated error",
+                service="data-service",
+                count=2,
+                first_seen=fixed_now,
+                last_seen=fixed_now,
+            )
+        ]
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(DatadogAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(DatadogAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(DatadogAdapter, "close", _mock_close)
+
+    result = runner.invoke(
+        app,
+        [
+            "signals",
+            "context",
+            "--adapter",
+            "datadog",
+            "--datadog-site",
+            "datadoghq.eu",
+            "--service",
+            "data-service",
+            "--minutes",
+            "10",
+        ],
+    )
+    assert result.exit_code == 0
+    assert '"service": "data-service"' in result.stdout
+    assert '"fp_dd_123"' in result.stdout
+    assert '"request_count": 80' in result.stdout
+
+
+def test_cli_signals_context_fallback_graph(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context falls back to single-node snapshot if dependencies.yaml fails."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import MetricWindow
+    from understudy.graph.service_graph import ServiceDependencyGraph
+    from understudy.signals.prometheus import PrometheusLokiAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    def _failing_from_yaml(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("Missing yaml")
+
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="data-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[],
+            p99_latency_ms=5.0,
+            error_rate=0.0,
+            request_count=50,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(ServiceDependencyGraph, "from_yaml", _failing_from_yaml)
+    monkeypatch.setattr(PrometheusLokiAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(PrometheusLokiAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(PrometheusLokiAdapter, "close", _mock_close)
+
+    result = runner.invoke(app, ["signals", "context", "--service", "data-service"])
+    assert result.exit_code == 0
+    assert '"nodes": [' in result.stdout
+    assert '"data-service"' in result.stdout
+
+
+def test_cli_signals_deploys_human_and_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals deploys outputs human summary and json list."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.github import GitHubDeployHistory
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    mock_deploys = [
+        DeployRef(
+            commit_sha="c0ffee1111111111111111111111111111111111",
+            image_digests={"data-service": "sha256:1111", "auth-service": "sha256:2222"},
+            deployed_at=fixed_now,
+            pr_number=42,
+            contains_migration=True,
+        ),
+        DeployRef(
+            commit_sha="c0ffee2222222222222222222222222222222222",
+            image_digests={},
+            deployed_at=fixed_now,
+            pr_number=None,
+            contains_migration=False,
+        ),
+    ]
+
+    async def _mock_recent_deploys(*_args: Any, **_kwargs: Any) -> list[DeployRef]:
+        return mock_deploys
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(GitHubDeployHistory, "recent_deploys", _mock_recent_deploys)
+    monkeypatch.setattr(GitHubDeployHistory, "close", _mock_close)
+
+    # 1. Human table output
+    res_human = runner.invoke(app, ["signals", "deploys", "--limit", "2"])
+    assert res_human.exit_code == 0
+    assert "Recent 2 deployment(s)" in res_human.stdout
+    assert "c0ffee1 | 2026-09-13 12:00:00 UTC | PR: #42 | migration: YES" in res_human.stdout
+    assert "data-service: sha256:1111" in res_human.stdout
+    assert "auth-service: sha256:2222" in res_human.stdout
+    assert "c0ffee2 | 2026-09-13 12:00:00 UTC | PR: - | migration: NO" in res_human.stdout
+
+    # 2. JSON list output with flags
+    res_json = runner.invoke(
+        app,
+        [
+            "signals",
+            "deploys",
+            "--limit",
+            "2",
+            "--json",
+            "--repo",
+            "custom/repo",
+            "--branch",
+            "dev",
+            "--token",
+            "tok",
+        ],
+    )
+    assert res_json.exit_code == 0
+    assert '"commit_sha": "c0ffee1111111111111111111111111111111111"' in res_json.stdout
+    assert '"pr_number": 42' in res_json.stdout
+    assert '"contains_migration": true' in res_json.stdout
+
+
+def test_cli_signals_deploys_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals deploys exits 1 when fetch fails."""
+    from understudy.common.errors import GitHubError
+    from understudy.signals.github import GitHubDeployHistory
+
+    async def _failing_recent_deploys(*_args: Any, **_kwargs: Any) -> list[Any]:
+        raise GitHubError("Bad credentials")
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(GitHubDeployHistory, "recent_deploys", _failing_recent_deploys)
+    monkeypatch.setattr(GitHubDeployHistory, "close", _mock_close)
+
+    res = runner.invoke(app, ["signals", "deploys"])
+    assert res.exit_code == 1
+    assert "Error fetching deploy history: Bad credentials" in (res.stderr or res.stdout)
+
+
+def test_cli_graph_show_human(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show outputs DAG chains and OK status."""
+    from understudy.graph.models import CrossCheckReport
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    mock_report = CrossCheckReport(
+        status="OK",
+        declared_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        observed_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        declared_edges={("edge-gateway", "auth-service")},
+        observed_edges={("edge-gateway", "auth-service")},
+        undeclared_services=set(),
+        undeclared_edges=set(),
+        message="declared graph matches observed traffic: OK",
+    )
+
+    async def _mock_cross_check(*_args: Any, **_kwargs: Any) -> CrossCheckReport:
+        return mock_report
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _mock_cross_check)
+
+    result = runner.invoke(app, ["graph", "show"])
+    assert result.exit_code == 0
+    assert (
+        "edge-gateway -> auth-service -> data-service, "
+        "edge-gateway -> data-service, "
+        "worker -> data-service"
+    ) in result.stdout
+    assert "declared graph matches observed traffic: OK" in result.stdout
+    assert "declared matches observed: OK" in result.stdout
+
+
+def test_cli_graph_show_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show --json outputs valid JSON representation."""
+    from understudy.graph.models import CrossCheckReport
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    mock_report = CrossCheckReport(
+        status="OK",
+        declared_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        observed_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        declared_edges={("edge-gateway", "auth-service")},
+        observed_edges={("edge-gateway", "auth-service")},
+        undeclared_services=set(),
+        undeclared_edges=set(),
+        message="declared graph matches observed traffic: OK",
+    )
+
+    async def _mock_cross_check(*_args: Any, **_kwargs: Any) -> CrossCheckReport:
+        return mock_report
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _mock_cross_check)
+
+    result = runner.invoke(app, ["graph", "show", "--json"])
+    assert result.exit_code == 0
+    assert '"status": "OK"' in result.stdout
+    assert '"chains":' in result.stdout
+    assert '"edge-gateway"' in result.stdout
+
+
+def test_cli_graph_show_offline() -> None:
+    """Verify ust graph show --offline skips Prometheus cross-check."""
+    result = runner.invoke(app, ["graph", "show", "--offline"])
+    assert result.exit_code == 0
+    assert (
+        "edge-gateway -> auth-service -> data-service, "
+        "edge-gateway -> data-service, "
+        "worker -> data-service"
+    ) in result.stdout
+    assert "declared graph traffic check: SKIPPED (offline)" in result.stdout
+
+
+def test_cli_graph_show_missing_file(tmp_path: "Path") -> None:
+    """Verify ust graph show fails gracefully on nonexistent dependencies file."""
+    nonexistent = tmp_path / "missing.yaml"
+    result = runner.invoke(app, ["graph", "show", "--dependencies-file", str(nonexistent)])
+    assert result.exit_code == 1
+    assert "Error loading dependency graph:" in (result.stderr or result.stdout)
+
+
+def test_cli_graph_show_mismatch(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show exits 1 when traffic mismatch is detected."""
+    from understudy.graph.models import CrossCheckReport
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    mock_report = CrossCheckReport(
+        status="MISMATCH",
+        declared_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        observed_services={"rogue-svc"},
+        declared_edges=set(),
+        observed_edges=set(),
+        undeclared_services={"rogue-svc"},
+        undeclared_edges=set(),
+        message="Undeclared services observed in traffic: ['rogue-svc']",
+    )
+
+    async def _mock_cross_check(*_args: Any, **_kwargs: Any) -> CrossCheckReport:
+        return mock_report
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _mock_cross_check)
+
+    result = runner.invoke(app, ["graph", "show"])
+    assert result.exit_code == 1
+    assert "Undeclared services observed in traffic" in (result.stderr or result.stdout)
+
+
+def test_cli_graph_show_prometheus_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show exits 1 when Prometheus query throws exception."""
+    from understudy.common.errors import GraphError
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    async def _failing_cross_check(*_args: Any, **_kwargs: Any) -> Any:
+        raise GraphError("Connection timed out")
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _failing_cross_check)
+
+    result = runner.invoke(app, ["graph", "show"])
+    assert result.exit_code == 1
+    assert "Error cross-checking observed traffic: Connection timed out" in (
+        result.stderr or result.stdout
+    )

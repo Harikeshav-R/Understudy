@@ -15,6 +15,16 @@ class RunStore(Protocol):
         """Persist an immutable run record."""
         raise NotImplementedError
 
+    async def claim_run(self, record: RunRecord) -> None:
+        """Atomically verify no other active run exists and persist `record`.
+
+        This is the fact source for kernel invariant K5 (single writer): the active-run
+        check and the insert happen under a single transaction (implementation-specific
+        locking), so the check and the claim are atomic (docs/03-invariants.md). Raises
+        StoreError if another active (unfinished) run already exists.
+        """
+        raise NotImplementedError
+
     async def get_run(self, run_id: str) -> RunRecord | None:
         """Retrieve a run record by its unique identifier."""
         raise NotImplementedError
@@ -28,9 +38,9 @@ class RunStore(Protocol):
     async def get_active_runs(self) -> list[RunRecord]:
         """List runs with no finished_at timestamp yet.
 
-        This is the documented fact source for kernel invariant K5 (single writer):
-        `in_flight_plan_targets` is read from this set under a transaction that also
-        inserts the new claim, so the check and the claim are atomic (docs/03-invariants.md).
+        This is a plain read of current state and is not itself atomic with any
+        subsequent write — use `claim_run()` when the check must be atomic with the
+        insert (see kernel invariant K5, docs/03-invariants.md).
         """
         raise NotImplementedError
 
