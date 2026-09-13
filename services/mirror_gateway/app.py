@@ -9,6 +9,7 @@ Conforms to ADR-012, ADR-013, and build-plan step A3.1:
   X-Understudy-Shadow: 1, X-Understudy-Twin: <twin_id>, X-Understudy-Incident: <id>
 """
 
+import time
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Literal
@@ -27,6 +28,7 @@ from services.mirror_gateway.core import (
     MirrorGatewayManager,
     MirrorStats,
 )
+from services.mirror_gateway.metrics import MirrorGatewayMetrics
 
 logger = get_logger(__name__)
 
@@ -114,10 +116,12 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage lifecycle of shared HTTP client and MirrorGatewayManager."""
     settings = get_services_settings().mirror_gateway
     client = httpx.AsyncClient(timeout=settings.http_timeout_seconds)
+    metrics: MirrorGatewayMetrics | None = getattr(app.state, "mirror_metrics", None)
     manager = MirrorGatewayManager(
         client=client,
         queue_maxsize=settings.queue_maxsize,
         worker_timeout_seconds=settings.worker_timeout_seconds,
+        metrics=metrics,
     )
     app.state.http_client = client
     app.state.mirror_manager = manager
@@ -130,7 +134,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(title="mirror-gateway", lifespan=lifespan)
-setup_metrics(app, "mirror-gateway")
+metrics_registry = setup_metrics(app, "mirror-gateway")
+app.state.mirror_metrics = MirrorGatewayMetrics(registry=metrics_registry)
 
 
 async def check_prod_reachability() -> bool:
@@ -255,6 +260,7 @@ async def proxy_request(request: Request, path: str) -> Response:
 
     client: httpx.AsyncClient = app.state.http_client
     settings = get_services_settings().mirror_gateway
+    start_time = time.monotonic()
     try:
         prod_resp = await client.request(
             method=request.method,
@@ -273,6 +279,9 @@ async def proxy_request(request: Request, path: str) -> Response:
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Production target unreachable: {exc}",
         ) from exc
+    finally:
+        duration = time.monotonic() - start_time
+        manager.metrics.record_latency(target="prod", duration=duration)
 
     # Filter hop-by-hop response headers
     resp_headers = dict(prod_resp.headers)

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from fastapi import status
+from prometheus_client import CollectorRegistry
 
 from services.mirror_gateway.app import (
     app,
@@ -20,6 +21,7 @@ from services.mirror_gateway.core import (
     MirrorStats,
     MirrorStatsResponse,
 )
+from services.mirror_gateway.metrics import MirrorGatewayMetrics
 
 
 @pytest.fixture
@@ -684,3 +686,232 @@ async def test_dispatch_concurrent_with_unregister() -> None:
     assert "twin-c2" in manager.registered_twins
 
     await manager.close()
+
+
+# ==============================================================================
+# Prometheus Metrics Tests (A3.3)
+# ==============================================================================
+
+
+def test_mirror_gateway_metrics_standalone() -> None:
+    """Direct verification of MirrorGatewayMetrics counter initialization, increments, and
+    latency observation.
+    """
+    reg = CollectorRegistry()
+    metrics = MirrorGatewayMetrics(registry=reg)
+
+    # 1. Initialize twin counters with 0.0
+    metrics.init_twin("test-twin")
+
+    # Inspect samples before events
+    samples_before = {s.name: s for m in reg.collect() for s in m.samples}
+    delivered_sample = samples_before.get("understudy_mirror_delivered_total")
+    assert delivered_sample is not None
+    assert delivered_sample.labels["twin_id"] == "test-twin"
+    assert delivered_sample.value == 0.0
+
+    dropped_sample = samples_before.get("understudy_mirror_dropped_total")
+    assert dropped_sample is not None
+    assert dropped_sample.labels["twin_id"] == "test-twin"
+    assert dropped_sample.value == 0.0
+
+    # 2. Record delivered and dropped
+    metrics.record_delivered("test-twin")
+    metrics.record_dropped("test-twin")
+
+    samples_after = {
+        (s.name, s.labels.get("twin_id", s.labels.get("target", ""))): s.value
+        for m in reg.collect()
+        for s in m.samples
+    }
+    assert samples_after[("understudy_mirror_delivered_total", "test-twin")] == 1.0
+    assert samples_after[("understudy_mirror_dropped_total", "test-twin")] == 1.0
+
+    # 3. Record latency for prod and twin
+    metrics.record_latency(target="prod", duration=0.042)
+    metrics.record_latency(target="test-twin", duration=0.084)
+
+    samples_latency = {
+        (s.name, s.labels.get("target", "")): s.value for m in reg.collect() for s in m.samples
+    }
+    assert samples_latency[("understudy_mirror_latency_seconds_count", "prod")] == 1.0
+    assert (
+        pytest.approx(samples_latency[("understudy_mirror_latency_seconds_sum", "prod")], rel=1e-3)
+        == 0.042
+    )
+    assert samples_latency[("understudy_mirror_latency_seconds_count", "test-twin")] == 1.0
+    assert (
+        pytest.approx(
+            samples_latency[("understudy_mirror_latency_seconds_sum", "test-twin")], rel=1e-3
+        )
+        == 0.084
+    )
+
+    # 4. Default registry instantiation works in isolation
+    default_metrics = MirrorGatewayMetrics()
+    assert isinstance(default_metrics.registry, CollectorRegistry)
+    assert default_metrics.registry is not reg
+
+
+@pytest.mark.asyncio
+async def test_mirror_gateway_manager_metrics_queue_drop() -> None:
+    """Manager increments understudy_mirror_dropped_total when queue is full."""
+    mock_http = AsyncMock(spec=httpx.AsyncClient)
+    metrics = MirrorGatewayMetrics(registry=CollectorRegistry())
+    manager = MirrorGatewayManager(
+        client=mock_http,
+        queue_maxsize=1,
+        metrics=metrics,
+    )
+
+    twin = manager.register_twin("q-twin", "http://q-twin:8000")
+    # Stop worker to let queue fill up
+    if twin.worker_task:
+        twin.worker_task.cancel()
+
+    req = MirroredRequest(method="GET", path="/items", query="", headers={}, body=b"")
+    manager.dispatch_to_twins(req)  # fills queue
+    manager.dispatch_to_twins(req)  # queue full -> drop
+
+    assert twin.dropped == 1
+    sample = next(
+        s
+        for m in metrics.registry.collect()
+        if m.name == "understudy_mirror_dropped"
+        for s in m.samples
+        if s.name == "understudy_mirror_dropped_total" and s.labels.get("twin_id") == "q-twin"
+    )
+    assert sample.value == 1.0
+
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_mirror_gateway_manager_metrics_delivery_and_error() -> None:
+    """Drain worker increments delivered and dropped counters and observes latency."""
+    mock_http = AsyncMock(spec=httpx.AsyncClient)
+    # 1st call succeeds, 2nd call raises RuntimeError
+    mock_resp = httpx.Response(status_code=200, content=b"ok")
+    mock_http.request = AsyncMock(side_effect=[mock_resp, RuntimeError("connection lost")])
+
+    metrics = MirrorGatewayMetrics(registry=CollectorRegistry())
+    manager = MirrorGatewayManager(
+        client=mock_http,
+        queue_maxsize=10,
+        worker_timeout_seconds=1.0,
+        metrics=metrics,
+    )
+
+    manager.register_twin("worker-twin", "http://worker:8000")
+    req1 = MirroredRequest(method="GET", path="/test1", query="", headers={}, body=b"")
+    req2 = MirroredRequest(method="GET", path="/test2", query="", headers={}, body=b"")
+
+    manager.dispatch_to_twins(req1)
+    manager.dispatch_to_twins(req2)
+
+    # Wait for queue to drain
+    twin = manager.registered_twins["worker-twin"]
+    for _ in range(50):
+        if twin.delivered == 1 and twin.dropped == 1:
+            break
+        await asyncio.sleep(0.02)
+
+    assert twin.delivered == 1
+    assert twin.dropped == 1
+
+    samples = {
+        (s.name, s.labels.get("twin_id", s.labels.get("target", ""))): s.value
+        for m in metrics.registry.collect()
+        for s in m.samples
+    }
+    assert samples[("understudy_mirror_delivered_total", "worker-twin")] == 1.0
+    assert samples[("understudy_mirror_dropped_total", "worker-twin")] == 1.0
+    assert samples[("understudy_mirror_latency_seconds_count", "worker-twin")] == 2.0
+
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_mirror_gateway_app_metrics_endpoint(client: httpx.AsyncClient) -> None:
+    """Full HTTP test: twin registration initializes counters, proxy records prod latency,
+    worker records delivery and twin latency on /metrics."""
+    # 1. Register twin
+    reg_resp = await client.post(
+        "/twins",
+        json={"twin_id": "endpoint-twin", "base_url": "http://endpoint-twin:8000"},
+    )
+    assert reg_resp.status_code == status.HTTP_201_CREATED
+
+    # 2. Verify counters start at 0.0 in /metrics output
+    metrics_resp1 = await client.get("/metrics")
+    assert metrics_resp1.status_code == status.HTTP_200_OK
+    text1 = metrics_resp1.text
+    assert 'understudy_mirror_delivered_total{twin_id="endpoint-twin"} 0.0' in text1
+    assert 'understudy_mirror_dropped_total{twin_id="endpoint-twin"} 0.0' in text1
+
+    # 3. Proxy request through gateway
+    mock_http = AsyncMock(spec=httpx.AsyncClient)
+    mock_resp = httpx.Response(status_code=200, content=b'{"items":[]}')
+    mock_http.request = AsyncMock(return_value=mock_resp)
+    app.state.http_client = mock_http
+    manager: MirrorGatewayManager = app.state.mirror_manager
+    manager.client = mock_http
+
+    # Read baseline prod count before proxy
+    metrics_base = (await client.get("/metrics")).text
+    import re
+
+    prod_matches = re.findall(
+        r'understudy_mirror_latency_seconds_count\{target="prod"\}\s+([0-9\.]+)', metrics_base
+    )
+    base_prod_count = float(prod_matches[0]) if prod_matches else 0.0
+
+    proxy_resp = await client.get("/api/items")
+    assert proxy_resp.status_code == status.HTTP_200_OK
+
+    # 4. Wait for worker fan-out
+    twin = manager.registered_twins["endpoint-twin"]
+    for _ in range(50):
+        if twin.delivered >= 1:
+            break
+        await asyncio.sleep(0.02)
+
+    # 5. Check /metrics after proxy and delivery
+    metrics_resp2 = await client.get("/metrics")
+    assert metrics_resp2.status_code == status.HTTP_200_OK
+    text2 = metrics_resp2.text
+    assert 'understudy_mirror_delivered_total{twin_id="endpoint-twin"} 1.0' in text2
+
+    after_matches = re.findall(
+        r'understudy_mirror_latency_seconds_count\{target="prod"\}\s+([0-9\.]+)', text2
+    )
+    assert after_matches, "Expected target='prod' latency metric"
+    assert float(after_matches[0]) == base_prod_count + 1.0
+
+    assert 'understudy_mirror_latency_seconds_count{target="endpoint-twin"} 1.0' in text2
+
+    # Cleanup
+    await client.delete("/twins/endpoint-twin")
+
+
+@pytest.mark.asyncio
+async def test_mirror_gateway_proxy_prod_errors_record_latency(client: httpx.AsyncClient) -> None:
+    """Prod timeout and connection errors record latency under target='prod'."""
+    mock_http = AsyncMock(spec=httpx.AsyncClient)
+    app.state.http_client = mock_http
+
+    # 1. Timeout error
+    mock_http.request = AsyncMock(side_effect=httpx.TimeoutException("prod timed out"))
+    resp_timeout = await client.get("/api/timeout")
+    assert resp_timeout.status_code == status.HTTP_504_GATEWAY_TIMEOUT
+
+    # 2. Connection error
+    mock_http.request = AsyncMock(side_effect=httpx.RequestError("prod unreachable"))
+    resp_conn = await client.get("/api/conn-error")
+    assert resp_conn.status_code == status.HTTP_502_BAD_GATEWAY
+
+    # Verify both attempts observed prod latency in /metrics
+    metrics_resp = await client.get("/metrics")
+    assert metrics_resp.status_code == status.HTTP_200_OK
+    text = metrics_resp.text
+    assert 'target="prod"' in text

@@ -10,6 +10,7 @@ Conforms to ADR-012, ADR-013, and build-plan step A3.1:
 """
 
 import asyncio
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from services._common.logging import get_logger
+from services.mirror_gateway.metrics import MirrorGatewayMetrics
 
 logger = get_logger(__name__)
 
@@ -69,10 +71,12 @@ class MirrorGatewayManager:
         client: httpx.AsyncClient,
         queue_maxsize: int = 1000,
         worker_timeout_seconds: float = 2.0,
+        metrics: MirrorGatewayMetrics | None = None,
     ) -> None:
         self.client = client
         self.queue_maxsize = queue_maxsize
         self.worker_timeout_seconds = worker_timeout_seconds
+        self.metrics = metrics if metrics is not None else MirrorGatewayMetrics()
         self._twins: dict[str, TwinRegistration] = {}
 
     @property
@@ -111,6 +115,7 @@ class MirrorGatewayManager:
         )
         twin.worker_task = worker_task
         self._twins[clean_twin_id] = twin
+        self.metrics.init_twin(clean_twin_id)
         logger.info("twin_registered", twin_id=clean_twin_id, base_url=clean_base_url)
         return twin
 
@@ -137,6 +142,7 @@ class MirrorGatewayManager:
                 twin.queue.put_nowait(request)
             except asyncio.QueueFull:
                 twin.dropped += 1
+                self.metrics.record_dropped(twin.twin_id)
                 logger.warning(
                     "mirror_queue_overflow",
                     twin_id=twin.twin_id,
@@ -181,6 +187,8 @@ class MirrorGatewayManager:
         try:
             while True:
                 req = await twin.queue.get()
+                start_time = time.monotonic()
+                is_cancelled = False
                 try:
                     headers = dict(req.headers)
                     headers["X-Understudy-Shadow"] = "1"
@@ -208,7 +216,9 @@ class MirrorGatewayManager:
                         timeout=twin.worker_timeout_seconds,
                     )
                     twin.delivered += 1
+                    self.metrics.record_delivered(twin.twin_id)
                 except asyncio.CancelledError:
+                    is_cancelled = True
                     raise
                 except Exception as exc:
                     logger.warning(
@@ -218,7 +228,11 @@ class MirrorGatewayManager:
                         error_type=type(exc).__name__,
                     )
                     twin.dropped += 1
+                    self.metrics.record_dropped(twin.twin_id)
                 finally:
+                    if not is_cancelled:
+                        duration = time.monotonic() - start_time
+                        self.metrics.record_latency(target=twin.twin_id, duration=duration)
                     twin.queue.task_done()
         except asyncio.CancelledError:
             pass

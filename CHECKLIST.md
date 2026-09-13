@@ -184,7 +184,7 @@ terminal paths. Neither stream blocked the other.
 
 - [x] A3.1 Sync proxy to prod + per-twin bounded queues + drain workers + drop counting
 - [x] A3.2 Registration API and `MirrorStats` endpoint
-- [ ] A3.3 Prometheus metrics: delivered, dropped, latency
+- [x] A3.3 Prometheus metrics: delivered, dropped, latency
 - [ ] A3.4 `mirror/registry.py` client in the agent
 - [ ] A3.5 Loadgen repointed; gateway is the only ingress
 - [ ] A3.6 Backpressure behaviour implemented and measured

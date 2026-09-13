@@ -19,7 +19,7 @@ from services._common.settings import get_services_settings
 
 def setup_metrics(
     app: FastAPI, service_name: str, registry: CollectorRegistry | None = None
-) -> None:
+) -> CollectorRegistry:
     """Attach metrics middleware and /metrics scraping route to the FastAPI application.
 
     Builds its own CollectorRegistry (and Counter/Histogram/Info instances against it)
@@ -32,6 +32,7 @@ def setup_metrics(
     call sites omit it and get a fresh one.
     """
     metrics_registry = registry if registry is not None else CollectorRegistry()
+    app.state.metrics_registry = metrics_registry
 
     request_count = Counter(
         "http_requests_total",
@@ -88,3 +89,5 @@ def setup_metrics(
     @app.get("/metrics", tags=["Observability"])
     async def metrics() -> Response:
         return Response(content=generate_latest(metrics_registry), media_type=CONTENT_TYPE_LATEST)
+
+    return metrics_registry
