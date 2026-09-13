@@ -65,3 +65,7 @@ class GraphError(UnderstudyError):
 
 class GraphDiscrepancyError(GraphError):
     """Raised when observed traffic contradicts declared dependency graph topology."""
+
+
+class PlannerError(UnderstudyError):
+    """Raised on failure to generate, parse, or validate remediation plans."""

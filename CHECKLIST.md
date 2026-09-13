@@ -193,7 +193,7 @@ terminal paths. Neither stream blocked the other.
 
 ## Phase 3B — Planner and playbooks (Stream B)
 
-- [ ] B3.1 **[P0]** Candidate-generation prompt over the closed action enum
+- [x] B3.1 **[P0]** Candidate-generation prompt over the closed action enum
 - [ ] B3.2 **[P0]** Parse, validate, retry ≤ 2, then normalise against the live cluster; drop, never repair
 - [ ] B3.3 **[P0]** `NO_ACTION` always appended if absent
 - [ ] B3.4 **[P0]** Deterministic inverse synthesis per action type (never LLM-generated)
