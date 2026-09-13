@@ -159,7 +159,7 @@ terminal paths. Neither stream blocked the other.
 ## Phase 2B — Signals and store (Stream B)  **[P0]**
 
 - [x] B2.1 `store/` models, migrations, RunStore / PlaybookStore / EvalStore, append-only rules
-- [ ] B2.2 PagerDuty webhook receiver, HMAC verification, `ust tunnel`, synthetic-alert fallback
+- [x] B2.2 PagerDuty webhook receiver, HMAC verification, `ust tunnel`, synthetic-alert fallback
 - [ ] B2.3 Prometheus + Loki `ObservabilityAdapter`, namespace-parameterised
 - [ ] B2.4 GitHub `DeployHistory` with digests and migration detection
 - [ ] B2.5 Datadog adapter conforming to the same Protocol **[P2 to wire live]**

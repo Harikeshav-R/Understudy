@@ -326,3 +326,142 @@ def test_cli_store_verify_missing_rules(monkeypatch: "pytest.MonkeyPatch") -> No
     result = runner.invoke(app, ["store", "verify", "--last", "2"])
     assert result.exit_code == 1
     assert "Error: append-only rules missing on runs table" in result.output
+
+
+def test_cli_tunnel_fake(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust tunnel --fake starts fake session and outputs tunnel URLs."""
+    from unittest.mock import AsyncMock
+
+    import understudy.signals.tunnel
+
+    mock_run = AsyncMock(return_value=None)
+    monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "run_until_cancelled", mock_run)
+
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19308"])
+    assert result.exit_code == 0
+    assert "Tunnel URL: https://fake-tunnel-19308.understudy.dev" in result.stdout
+    assert "Webhook URL: https://fake-tunnel-19308.understudy.dev/webhook" in result.stdout
+
+
+def test_cli_tunnel_keyboard_interrupt(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust tunnel handles keyboard interrupt cleanly."""
+
+    import understudy.signals.tunnel
+
+    async def _interrupt(*_args: Any, **_kwargs: Any) -> None:
+        raise KeyboardInterrupt()
+
+    monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "run_until_cancelled", _interrupt)
+
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19309"])
+    assert result.exit_code == 0
+
+
+def test_cli_alert_inject_print_only() -> None:
+    """Verify ust alert inject --print-only outputs valid Alert JSON."""
+    result = runner.invoke(
+        app, ["alert", "inject", "--scenario", "bad_deploy_data_service", "--print-only"]
+    )
+    assert result.exit_code == 0
+    assert '"scenario_id": "bad_deploy_data_service"' in result.stdout
+    assert '"source": "synthetic"' in result.stdout
+
+
+def test_cli_alert_inject_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject posts to receiver endpoint and echoes confirmation."""
+    import httpx
+
+    captured_url: list[str] = []
+
+    def _mock_post(url: str, **_kwargs: Any) -> httpx.Response:
+        captured_url.append(url)
+        return httpx.Response(200, json={"status": "injected"})
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        [
+            "alert",
+            "inject",
+            "--scenario",
+            "bad_deploy_data_service",
+            "--service",
+            "edge-gateway",
+            "--title",
+            "Custom Title",
+            "--severity",
+            "error",
+            "--port",
+            "19310",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "injected synthetic alert" in result.stdout
+    assert captured_url[0] == "http://127.0.0.1:19310/api/alerts/inject"
+
+
+def test_cli_alert_inject_severity_warning(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject with warning severity."""
+    import httpx
+
+    def _mock_post(_url: str, **_kwargs: Any) -> httpx.Response:
+        return httpx.Response(200, json={"status": "injected"})
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        [
+            "alert",
+            "inject",
+            "--scenario",
+            "flag_plus_latency",
+            "--severity",
+            "warning",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "injected synthetic alert" in result.stdout
+
+
+def test_cli_alert_inject_receiver_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject exits with code 1 when receiver returns error HTTP status."""
+    import httpx
+
+    def _mock_post(*_args: Any, **_kwargs: Any) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        ["alert", "inject", "--scenario", "bad_deploy_data_service"],
+    )
+    assert result.exit_code == 1
+    assert "Receiver returned HTTP 500" in result.output
+
+
+def test_cli_alert_inject_unreachable(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust alert inject prints warning when receiver endpoint is unreachable."""
+    import httpx
+
+    def _mock_post(*_args: Any, **_kwargs: Any) -> httpx.Response:
+        raise httpx.ConnectError("Connection refused")
+
+    monkeypatch.setattr(httpx, "post", _mock_post)
+
+    result = runner.invoke(
+        app,
+        ["alert", "inject", "--scenario", "bad_deploy_data_service"],
+    )
+    assert result.exit_code == 0
+    assert "not reachable" in result.output
+    assert "Synthetic Alert generated" in result.output
+
+
+def test_cli_alert_help() -> None:
+    """Verify ust alert --help renders subcommand documentation."""
+    result = runner.invoke(app, ["alert", "--help"])
+    assert result.exit_code == 0
+    assert "inject" in result.stdout

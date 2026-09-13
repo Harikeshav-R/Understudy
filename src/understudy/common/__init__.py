@@ -27,6 +27,7 @@ from understudy.common.errors import (
     UnderstudyError,
 )
 from understudy.common.ids import (
+    new_alert_id,
     new_incident_id,
     new_plan_id,
     new_run_id,
@@ -61,6 +62,7 @@ __all__ = [
     "get_logger",
     "get_settings",
     "load_settings",
+    "new_alert_id",
     "new_incident_id",
     "new_plan_id",
     "new_run_id",

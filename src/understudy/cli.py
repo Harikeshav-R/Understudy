@@ -238,5 +238,162 @@ def store_verify(
     asyncio.run(_verify())
 
 
+@app.command("tunnel")
+def tunnel(
+    port: int = typer.Option(
+        9108,
+        "--port",
+        "-p",
+        help="Port for the PagerDuty webhook receiver (default: 9108).",
+    ),
+    provider: str = typer.Option(
+        "auto",
+        "--provider",
+        help="Tunnel provider ('auto', 'cloudflared', 'ngrok', 'fake').",
+    ),
+    fake: bool = typer.Option(
+        False,
+        "--fake",
+        help="Run simulated fake tunnel for testing.",
+    ),
+    secret: str | None = typer.Option(
+        None,
+        "--secret",
+        help="Optional PagerDuty webhook secret override.",
+    ),
+    timeout: float = typer.Option(
+        30.0,
+        "--timeout",
+        help="Timeout in seconds to wait for tunnel URL.",
+    ),
+) -> None:
+    """Start PagerDuty webhook receiver on :9108 and expose via public tunnel."""
+    import asyncio
+
+    from understudy.signals.tunnel import TunnelSession
+
+    session = TunnelSession(
+        port=port,
+        provider=provider,
+        fake=fake,
+        secret=secret,
+    )
+
+    async def _run() -> None:
+        try:
+            url = await session.start(timeout_seconds=timeout)
+            typer.echo(f"Tunnel URL: {url}")
+            typer.echo(f"Webhook URL: {session.webhook_url}")
+            typer.echo(f"Paste this URL into PagerDuty webhook subscription (port {port}).")
+            await session.run_until_cancelled()
+        finally:
+            await session.stop()
+
+    import contextlib
+
+    with contextlib.suppress(KeyboardInterrupt, asyncio.CancelledError):
+        asyncio.run(_run())
+
+
+alert_app = typer.Typer(
+    name="alert",
+    help="Incident alert injection and management commands.",
+    no_args_is_help=True,
+)
+app.add_typer(alert_app, name="alert")
+
+
+@alert_app.command("inject")
+def alert_inject(
+    scenario: str = typer.Option(
+        ...,
+        "--scenario",
+        "-s",
+        help="Scenario identifier (e.g. bad_deploy_data_service).",
+    ),
+    service: str | None = typer.Option(
+        None,
+        "--service",
+        help="Optional override for affected service.",
+    ),
+    severity: str = typer.Option(
+        "critical",
+        "--severity",
+        help="Alert severity ('critical', 'error', 'warning').",
+    ),
+    title: str | None = typer.Option(
+        None,
+        "--title",
+        help="Optional override for alert title.",
+    ),
+    endpoint: str = typer.Option(
+        "http://127.0.0.1:9108/api/alerts/inject",
+        "--endpoint",
+        help="Webhook receiver inject endpoint URL.",
+    ),
+    port: int = typer.Option(
+        9108,
+        "--port",
+        help="Port of local webhook receiver if overriding default endpoint.",
+    ),
+    print_only: bool = typer.Option(
+        False,
+        "--print-only",
+        help="Print synthetic Alert JSON without posting to receiver.",
+    ),
+) -> None:
+    """Inject a synthetic incident alert into the receiver."""
+    import json
+    from typing import Literal
+
+    import httpx
+
+    from understudy.signals.scenarios import create_synthetic_alert
+
+    raw_sev = severity.lower().strip()
+    sev_typed: Literal["critical", "error", "warning"] = "critical"
+    if raw_sev == "error":
+        sev_typed = "error"
+    elif raw_sev == "warning":
+        sev_typed = "warning"
+
+    alert = create_synthetic_alert(
+        scenario_id=scenario,
+        title=title,
+        service=service,
+        severity=sev_typed,
+    )
+
+    alert_dict = alert.model_dump(mode="json")
+
+    if print_only:
+        typer.echo(json.dumps(alert_dict, indent=2))
+        return
+
+    target_endpoint = endpoint
+    if port != 9108 and endpoint == "http://127.0.0.1:9108/api/alerts/inject":
+        target_endpoint = f"http://127.0.0.1:{port}/api/alerts/inject"
+
+    try:
+        resp = httpx.post(target_endpoint, json=alert_dict, timeout=5.0)
+        if resp.status_code == 200:
+            typer.echo(
+                f"injected synthetic alert alert_id={alert.alert_id} "
+                f"service={alert.service} scenario={scenario}"
+            )
+            return
+        typer.echo(
+            f"Receiver returned HTTP {resp.status_code}: {resp.text}",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    except httpx.RequestError as exc:
+        typer.echo(
+            f"Receiver on {target_endpoint} not reachable ({exc}). "
+            f"Synthetic Alert generated: alert_id={alert.alert_id} service={alert.service}",
+            err=True,
+        )
+
+
 if __name__ == "__main__":
     app()
