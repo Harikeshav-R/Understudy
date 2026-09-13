@@ -83,6 +83,17 @@ class FaultsSettings(BaseModel):
     pool_exhaustion_getconn_timeout_seconds: float = 1.0
 
 
+class MirrorGatewaySettings(BaseModel):
+    """Tunables for the mirror-gateway service."""
+
+    model_config = ConfigDict(frozen=True)
+
+    target_prod_url: str = "http://edge-gateway.ust-prod:8080"  # env: TARGET_PROD_URL
+    queue_maxsize: int = 1000  # env: MIRROR_QUEUE_MAXSIZE
+    worker_timeout_seconds: float = 2.0  # env: MIRROR_WORKER_TIMEOUT_SECONDS
+    http_timeout_seconds: float = 5.0  # env: MIRROR_HTTP_TIMEOUT_SECONDS
+
+
 class MetricsSettings(BaseModel):
     """Tunables for Prometheus metric collection. No env override: a bucket list isn't
     a good fit for a single scalar env var; edit config/services.yaml directly."""
@@ -115,6 +126,7 @@ class ServicesSettings(BaseModel):
     loadgen: LoadgenSettings = LoadgenSettings()
     db: DbSettings = DbSettings()
     faults: FaultsSettings = FaultsSettings()
+    mirror_gateway: MirrorGatewaySettings = MirrorGatewaySettings()
     metrics: MetricsSettings = MetricsSettings()
 
 
@@ -144,6 +156,10 @@ _ENV_OVERRIDES: dict[tuple[str, str], tuple[str, type]] = {
         "FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS",
         float,
     ),
+    ("mirror_gateway", "target_prod_url"): ("TARGET_PROD_URL", str),
+    ("mirror_gateway", "queue_maxsize"): ("MIRROR_QUEUE_MAXSIZE", int),
+    ("mirror_gateway", "worker_timeout_seconds"): ("MIRROR_WORKER_TIMEOUT_SECONDS", float),
+    ("mirror_gateway", "http_timeout_seconds"): ("MIRROR_HTTP_TIMEOUT_SECONDS", float),
 }
 
 

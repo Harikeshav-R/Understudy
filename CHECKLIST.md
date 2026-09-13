@@ -176,7 +176,7 @@ terminal paths. Neither stream blocked the other.
 
 ## Phase 3A — Mirror gateway (Stream A)  **[P0]**
 
-- [ ] A3.1 Sync proxy to prod + per-twin bounded queues + drain workers + drop counting
+- [x] A3.1 Sync proxy to prod + per-twin bounded queues + drain workers + drop counting
 - [ ] A3.2 Registration API and `MirrorStats` endpoint
 - [ ] A3.3 Prometheus metrics: delivered, dropped, latency
 - [ ] A3.4 `mirror/registry.py` client in the agent

@@ -27,6 +27,10 @@ def test_default_settings_loading() -> None:
     assert settings.loadgen.seed == 42
     assert settings.db.pool_max_size == 10
     assert settings.faults.injection_seed == 1337
+    assert settings.mirror_gateway.target_prod_url == "http://edge-gateway.ust-prod:8080"
+    assert settings.mirror_gateway.queue_maxsize == 1000
+    assert settings.mirror_gateway.worker_timeout_seconds == 2.0
+    assert settings.mirror_gateway.http_timeout_seconds == 5.0
     assert settings.metrics.histogram_buckets[0] == 0.005
 
 
@@ -96,6 +100,10 @@ def test_env_override_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DB_POOL_TIMEOUT_SECONDS", "3.0")
     monkeypatch.setenv("FAULT_INJECTION_SEED", "111")
     monkeypatch.setenv("FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS", "0.25")
+    monkeypatch.setenv("TARGET_PROD_URL", "http://prod-override:9090")
+    monkeypatch.setenv("MIRROR_QUEUE_MAXSIZE", "500")
+    monkeypatch.setenv("MIRROR_WORKER_TIMEOUT_SECONDS", "3.5")
+    monkeypatch.setenv("MIRROR_HTTP_TIMEOUT_SECONDS", "4.0")
 
     settings = load_services_settings(
         config_path=Path("nonexistent-default.yaml"),
@@ -118,6 +126,10 @@ def test_env_override_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.db.pool_timeout_seconds == 3.0
     assert settings.faults.injection_seed == 111
     assert settings.faults.pool_exhaustion_getconn_timeout_seconds == 0.25
+    assert settings.mirror_gateway.target_prod_url == "http://prod-override:9090"
+    assert settings.mirror_gateway.queue_maxsize == 500
+    assert settings.mirror_gateway.worker_timeout_seconds == 3.5
+    assert settings.mirror_gateway.http_timeout_seconds == 4.0
 
 
 def test_invalid_env_value_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -143,3 +155,7 @@ def test_real_config_services_yaml_loads() -> None:
     settings = load_services_settings()
     assert settings.loadgen.rps == 20.0
     assert settings.faults.injection_seed == 1337
+    assert settings.mirror_gateway.target_prod_url == "http://edge-gateway.ust-prod:8080"
+    assert settings.mirror_gateway.queue_maxsize == 1000
+    assert settings.mirror_gateway.worker_timeout_seconds == 2.0
+    assert settings.mirror_gateway.http_timeout_seconds == 5.0

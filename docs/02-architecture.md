@@ -431,6 +431,10 @@ section) and layered from `config/services.yaml` → an optional, gitignored
 | `db` | `pool_timeout_seconds` | `5.0` | `DB_POOL_TIMEOUT_SECONDS` |
 | `faults` | `injection_seed` | `1337` | `FAULT_INJECTION_SEED` |
 | `faults` | `pool_exhaustion_getconn_timeout_seconds` | `1.0` | `FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS` |
+| `mirror_gateway` | `target_prod_url` | `"http://edge-gateway.ust-prod:8080"` | `TARGET_PROD_URL` |
+| `mirror_gateway` | `queue_maxsize` | `1000` | `MIRROR_QUEUE_MAXSIZE` |
+| `mirror_gateway` | `worker_timeout_seconds` | `2.0` | `MIRROR_WORKER_TIMEOUT_SECONDS` |
+| `mirror_gateway` | `http_timeout_seconds` | `5.0` | `MIRROR_HTTP_TIMEOUT_SECONDS` |
 | `metrics` | `histogram_buckets` | see `config/services.yaml` | none (edit the YAML) |
 
 `edge_gateway.http_timeout_seconds`, `auth_service.token_cache_max_size`,
