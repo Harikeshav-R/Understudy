@@ -1,9 +1,12 @@
 """Understudy command-line interface entrypoint."""
 
 from pathlib import Path
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
+
+if TYPE_CHECKING:
+    from understudy.signals.api import ObservabilityAdapter
 
 app = typer.Typer(
     name="ust",
@@ -53,8 +56,15 @@ def demo(
         "--force-veto",
         help="Force safety kernel to issue a VETO verdict on invariant K3.",
     ),
+    with_datadog: bool = typer.Option(
+        False,
+        "--with-datadog",
+        help="Run demo with Datadog observability telemetry.",
+    ),
 ) -> None:
     """Run the incident control loop demo."""
+    if with_datadog:
+        typer.echo("Datadog telemetry mirroring enabled (ADR-025 optics).")
     if not fake:
         typer.echo(
             "Error: --fake flag is required (live demo is implemented in Phase 7).",
@@ -93,8 +103,17 @@ def demo(
         typer.echo(f"outcome={record.outcome.value}")
 
 
-@app.command()
-def graph(
+graph_app = typer.Typer(
+    name="graph",
+    help="Control loop graph rendering and service dependency DAG inspection.",
+    invoke_without_command=True,
+)
+app.add_typer(graph_app, name="graph")
+
+
+@graph_app.callback(invoke_without_command=True)
+def graph_default(
+    ctx: typer.Context,
     render: Annotated[
         Path | None,
         typer.Option(
@@ -104,7 +123,10 @@ def graph(
         ),
     ] = None,
 ) -> None:
-    """Inspect or render the control loop StateGraph."""
+    """Inspect or render the control loop StateGraph when called without subcommands."""
+    if ctx.invoked_subcommand is not None:
+        return
+
     from understudy.orchestrator.api import render_graph_mermaid, render_graph_png
 
     if render is not None:
@@ -113,6 +135,111 @@ def graph(
     else:
         mermaid_code = render_graph_mermaid()
         typer.echo(mermaid_code)
+
+
+@graph_app.command("show")
+def graph_show(
+    dependencies_file: Annotated[
+        Path,
+        typer.Option(
+            "--dependencies-file",
+            "-f",
+            help="Path to dependencies.yaml file.",
+        ),
+    ] = Path("deploy/prod/dependencies.yaml"),
+    prometheus_url: Annotated[
+        str | None,
+        typer.Option(
+            "--prometheus-url",
+            help="Prometheus base URL (defaults to settings).",
+        ),
+    ] = None,
+    namespace: Annotated[
+        str,
+        typer.Option(
+            "--namespace",
+            "-n",
+            help="Kubernetes namespace to check traffic for.",
+        ),
+    ] = "ust-prod",
+    offline: Annotated[
+        bool,
+        typer.Option(
+            "--offline",
+            help="Skip Prometheus traffic observation check.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            help="Output graph topology and cross-check report as JSON.",
+        ),
+    ] = False,
+) -> None:
+    """Display the declared dependency DAG and cross-check against observed traffic."""
+    import asyncio
+    import json
+
+    from understudy.common.errors import GraphError
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    try:
+        dep_graph = ServiceDependencyGraph.from_yaml(dependencies_file)
+    except GraphError as exc:
+        typer.echo(f"Error loading dependency graph: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    chains_str = dep_graph.format_chains()
+
+    report = None
+    if not offline:
+        try:
+            report = asyncio.run(
+                dep_graph.cross_check_prometheus(
+                    prometheus_url=prometheus_url,
+                    namespace=namespace,
+                    raise_on_mismatch=False,
+                )
+            )
+        except Exception as exc:
+            typer.echo(f"Error cross-checking observed traffic: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        if report.status != "OK":
+            typer.echo(f"Error: {report.message}", err=True)
+            raise typer.Exit(code=1)
+
+    if json_output:
+        out = {
+            "chains": chains_str,
+            "nodes": dep_graph.snapshot().nodes,
+            "edges": [{"source": e.source, "target": e.target} for e in dep_graph.snapshot().edges],
+            "cross_check": (
+                {
+                    "status": report.status,
+                    "declared_services": sorted(report.declared_services),
+                    "observed_services": sorted(report.observed_services),
+                    "declared_edges": [
+                        {"source": s, "target": t} for s, t in sorted(report.declared_edges)
+                    ],
+                    "observed_edges": [
+                        {"source": s, "target": t} for s, t in sorted(report.observed_edges)
+                    ],
+                    "message": report.message,
+                }
+                if report
+                else {"status": "SKIPPED"}
+            ),
+        }
+        typer.echo(json.dumps(out, indent=2))
+    else:
+        typer.echo(chains_str)
+        if report:
+            typer.echo(report.message)
+            typer.echo("declared matches observed: OK")
+        else:
+            typer.echo("declared graph traffic check: SKIPPED (offline)")
 
 
 fleet_app = typer.Typer(
@@ -443,8 +570,19 @@ def signals_context(
         "--loki-url",
         help="Optional Loki base URL override.",
     ),
+    adapter: str = typer.Option(
+        "prometheus",
+        "--adapter",
+        "-a",
+        help="Telemetry adapter to use: prometheus (default) or datadog.",
+    ),
+    datadog_site: str | None = typer.Option(
+        None,
+        "--datadog-site",
+        help="Optional Datadog site override (e.g. datadoghq.com, datadoghq.eu).",
+    ),
 ) -> None:
-    """Fetch real Prometheus metrics and Loki error signatures into an IncidentContext."""
+    """Fetch real Prometheus or Datadog metrics and error signatures into an IncidentContext."""
     import asyncio
     from datetime import timedelta
 
@@ -455,8 +593,6 @@ def signals_context(
         DependencyGraphSnapshot,
         IncidentContext,
     )
-    from understudy.signals.loki import LokiClient
-    from understudy.signals.prometheus import PrometheusClient, PrometheusLokiAdapter
 
     clock = SystemClock()
     now = clock.now()
@@ -464,13 +600,23 @@ def signals_context(
     since = now - timedelta(minutes=window_minutes)
     inc_id = incident_id or new_incident_id()
 
-    prom_client = PrometheusClient(base_url=prometheus_url, clock=clock)
-    loki_client = LokiClient(base_url=loki_url, clock=clock)
-    adapter = PrometheusLokiAdapter(
-        prometheus_client=prom_client,
-        loki_client=loki_client,
-        clock=clock,
-    )
+    obs_adapter: ObservabilityAdapter
+    if adapter == "datadog":
+        from understudy.signals.datadog import DatadogAdapter, DatadogClient
+
+        dd_client = DatadogClient(site=datadog_site, clock=clock)
+        obs_adapter = DatadogAdapter(datadog_client=dd_client, clock=clock)
+    else:
+        from understudy.signals.loki import LokiClient
+        from understudy.signals.prometheus import PrometheusClient, PrometheusLokiAdapter
+
+        prom_client = PrometheusClient(base_url=prometheus_url, clock=clock)
+        loki_client = LokiClient(base_url=loki_url, clock=clock)
+        obs_adapter = PrometheusLokiAdapter(
+            prometheus_client=prom_client,
+            loki_client=loki_client,
+            clock=clock,
+        )
 
     alert = Alert(
         alert_id=new_alert_id(),
@@ -484,33 +630,51 @@ def signals_context(
 
     async def _gather() -> IncidentContext:
         try:
-            metric_window = await adapter.metric_window(
+            metric_window = await obs_adapter.metric_window(
                 service=service,
                 since=since,
                 namespace=namespace,
             )
-            signatures = await adapter.error_signatures(
+            signatures = await obs_adapter.error_signatures(
                 service=service,
                 since=since,
                 namespace=namespace,
             )
-            dep_graph = DependencyGraphSnapshot(
-                nodes=[service],
-                edges=[],
-                observed_at=now,
-            )
+            from understudy.signals.github import GitHubDeployHistory
+
+            github_history = GitHubDeployHistory()
+            try:
+                recent_deploys = await github_history.recent_deploys(limit=5)
+            except Exception:
+                recent_deploys = []
+            finally:
+                await github_history.close()
+
+            try:
+                from understudy.graph.service_graph import ServiceDependencyGraph
+
+                dep_graph = ServiceDependencyGraph.from_yaml(
+                    "deploy/prod/dependencies.yaml"
+                ).snapshot()
+            except Exception:
+                dep_graph = DependencyGraphSnapshot(
+                    nodes=[service],
+                    edges=[],
+                    observed_at=now,
+                )
             return IncidentContext(
                 incident_id=inc_id,
                 alert=alert,
                 signatures=signatures,
                 metrics_window=metric_window,
-                recent_deploys=[],
+                recent_deploys=recent_deploys,
                 dependency_graph=dep_graph,
                 inferred_failure_class=None,
                 gathered_at=now,
             )
         finally:
-            await adapter.close()
+            if hasattr(obs_adapter, "close"):
+                await obs_adapter.close()
 
     context = asyncio.run(_gather())
 
@@ -522,8 +686,80 @@ def signals_context(
             f"requests={context.metrics_window.request_count}, "
             f"p99={context.metrics_window.p99_latency_ms}ms, "
             f"errors={context.metrics_window.error_rate}, "
-            f"signatures={len(context.signatures)}"
+            f"signatures={len(context.signatures)}, "
+            f"deploys={len(context.recent_deploys)}"
         )
+
+
+@signals_app.command("deploys")
+def signals_deploys(
+    limit: int = typer.Option(
+        5,
+        "--limit",
+        "-l",
+        help="Number of recent deployments to fetch from version control.",
+    ),
+    repo: str | None = typer.Option(
+        None,
+        "--repo",
+        "-r",
+        help="GitHub repository in owner/repo format.",
+    ),
+    branch: str | None = typer.Option(
+        None,
+        "--branch",
+        "-b",
+        help="Optional branch or ref override.",
+    ),
+    token: str | None = typer.Option(
+        None,
+        "--token",
+        "-t",
+        help="Optional GitHub personal access token override.",
+    ),
+    json_output: bool = typer.Option(
+        False,
+        "--json/--no-json",
+        help="Print raw DeployRef list JSON.",
+    ),
+) -> None:
+    """Fetch recent deployment metadata from version control."""
+    import asyncio
+    import json
+
+    from understudy.signals.github import GitHubDeployHistory
+
+    history = GitHubDeployHistory(
+        token=token,
+        repo=repo,
+        branch=branch,
+    )
+
+    async def _fetch() -> list[Any]:
+        try:
+            return await history.recent_deploys(limit=limit)
+        finally:
+            await history.close()
+
+    try:
+        deploys = asyncio.run(_fetch())
+    except Exception as exc:
+        typer.echo(f"Error fetching deploy history: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        raw_list = [d.model_dump(mode="json") for d in deploys]
+        typer.echo(json.dumps(raw_list, indent=2))
+    else:
+        typer.echo(f"Recent {len(deploys)} deployment(s) from {history.repo}:")
+        for d in deploys:
+            pr_str = f"#{d.pr_number}" if d.pr_number is not None else "-"
+            mig_str = "YES" if d.contains_migration else "NO"
+            date_str = d.deployed_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+            typer.echo(f"  {d.commit_sha[:7]} | {date_str} | PR: {pr_str} | migration: {mig_str}")
+            if d.image_digests:
+                for svc, digest in sorted(d.image_digests.items()):
+                    typer.echo(f"    {svc}: {digest}")
 
 
 if __name__ == "__main__":

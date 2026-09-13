@@ -73,6 +73,13 @@ def test_cli_demo_force_veto() -> None:
     assert expected_reason in result.stdout
 
 
+def test_cli_demo_with_datadog() -> None:
+    """Verify ust demo --fake --with-datadog informs user of Datadog optics."""
+    result = runner.invoke(app, ["demo", "--fake", "--with-datadog"])
+    assert result.exit_code == 0
+    assert "Datadog telemetry mirroring enabled" in result.stdout
+
+
 def test_cli_demo_missing_fake() -> None:
     """Verify ust demo without --fake errors with code 1."""
     result = runner.invoke(app, ["demo"])
@@ -593,3 +600,290 @@ def test_cli_signals_context_no_json(monkeypatch: "pytest.MonkeyPatch") -> None:
     assert "IncidentContext gathered for auth-service (ust-prod):" in result.stdout
     assert "requests=50" in result.stdout
     assert "p99=5.0ms" in result.stdout
+
+
+def test_cli_signals_context_datadog(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context --adapter datadog uses DatadogAdapter."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import (
+        ErrorSignature,
+        MetricPoint,
+        MetricSeries,
+        MetricWindow,
+    )
+    from understudy.signals.datadog import DatadogAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="data-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[
+                MetricSeries(
+                    metric_name="http_requests_total",
+                    labels={"service": "data-service"},
+                    points=[MetricPoint(timestamp=fixed_now, value=80.0)],
+                )
+            ],
+            p99_latency_ms=22.0,
+            error_rate=0.01,
+            request_count=80,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[ErrorSignature]:
+        return [
+            ErrorSignature(
+                fingerprint="fp_dd_123",
+                message="Datadog aggregated error",
+                service="data-service",
+                count=2,
+                first_seen=fixed_now,
+                last_seen=fixed_now,
+            )
+        ]
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(DatadogAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(DatadogAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(DatadogAdapter, "close", _mock_close)
+
+    result = runner.invoke(
+        app,
+        [
+            "signals",
+            "context",
+            "--adapter",
+            "datadog",
+            "--datadog-site",
+            "datadoghq.eu",
+            "--service",
+            "data-service",
+            "--minutes",
+            "10",
+        ],
+    )
+    assert result.exit_code == 0
+    assert '"service": "data-service"' in result.stdout
+    assert '"fp_dd_123"' in result.stdout
+    assert '"request_count": 80' in result.stdout
+
+
+def test_cli_signals_context_fallback_graph(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context falls back to single-node snapshot if dependencies.yaml fails."""
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    def _failing_from_yaml(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("Missing yaml")
+
+    monkeypatch.setattr(ServiceDependencyGraph, "from_yaml", _failing_from_yaml)
+
+    result = runner.invoke(app, ["signals", "context", "--service", "data-service"])
+    assert result.exit_code == 0
+    assert '"nodes": [' in result.stdout
+    assert '"data-service"' in result.stdout
+
+
+def test_cli_signals_deploys_human_and_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals deploys outputs human summary and json list."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.github import GitHubDeployHistory
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    mock_deploys = [
+        DeployRef(
+            commit_sha="c0ffee1111111111111111111111111111111111",
+            image_digests={"data-service": "sha256:1111", "auth-service": "sha256:2222"},
+            deployed_at=fixed_now,
+            pr_number=42,
+            contains_migration=True,
+        ),
+        DeployRef(
+            commit_sha="c0ffee2222222222222222222222222222222222",
+            image_digests={},
+            deployed_at=fixed_now,
+            pr_number=None,
+            contains_migration=False,
+        ),
+    ]
+
+    async def _mock_recent_deploys(*_args: Any, **_kwargs: Any) -> list[DeployRef]:
+        return mock_deploys
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(GitHubDeployHistory, "recent_deploys", _mock_recent_deploys)
+    monkeypatch.setattr(GitHubDeployHistory, "close", _mock_close)
+
+    # 1. Human table output
+    res_human = runner.invoke(app, ["signals", "deploys", "--limit", "2"])
+    assert res_human.exit_code == 0
+    assert "Recent 2 deployment(s)" in res_human.stdout
+    assert "c0ffee1 | 2026-09-13 12:00:00 UTC | PR: #42 | migration: YES" in res_human.stdout
+    assert "data-service: sha256:1111" in res_human.stdout
+    assert "auth-service: sha256:2222" in res_human.stdout
+    assert "c0ffee2 | 2026-09-13 12:00:00 UTC | PR: - | migration: NO" in res_human.stdout
+
+    # 2. JSON list output with flags
+    res_json = runner.invoke(
+        app,
+        [
+            "signals",
+            "deploys",
+            "--limit",
+            "2",
+            "--json",
+            "--repo",
+            "custom/repo",
+            "--branch",
+            "dev",
+            "--token",
+            "tok",
+        ],
+    )
+    assert res_json.exit_code == 0
+    assert '"commit_sha": "c0ffee1111111111111111111111111111111111"' in res_json.stdout
+    assert '"pr_number": 42' in res_json.stdout
+    assert '"contains_migration": true' in res_json.stdout
+
+
+def test_cli_signals_deploys_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals deploys exits 1 when fetch fails."""
+    from understudy.common.errors import GitHubError
+    from understudy.signals.github import GitHubDeployHistory
+
+    async def _failing_recent_deploys(*_args: Any, **_kwargs: Any) -> list[Any]:
+        raise GitHubError("Bad credentials")
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(GitHubDeployHistory, "recent_deploys", _failing_recent_deploys)
+    monkeypatch.setattr(GitHubDeployHistory, "close", _mock_close)
+
+    res = runner.invoke(app, ["signals", "deploys"])
+    assert res.exit_code == 1
+    assert "Error fetching deploy history: Bad credentials" in (res.stderr or res.stdout)
+
+
+def test_cli_graph_show_human(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show outputs DAG chains and OK status."""
+    from understudy.graph.models import CrossCheckReport
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    mock_report = CrossCheckReport(
+        status="OK",
+        declared_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        observed_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        declared_edges={("edge-gateway", "auth-service")},
+        observed_edges={("edge-gateway", "auth-service")},
+        undeclared_services=set(),
+        undeclared_edges=set(),
+        message="declared graph matches observed traffic: OK",
+    )
+
+    async def _mock_cross_check(*_args: Any, **_kwargs: Any) -> CrossCheckReport:
+        return mock_report
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _mock_cross_check)
+
+    result = runner.invoke(app, ["graph", "show"])
+    assert result.exit_code == 0
+    assert "edge-gateway -> auth-service -> data-service, worker -> data-service" in result.stdout
+    assert "declared graph matches observed traffic: OK" in result.stdout
+    assert "declared matches observed: OK" in result.stdout
+
+
+def test_cli_graph_show_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show --json outputs valid JSON representation."""
+    from understudy.graph.models import CrossCheckReport
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    mock_report = CrossCheckReport(
+        status="OK",
+        declared_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        observed_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        declared_edges={("edge-gateway", "auth-service")},
+        observed_edges={("edge-gateway", "auth-service")},
+        undeclared_services=set(),
+        undeclared_edges=set(),
+        message="declared graph matches observed traffic: OK",
+    )
+
+    async def _mock_cross_check(*_args: Any, **_kwargs: Any) -> CrossCheckReport:
+        return mock_report
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _mock_cross_check)
+
+    result = runner.invoke(app, ["graph", "show", "--json"])
+    assert result.exit_code == 0
+    assert '"status": "OK"' in result.stdout
+    assert '"chains":' in result.stdout
+    assert '"edge-gateway"' in result.stdout
+
+
+def test_cli_graph_show_offline() -> None:
+    """Verify ust graph show --offline skips Prometheus cross-check."""
+    result = runner.invoke(app, ["graph", "show", "--offline"])
+    assert result.exit_code == 0
+    assert "edge-gateway -> auth-service -> data-service, worker -> data-service" in result.stdout
+    assert "declared graph traffic check: SKIPPED (offline)" in result.stdout
+
+
+def test_cli_graph_show_missing_file(tmp_path: "Path") -> None:
+    """Verify ust graph show fails gracefully on nonexistent dependencies file."""
+    nonexistent = tmp_path / "missing.yaml"
+    result = runner.invoke(app, ["graph", "show", "--dependencies-file", str(nonexistent)])
+    assert result.exit_code == 1
+    assert "Error loading dependency graph:" in (result.stderr or result.stdout)
+
+
+def test_cli_graph_show_mismatch(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show exits 1 when traffic mismatch is detected."""
+    from understudy.graph.models import CrossCheckReport
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    mock_report = CrossCheckReport(
+        status="MISMATCH",
+        declared_services={"edge-gateway", "auth-service", "data-service", "worker"},
+        observed_services={"rogue-svc"},
+        declared_edges=set(),
+        observed_edges=set(),
+        undeclared_services={"rogue-svc"},
+        undeclared_edges=set(),
+        message="Undeclared services observed in traffic: ['rogue-svc']",
+    )
+
+    async def _mock_cross_check(*_args: Any, **_kwargs: Any) -> CrossCheckReport:
+        return mock_report
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _mock_cross_check)
+
+    result = runner.invoke(app, ["graph", "show"])
+    assert result.exit_code == 1
+    assert "Undeclared services observed in traffic" in (result.stderr or result.stdout)
+
+
+def test_cli_graph_show_prometheus_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust graph show exits 1 when Prometheus query throws exception."""
+    from understudy.common.errors import GraphError
+    from understudy.graph.service_graph import ServiceDependencyGraph
+
+    async def _failing_cross_check(*_args: Any, **_kwargs: Any) -> Any:
+        raise GraphError("Connection timed out")
+
+    monkeypatch.setattr(ServiceDependencyGraph, "cross_check_prometheus", _failing_cross_check)
+
+    result = runner.invoke(app, ["graph", "show"])
+    assert result.exit_code == 1
+    assert "Error cross-checking observed traffic: Connection timed out" in (
+        result.stderr or result.stdout
+    )

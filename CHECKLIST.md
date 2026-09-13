@@ -161,14 +161,14 @@ terminal paths. Neither stream blocked the other.
 - [x] B2.1 `store/` models, migrations, RunStore / PlaybookStore / EvalStore, append-only rules
 - [x] B2.2 PagerDuty webhook receiver, HMAC verification, `ust tunnel`, synthetic-alert fallback
 - [x] B2.3 Prometheus + Loki `ObservabilityAdapter`, namespace-parameterised
-- [ ] B2.4 GitHub `DeployHistory` with digests and migration detection
-- [ ] B2.5 Datadog adapter conforming to the same Protocol **[P2 to wire live]**
-- [ ] B2.6 `graph/`: DAG from declaration, cross-check against observed traffic, blast calculator
+- [x] B2.4 GitHub `DeployHistory` with digests and migration detection
+- [x] B2.5 Datadog adapter conforming to the same Protocol **[P2 to wire live]**
+- [x] B2.6 `graph/`: DAG from declaration, cross-check against observed traffic, blast calculator
 
 **Checkpoint B2**
-- [ ] `ust signals deploys --limit 5` returns five real commits with digests and migration flags
+- [x] `ust signals deploys --limit 5` returns five real commits with digests and migration flags
 - [x] `ust signals context` returns a valid IncidentContext with real Prometheus and Loki data
-- [ ] `ust graph show` prints the DAG and "declared matches observed: OK"
+- [x] `ust graph show` prints the DAG and "declared matches observed: OK"
 - [ ] A real PagerDuty test incident reaches the receiver within 5 s
 - [x] `test_run_store_append_only` passes against a real Postgres
 
