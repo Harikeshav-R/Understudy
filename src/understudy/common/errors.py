@@ -49,3 +49,19 @@ class SignalsError(UnderstudyError):
 
 class ObservabilityError(SignalsError):
     """Raised on failure to query metrics or logs from Prometheus or Loki."""
+
+
+class DatadogError(ObservabilityError):
+    """Raised on failure to communicate with or query Datadog API."""
+
+
+class GitHubError(SignalsError):
+    """Raised on failure to communicate with or parse responses from GitHub API."""
+
+
+class GraphError(UnderstudyError):
+    """Raised on failure to construct, validate, or cross-check the dependency graph."""
+
+
+class GraphDiscrepancyError(GraphError):
+    """Raised when observed traffic contradicts declared dependency graph topology."""
