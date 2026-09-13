@@ -18,6 +18,7 @@ from understudy.common.errors import MirrorError, TwinNotFoundError
 from understudy.common.logging import get_logger
 from understudy.contracts.twin import MirrorStats, TwinHandle
 from understudy.mirror.api import MirrorRegistry
+from understudy.mirror.fidelity import TwinFidelityReport, evaluate_twin_fidelity
 
 logger = get_logger(__name__)
 
@@ -282,6 +283,106 @@ class HttpMirrorRegistry(MirrorRegistry):
                 f"Malformed statistics response returned from mirror gateway: {resp.text}",
                 details={"error": str(exc)},
             ) from exc
+
+    async def get_prod_stats(self) -> dict[str, Any]:
+        """Fetch production proxy delivery and path statistics."""
+        client = await self._get_client()
+        url = f"{self.base_url}/prod/stats"
+        try:
+            resp = await client.get(url)
+        except httpx.RequestError as exc:
+            raise MirrorError(
+                f"Failed to connect to mirror gateway at {url}: {exc}",
+                details={"url": url},
+            ) from exc
+
+        if resp.status_code != 200:
+            raise MirrorError(
+                f"Failed to fetch production statistics with status {resp.status_code}: "
+                f"{resp.text}",
+                details={"status_code": resp.status_code, "response_body": resp.text},
+            )
+
+        try:
+            data = resp.json()
+            if not isinstance(data, dict):
+                raise ValueError("Expected JSON object for production stats")
+            return {
+                "delivered": int(data.get("delivered", 0)),
+                "paths": {str(k): int(v) for k, v in data.get("paths", {}).items()},
+            }
+        except (ValueError, TypeError) as exc:
+            raise MirrorError(
+                f"Malformed production statistics returned from mirror gateway: {resp.text}",
+                details={"error": str(exc)},
+            ) from exc
+
+    async def get_twin_paths(self, twin_id: str) -> dict[str, int]:
+        """Fetch delivered path histogram for a registered twin."""
+        clean_twin_id = twin_id.strip()
+        client = await self._get_client()
+        encoded = quote(clean_twin_id, safe="")
+        url = f"{self.base_url}/twins/{encoded}/stats"
+        try:
+            resp = await client.get(url)
+        except httpx.RequestError as exc:
+            raise MirrorError(
+                f"Failed to connect to mirror gateway at {url}: {exc}",
+                details={"twin_id": clean_twin_id, "url": url},
+            ) from exc
+
+        if resp.status_code != 200:
+            if resp.status_code == 404:
+                raise TwinNotFoundError(
+                    f"Twin {clean_twin_id!r} not found on mirror gateway",
+                    details={"twin_id": clean_twin_id},
+                )
+            raise MirrorError(
+                f"Failed to fetch twin stats with status {resp.status_code}: {resp.text}",
+                details={"twin_id": clean_twin_id, "status_code": resp.status_code},
+            )
+
+        try:
+            data = resp.json()
+            return {str(k): int(v) for k, v in data.get("paths", {}).items()}
+        except (ValueError, TypeError) as exc:
+            raise MirrorError(
+                f"Malformed stats payload: {resp.text}",
+                details={"twin_id": clean_twin_id, "error": str(exc)},
+            ) from exc
+
+    async def get_fidelity_reports(self, incident: str) -> list[TwinFidelityReport]:
+        """Compare all twins for an incident against prod delivery and paths."""
+        all_stats = await self.get_all_stats()
+        matching = {tid: s for tid, s in all_stats.items() if incident in tid}
+        if not matching:
+            return []
+
+        try:
+            prod_data = await self.get_prod_stats()
+            prod_delivered = int(prod_data.get("delivered", 0))
+            prod_paths: dict[str, int] = prod_data.get("paths", {})
+        except (MirrorError, httpx.HTTPError, ValueError):
+            prod_delivered = max((s.delivered for s in matching.values()), default=0)
+            prod_paths = {}
+
+        reports: list[TwinFidelityReport] = []
+        for tid, s in sorted(matching.items()):
+            try:
+                twin_paths = await self.get_twin_paths(tid)
+            except (MirrorError, httpx.HTTPError, ValueError):
+                twin_paths = {}
+
+            report = evaluate_twin_fidelity(
+                twin_id=tid,
+                prod_delivered=prod_delivered,
+                twin_delivered=s.delivered,
+                drop_ratio=s.drop_ratio,
+                prod_paths=prod_paths,
+                twin_paths=twin_paths,
+            )
+            reports.append(report)
+        return reports
 
     async def health(self) -> bool:
         """Check mirror gateway liveness probe."""

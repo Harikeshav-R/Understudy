@@ -334,16 +334,19 @@ def mirror_register(
 ) -> None:
     """Register active twin environments with the traffic mirror gateway."""
     import asyncio
-    from datetime import UTC, datetime
 
+    import httpx
+
+    from understudy.common.clock import SystemClock
     from understudy.common.config import get_settings
+    from understudy.common.errors import MirrorError
     from understudy.contracts.twin import TwinHandle
     from understudy.fleet.render import build_twin_namespace
     from understudy.mirror.registry import HttpMirrorRegistry
 
     settings = get_settings()
     prefix = settings.cluster.twin_namespace_prefix
-    now = datetime.now(UTC)
+    now = SystemClock().now()
 
     twins: list[TwinHandle] = [
         TwinHandle(
@@ -375,7 +378,7 @@ def mirror_register(
         results = asyncio.run(_run())
         for tid, url in results:
             typer.echo(f"registered twin_id={tid} base_url={url}")
-    except Exception as exc:
+    except (MirrorError, httpx.HTTPError) as exc:
         typer.echo(f"Error registering twins with mirror gateway: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
@@ -397,6 +400,9 @@ def mirror_stats(
     """Fetch traffic delivery and drop statistics from the mirror gateway."""
     import asyncio
 
+    import httpx
+
+    from understudy.common.errors import MirrorError
     from understudy.contracts.twin import MirrorStats
     from understudy.mirror.registry import HttpMirrorRegistry
 
@@ -409,7 +415,7 @@ def mirror_stats(
 
     try:
         all_stats = asyncio.run(_run())
-    except Exception as exc:
+    except (MirrorError, httpx.HTTPError) as exc:
         typer.echo(f"Error fetching mirror stats: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
@@ -442,6 +448,9 @@ def mirror_unregister(
     """Unregister a twin from the traffic mirror gateway."""
     import asyncio
 
+    import httpx
+
+    from understudy.common.errors import MirrorError
     from understudy.mirror.registry import HttpMirrorRegistry
 
     async def _run() -> None:
@@ -454,7 +463,7 @@ def mirror_unregister(
     try:
         asyncio.run(_run())
         typer.echo(f"unregistered twin_id={twin_id}")
-    except Exception as exc:
+    except (MirrorError, httpx.HTTPError) as exc:
         typer.echo(f"Error unregistering twin: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
@@ -476,53 +485,60 @@ def mirror_compare(
     """Compare mirrored traffic counts and fidelity across twins."""
     import asyncio
 
-    from understudy.contracts.twin import MirrorStats
+    import httpx
+
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.fidelity import TwinFidelityReport
     from understudy.mirror.registry import HttpMirrorRegistry
 
-    async def _run() -> dict[str, MirrorStats]:
+    async def _run() -> list[TwinFidelityReport]:
         registry = HttpMirrorRegistry(base_url=gateway_url)
         try:
-            return await registry.get_all_stats()
+            return await registry.get_fidelity_reports(incident)
         finally:
             await registry.aclose()
 
     try:
-        all_stats = asyncio.run(_run())
-    except Exception as exc:
+        reports = asyncio.run(_run())
+    except (MirrorError, httpx.HTTPError) as exc:
         typer.echo(f"Error fetching stats for comparison: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
-    matching = {tid: s for tid, s in all_stats.items() if incident in tid}
-
-    if not matching:
+    if not reports:
         typer.echo(f"No registered twins found for incident={incident}", err=True)
         raise typer.Exit(code=1)
 
-    max_delivered = max(s.delivered for s in matching.values())
-    typer.echo(f"Mirror fidelity comparison for incident={incident}:")
+    prod_delivered = reports[0].prod_delivered if reports else 0
     typer.echo(
-        f"{'twin_id':<30} {'delivered':>10} {'dropped':>10} {'drop_ratio':>12} {'fidelity':>12}"
+        f"Mirror fidelity comparison for incident={incident} (prod delivered: {prod_delivered}):"
+    )
+    typer.echo(
+        f"{'twin_id':<30} {'delivered':>10} {'delta%':>10} {'drop_ratio':>12} {'fidelity':>12}"
     )
     typer.echo("-" * 78)
 
-    for _, s in sorted(matching.items()):
-        ratio = (s.delivered / max_delivered) if max_delivered > 0 else 1.0
-        delta = abs(1.0 - ratio)
-        fidelity = "OK" if delta <= 0.02 and s.drop_ratio < 0.05 else "DEGRADED"
-        ratio_str = f"{s.drop_ratio:>12.4f}"
-        typer.echo(f"{s.twin_id:<30} {s.delivered:>10} {s.dropped:>10} {ratio_str} {fidelity:>12}")
+    for r in reports:
+        delta_str = f"{r.delivered_delta_ratio * 100:>9.2f}%"
+        ratio_str = f"{r.drop_ratio:>12.4f}"
+        typer.echo(f"{r.twin_id:<30} {r.twin_delivered:>10} {delta_str} {ratio_str} {r.status:>12}")
+        if r.prod_paths:
+            for path, pcount in sorted(r.prod_paths.items()):
+                tcount = r.twin_paths.get(path, 0)
+                pfract = (pcount / prod_delivered * 100) if prod_delivered > 0 else 0.0
+                tfract = (tcount / r.twin_delivered * 100) if r.twin_delivered > 0 else 0.0
+                typer.echo(
+                    f"  Path: {path:<20} prod={pcount} ({pfract:.1f}%)"
+                    f"  twin={tcount} ({tfract:.1f}%)"
+                )
 
-    all_ok = (
-        all(
-            (abs(1.0 - (s.delivered / max_delivered)) <= 0.02 and s.drop_ratio < 0.05)
-            for s in matching.values()
-        )
-        if max_delivered > 0
-        else False
-    )
+    all_ok = all(r.status == "OK" for r in reports)
     if all_ok:
         typer.echo(
             "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        )
+    else:
+        typer.echo(
+            "Fidelity check: DEGRADED (traffic counts or path distributions diverge from prod)."
         )
 
 

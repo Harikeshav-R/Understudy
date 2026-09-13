@@ -411,3 +411,158 @@ async def test_in_memory_integration_against_mirror_gateway_app() -> None:
         await registry.unregister_twin("twin-int-1")
         all_after = await registry.get_all_stats()
         assert len(all_after) == 0
+
+
+@pytest.mark.asyncio
+async def test_get_prod_stats_and_error_handling() -> None:
+    """Verify get_prod_stats success and error branches."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "network-fail" in url_str:
+            raise httpx.RequestError("No network", request=request)
+        if "500-fail" in url_str:
+            return httpx.Response(500, text="Internal Error")
+        if "non-dict" in url_str:
+            return httpx.Response(200, json="string_not_dict")
+        if "corrupt-json" in url_str:
+            return httpx.Response(200, text="not-json")
+        return httpx.Response(
+            200,
+            json={"delivered": 100, "paths": {"/api/items": 80, "/healthz": 20}},
+        )
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        reg = HttpMirrorRegistry(base_url="http://mock-gw", client=client)
+        stats = await reg.get_prod_stats()
+        assert stats["delivered"] == 100
+        assert stats["paths"]["/api/items"] == 80
+
+        # Network error
+        reg_net = HttpMirrorRegistry(base_url="http://mock-gw/network-fail", client=client)
+        with pytest.raises(MirrorError, match="Failed to connect"):
+            await reg_net.get_prod_stats()
+
+        # 500 error
+        reg_500 = HttpMirrorRegistry(base_url="http://mock-gw/500-fail", client=client)
+        with pytest.raises(MirrorError, match="Failed to fetch production statistics"):
+            await reg_500.get_prod_stats()
+
+        # Non-dict
+        reg_non_dict = HttpMirrorRegistry(base_url="http://mock-gw/non-dict", client=client)
+        with pytest.raises(MirrorError, match="Malformed production statistics"):
+            await reg_non_dict.get_prod_stats()
+
+        # Corrupt JSON
+        reg_corrupt = HttpMirrorRegistry(base_url="http://mock-gw/corrupt-json", client=client)
+        with pytest.raises(MirrorError, match="Malformed production statistics"):
+            await reg_corrupt.get_prod_stats()
+
+
+@pytest.mark.asyncio
+async def test_get_twin_paths_and_error_handling() -> None:
+    """Verify get_twin_paths success, 404, 500, and malformed branches."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "network-fail" in url_str:
+            raise httpx.RequestError("No network", request=request)
+        if "404-fail" in url_str:
+            return httpx.Response(404, text="Not Found")
+        if "500-fail" in url_str:
+            return httpx.Response(500, text="Server Error")
+        if "corrupt-json" in url_str:
+            return httpx.Response(200, text="[broken")
+        return httpx.Response(200, json={"twin_id": "twin-1", "paths": {"/api/items": 50}})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        reg = HttpMirrorRegistry(base_url="http://mock-gw", client=client)
+        paths = await reg.get_twin_paths("twin-1")
+        assert paths["/api/items"] == 50
+
+        # 404
+        reg_404 = HttpMirrorRegistry(base_url="http://mock-gw/404-fail", client=client)
+        with pytest.raises(TwinNotFoundError):
+            await reg_404.get_twin_paths("twin-1")
+
+        # 500
+        reg_500 = HttpMirrorRegistry(base_url="http://mock-gw/500-fail", client=client)
+        with pytest.raises(MirrorError, match="Failed to fetch twin stats"):
+            await reg_500.get_twin_paths("twin-1")
+
+        # Network
+        reg_net = HttpMirrorRegistry(base_url="http://mock-gw/network-fail", client=client)
+        with pytest.raises(MirrorError, match="Failed to connect"):
+            await reg_net.get_twin_paths("twin-1")
+
+        # Corrupt
+        reg_corrupt = HttpMirrorRegistry(base_url="http://mock-gw/corrupt-json", client=client)
+        with pytest.raises(MirrorError, match="Malformed stats payload"):
+            await reg_corrupt.get_twin_paths("twin-1")
+
+
+@pytest.mark.asyncio
+async def test_get_fidelity_reports() -> None:
+    """Verify get_fidelity_reports fetches prod and twin paths and computes reports."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "/prod/stats" in url_str:
+            return httpx.Response(200, json={"delivered": 100, "paths": {"/api/items": 100}})
+        if request.url.path == "/twins":
+            return httpx.Response(
+                200,
+                json={
+                    "twin_inc_1_0": {"twin_id": "twin_inc_1_0", "delivered": 100, "dropped": 0},
+                    "twin_other_0": {"twin_id": "twin_other_0", "delivered": 100, "dropped": 0},
+                },
+            )
+        if "/twins/twin_inc_1_0/stats" in url_str:
+            return httpx.Response(
+                200,
+                json={"twin_id": "twin_inc_1_0", "paths": {"/api/items": 100}},
+            )
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        reg = HttpMirrorRegistry(base_url="http://mock-gw", client=client)
+        reports = await reg.get_fidelity_reports("inc_1")
+        assert len(reports) == 1
+        assert reports[0].twin_id == "twin_inc_1_0"
+        assert reports[0].status == "OK"
+        assert reports[0].path_distribution_match is True
+
+        # Non-matching incident returns empty list
+        empty_reports = await reg.get_fidelity_reports("nonexistent")
+        assert empty_reports == []
+
+
+@pytest.mark.asyncio
+async def test_get_fidelity_reports_fallbacks() -> None:
+    """Verify get_fidelity_reports falls back gracefully when prod or twin paths fail."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if "/prod/stats" in url_str:
+            return httpx.Response(500, text="Internal Error")
+        if request.url.path == "/twins":
+            return httpx.Response(
+                200,
+                json={
+                    "twin_inc_2_0": {"twin_id": "twin_inc_2_0", "delivered": 100, "dropped": 0},
+                },
+            )
+        if "/twins/twin_inc_2_0/stats" in url_str:
+            return httpx.Response(500, text="Internal Error")
+        return httpx.Response(404)
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport) as client:
+        reg = HttpMirrorRegistry(base_url="http://mock-gw", client=client)
+        reports = await reg.get_fidelity_reports("inc_2")
+        assert len(reports) == 1
+        assert reports[0].twin_id == "twin_inc_2_0"
+        assert reports[0].status == "OK"

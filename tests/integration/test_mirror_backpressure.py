@@ -12,6 +12,7 @@ import subprocess
 import httpx
 import pytest
 
+from understudy.common.clock import SystemClock
 from understudy.contracts.twin import TwinHandle
 from understudy.mirror.registry import HttpMirrorRegistry
 
@@ -47,7 +48,7 @@ def _cluster_and_gateway_available() -> bool:
             check=False,
         )
         return pod_res.returncode == 0 and "Running" in pod_res.stdout
-    except Exception:
+    except (subprocess.SubprocessError, OSError):
         return False
 
 
@@ -65,9 +66,7 @@ async def test_live_mirror_gateway_backpressure() -> None:
         assert is_healthy, "Mirror gateway healthz probe failed"
 
         # Register a test twin pointing to an unreachable port
-        from datetime import UTC, datetime
-
-        now = datetime.now(UTC)
+        now = SystemClock().now()
         fake_twin = TwinHandle(
             twin_id="twin_int_backpressure_0",
             incident_id="int_backpressure",
@@ -86,10 +85,11 @@ async def test_live_mirror_gateway_backpressure() -> None:
             incident_id=fake_twin.incident_id,
         )
 
-        # Send requests through mirror gateway to prod
+        # Send requests through mirror gateway proxy route to prod
+        headers = {"Authorization": "Bearer valid-token"}
         async with httpx.AsyncClient(base_url="http://localhost:8080", timeout=5.0) as client:
             for _ in range(20):
-                resp = await client.get("/healthz")
+                resp = await client.get("/api/items", headers=headers)
                 assert resp.status_code == 200
 
         # Check stats: requests to unreachable twin should be dropped/timing out
@@ -97,6 +97,13 @@ async def test_live_mirror_gateway_backpressure() -> None:
         assert stats.twin_id == fake_twin.twin_id
         # Delivery cannot succeed to non-routable IP
         assert stats.delivered == 0
+        assert stats.dropped > 0
+        assert stats.drop_ratio > 0.0
+
+        # Verify prod proxy tracked requests
+        prod_stats = await registry.get_prod_stats()
+        assert prod_stats["delivered"] >= 20
+        assert prod_stats["paths"].get("/api/items", 0) >= 20
 
         # Clean up
         await registry.unregister_twin(fake_twin.twin_id)

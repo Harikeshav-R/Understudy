@@ -1129,3 +1129,36 @@ def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
     assert "Error fetching stats for comparison: Connection refused" in (
         res_err.stderr or res_err.stdout
     )
+
+
+def test_cli_mirror_compare_with_paths(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror compare displays path breakdown when paths are present."""
+    from understudy.mirror.fidelity import TwinFidelityReport
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_reports(_self: Any, _incident: str) -> list[TwinFidelityReport]:
+        return [
+            TwinFidelityReport(
+                twin_id="twin_inc_1_0",
+                prod_delivered=100,
+                twin_delivered=100,
+                delivered_delta_ratio=0.0,
+                drop_ratio=0.0,
+                path_distribution_match=True,
+                status="OK",
+                prod_paths={"/api/items": 80, "/healthz": 20},
+                twin_paths={"/api/items": 80, "/healthz": 20},
+            )
+        ]
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_fidelity_reports", _mock_reports)
+    res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_1"])
+    assert res.exit_code == 0
+    assert "twin_inc_1_0" in res.stdout
+    assert "Path: /api/items" in res.stdout
+    assert "prod=80 (80.0%)" in res.stdout
+    assert "twin=80 (80.0%)" in res.stdout
+    assert (
+        "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        in res.stdout
+    )
