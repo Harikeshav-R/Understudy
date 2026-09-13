@@ -40,6 +40,7 @@ from understudy.common.ids import (
     new_alert_id,
     new_incident_id,
     new_plan_id,
+    new_playbook_id,
     new_run_id,
     new_twin_id,
 )
@@ -85,6 +86,7 @@ __all__ = [
     "new_alert_id",
     "new_incident_id",
     "new_plan_id",
+    "new_playbook_id",
     "new_run_id",
     "new_twin_id",
     "reset_settings",

@@ -383,13 +383,26 @@ async def test_postgres_playbook_store_search_and_counters(sample_plan: Remediat
     assert len(listed_res) == 1
     assert listed_res[0].playbook_id == "pb_001"
 
-    # increment_success
-    await store.increment_success("pb_001")
-    assert db.session_mock.commit.await_count >= 1
+    # get_playbook_by_signature - found
+    mock_result.scalar_one_or_none.return_value = mock_model
+    sig_res = await store.get_playbook_by_signature("sig text")
+    assert sig_res is not None
+    assert sig_res.playbook_id == "pb_001"
 
-    # increment_failure
-    await store.increment_failure("pb_001")
+    # get_playbook_by_signature - not found
+    mock_result.scalar_one_or_none.return_value = None
+    sig_none = await store.get_playbook_by_signature("unknown")
+    assert sig_none is None
+
+    # increment_success without and with evidence_run_id
+    await store.increment_success("pb_001")
+    await store.increment_success("pb_001", evidence_run_id="run_100")
     assert db.session_mock.commit.await_count >= 2
+
+    # increment_failure without and with evidence_run_id
+    await store.increment_failure("pb_001")
+    await store.increment_failure("pb_001", evidence_run_id="run_fail")
+    assert db.session_mock.commit.await_count >= 4
 
 
 def test_postgres_playbook_store_default_init() -> None:

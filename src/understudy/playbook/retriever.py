@@ -138,11 +138,29 @@ class PlaybookRetriever(PlaybookLibrary):
         evidence_run_id: str,
     ) -> None:
         """Record the rehearsal or actuation outcome for a matched playbook."""
-        _ = evidence_run_id
         if success:
-            await self._store.increment_success(playbook_id)
+            await self._store.increment_success(playbook_id, evidence_run_id=evidence_run_id)
         else:
-            await self._store.increment_failure(playbook_id)
+            await self._store.increment_failure(playbook_id, evidence_run_id=evidence_run_id)
+
+    async def record_resolved_run(
+        self,
+        context: IncidentContext,
+        plan: RemediationPlan,
+        run_id: str,
+        origin: str = "incident",
+    ) -> str:
+        """Upsert a playbook on successful run resolution, keyed by incident signature."""
+        from understudy.playbook.write import write_playbook
+
+        return await write_playbook(
+            context=context,
+            plan=plan,
+            run_id=run_id,
+            store=self._store,
+            embedder=self._embedder,
+            origin=origin,
+        )
 
 
 __all__ = [

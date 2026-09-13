@@ -92,8 +92,17 @@ class FakePlaybookStore(PlaybookStore):
         plan: RemediationPlan,
         evidence_refs: list[str],
         origin: str,
+        successes: int = 0,
+        failures: int = 0,
     ) -> None:
         """Save a playbook."""
+        existing = self._playbooks.get(playbook_id)
+        current_successes = (
+            existing["successes"] if existing is not None and successes == 0 else successes
+        )
+        current_failures = (
+            existing["failures"] if existing is not None and failures == 0 else failures
+        )
         self._playbooks[playbook_id] = {
             "playbook_id": playbook_id,
             "failure_class": failure_class,
@@ -102,8 +111,8 @@ class FakePlaybookStore(PlaybookStore):
             "plan": plan,
             "evidence_refs": list(evidence_refs),
             "origin": origin,
-            "successes": 0,
-            "failures": 0,
+            "successes": current_successes,
+            "failures": current_failures,
         }
 
     async def get_playbook(self, playbook_id: str) -> RemediationPlan | None:
@@ -112,6 +121,28 @@ class FakePlaybookStore(PlaybookStore):
         if record is None:
             return None
         return record["plan"]
+
+    async def get_playbook_by_signature(self, signature_text: str) -> PlaybookSearchResult | None:
+        """Retrieve playbook record matching the exact signature text if present."""
+        for record in self._playbooks.values():
+            if record["signature_text"] == signature_text:
+                fc_val = (
+                    record["failure_class"].value
+                    if hasattr(record["failure_class"], "value")
+                    else str(record["failure_class"])
+                )
+                return PlaybookSearchResult(
+                    playbook_id=record["playbook_id"],
+                    failure_class=fc_val,
+                    signature_text=record["signature_text"],
+                    similarity=1.0,
+                    plan=record["plan"],
+                    evidence_refs=list(record["evidence_refs"]),
+                    successes=record["successes"],
+                    failures=record["failures"],
+                    origin=record["origin"],
+                )
+        return None
 
     async def search_playbooks(
         self, embedding: list[float], limit: int = 5
@@ -176,15 +207,25 @@ class FakePlaybookStore(PlaybookStore):
             )
         return results
 
-    async def increment_success(self, playbook_id: str) -> None:
-        """Increment success counter."""
+    async def increment_success(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment success counter and optionally append evidence run ID."""
         if playbook_id in self._playbooks:
             self._playbooks[playbook_id]["successes"] += 1
+            if (
+                evidence_run_id is not None
+                and evidence_run_id not in self._playbooks[playbook_id]["evidence_refs"]
+            ):
+                self._playbooks[playbook_id]["evidence_refs"].append(evidence_run_id)
 
-    async def increment_failure(self, playbook_id: str) -> None:
-        """Increment failure counter."""
+    async def increment_failure(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment failure counter and optionally append evidence run ID."""
         if playbook_id in self._playbooks:
             self._playbooks[playbook_id]["failures"] += 1
+            if (
+                evidence_run_id is not None
+                and evidence_run_id not in self._playbooks[playbook_id]["evidence_refs"]
+            ):
+                self._playbooks[playbook_id]["evidence_refs"].append(evidence_run_id)
 
 
 class FakeEvalStore(EvalStore):

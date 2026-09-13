@@ -169,11 +169,38 @@ async def test_fake_playbook_store() -> None:
     assert len(listed) == 1
     assert listed[0].playbook_id == "pb_1"
 
-    await store.increment_success("pb_1")
-    await store.increment_failure("pb_1")
+    # get_playbook_by_signature
+    by_sig = await store.get_playbook_by_signature("sig text")
+    assert by_sig is not None
+    assert by_sig.playbook_id == "pb_1"
+    assert await store.get_playbook_by_signature("unknown") is None
+
+    # increment with evidence_run_id
+    await store.increment_success("pb_1", evidence_run_id="run_2")
+    await store.increment_success("pb_1", evidence_run_id="run_2")  # duplicate
+    assert (await store.list_playbooks())[0].successes == 2
+    assert (await store.list_playbooks())[0].evidence_refs == ["run_1", "run_2"]
+
+    await store.increment_failure("pb_1", evidence_run_id="run_fail")
+    await store.increment_failure("pb_1", evidence_run_id="run_fail")  # duplicate
+    assert (await store.list_playbooks())[0].failures == 2
+    assert "run_fail" in (await store.list_playbooks())[0].evidence_refs
+
     # Coverage for non-existent key
-    await store.increment_success("pb_nonexistent")
-    await store.increment_failure("pb_nonexistent")
+    await store.increment_success("pb_nonexistent", evidence_run_id="run_x")
+    await store.increment_failure("pb_nonexistent", evidence_run_id="run_x")
+
+    # Update existing playbook preserves counters
+    await store.save_playbook(
+        playbook_id="pb_1",
+        failure_class=FailureClass.CONFIG_DRIFT,
+        signature_text="sig text",
+        embedding=[0.1, 0.2],
+        plan=plan,
+        evidence_refs=["run_1", "run_2"],
+        origin="incident",
+    )
+    assert (await store.list_playbooks())[0].successes == 2
 
 
 @pytest.mark.asyncio

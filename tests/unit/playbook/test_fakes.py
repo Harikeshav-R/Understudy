@@ -93,3 +93,26 @@ async def test_fake_playbook_library_empty_candidate() -> None:
     assert match_res.matched is False
     assert "No candidate playbooks matched" in match_res.confirmation_reason
     assert match_res.plan is None
+
+
+@pytest.mark.asyncio
+async def test_fake_playbook_library_record_resolved_run() -> None:
+    from understudy.contracts.plan import ActionParams, RemediationPlan
+
+    ctx = _make_context()
+    lib = FakePlaybookLibrary()
+    plan = RemediationPlan(
+        plan_id="p1",
+        candidate_index=0,
+        action=ActionType.REVERT_CONFIG,
+        params=ActionParams(workload="data-service"),
+        target_resources=[],
+        declared_blast_set=["data-service"],
+        rationale="revert config drift",
+        origin="planner",
+    )
+
+    pb_id = await lib.record_resolved_run(ctx, plan, "run_f1")
+    assert pb_id.startswith("pb_")
+    assert len(lib.written_playbooks) == 1
+    assert lib.written_playbooks[0]["run_id"] == "run_f1"

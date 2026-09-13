@@ -20,6 +20,10 @@ from understudy.playbook.signature import (
     build_signature_text,
     deterministic_signature_embedding,
 )
+from understudy.playbook.write import (
+    PlaybookWriter,
+    write_playbook,
+)
 
 __all__ = [
     "ConfirmationResult",
@@ -29,9 +33,11 @@ __all__ = [
     "PlaybookLibrary",
     "PlaybookMatchResult",
     "PlaybookRetriever",
+    "PlaybookWriter",
     "build_confirmation_prompt",
     "build_signature_text",
     "deterministic_signature_embedding",
     "normalize_vector",
     "parse_confirmation_response",
+    "write_playbook",
 ]

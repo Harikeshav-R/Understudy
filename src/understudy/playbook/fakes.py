@@ -52,6 +52,7 @@ class FakePlaybookLibrary(PlaybookLibrary):
         else:
             self._candidate = candidate if isinstance(candidate, RemediationPlan) else None
         self.recorded_outcomes: list[dict[str, object]] = []
+        self.written_playbooks: list[dict[str, object]] = []
 
     async def retrieve_candidate(self, incident: IncidentContext) -> RemediationPlan | None:
         """Return candidate playbook if available."""
@@ -96,3 +97,23 @@ class FakePlaybookLibrary(PlaybookLibrary):
         self.recorded_outcomes.append(
             {"playbook_id": playbook_id, "success": success, "evidence_run_id": evidence_run_id}
         )
+
+    async def record_resolved_run(
+        self,
+        context: IncidentContext,
+        plan: RemediationPlan,
+        run_id: str,
+        origin: str = "incident",
+    ) -> str:
+        """Record resolved run in fake playbook library."""
+        pb_id = plan.playbook_id or f"pb_fake_{len(self.written_playbooks) + 1}"
+        self.written_playbooks.append(
+            {
+                "playbook_id": pb_id,
+                "context": context,
+                "plan": plan,
+                "run_id": run_id,
+                "origin": origin,
+            }
+        )
+        return pb_id

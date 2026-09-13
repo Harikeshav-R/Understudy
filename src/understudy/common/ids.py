@@ -59,3 +59,8 @@ def new_run_id() -> str:
 def new_alert_id() -> str:
     """Generate a new unique alert identifier."""
     return f"alt_{generate_ulid()}"
+
+
+def new_playbook_id() -> str:
+    """Generate a new unique playbook identifier."""
+    return f"pb_{generate_ulid().lower()}"

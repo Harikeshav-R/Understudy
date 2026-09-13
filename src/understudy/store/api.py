@@ -74,12 +74,18 @@ class PlaybookStore(Protocol):
         plan: RemediationPlan,
         evidence_refs: list[str],
         origin: str,
+        successes: int = 0,
+        failures: int = 0,
     ) -> None:
         """Save a new or updated playbook template."""
         raise NotImplementedError
 
     async def get_playbook(self, playbook_id: str) -> RemediationPlan | None:
         """Retrieve a playbook plan template by identifier."""
+        raise NotImplementedError
+
+    async def get_playbook_by_signature(self, signature_text: str) -> PlaybookSearchResult | None:
+        """Retrieve playbook record matching the exact signature text if present."""
         raise NotImplementedError
 
     async def search_playbooks(
@@ -98,12 +104,12 @@ class PlaybookStore(Protocol):
         """List all stored playbooks with operational metadata."""
         raise NotImplementedError
 
-    async def increment_success(self, playbook_id: str) -> None:
-        """Increment the successful resolution counter for a playbook."""
+    async def increment_success(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment the successful resolution counter and optionally append evidence run ID."""
         raise NotImplementedError
 
-    async def increment_failure(self, playbook_id: str) -> None:
-        """Increment the failure counter for a playbook."""
+    async def increment_failure(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment the failure counter and optionally append evidence run ID."""
         raise NotImplementedError
 
 

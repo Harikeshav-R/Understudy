@@ -143,7 +143,7 @@ async def test_retriever_match_playbook_confirmed() -> None:
 
     # Test record_outcome (success)
     await retriever.record_outcome("pb_rollback_01", success=True, evidence_run_id="run_100")
-    store.increment_success.assert_awaited_once_with("pb_rollback_01")
+    store.increment_success.assert_awaited_once_with("pb_rollback_01", evidence_run_id="run_100")
 
 
 @pytest.mark.asyncio
@@ -202,4 +202,23 @@ async def test_retriever_match_playbook_rejected_by_confirmer() -> None:
 
     # Test record_outcome (failure)
     await retriever.record_outcome("pb_rollback_01", success=False, evidence_run_id="run_200")
-    store.increment_failure.assert_awaited_once_with("pb_rollback_01")
+    store.increment_failure.assert_awaited_once_with("pb_rollback_01", evidence_run_id="run_200")
+
+
+@pytest.mark.asyncio
+async def test_retriever_record_resolved_run() -> None:
+    ctx = _make_context()
+    plan = _make_plan()
+    store = FakePlaybookStore()
+    retriever = PlaybookRetriever(store=store)
+
+    pb_id = await retriever.record_resolved_run(
+        context=ctx,
+        plan=plan,
+        run_id="run_resolved_001",
+    )
+    assert pb_id.startswith("pb_")
+
+    stored = await store.get_playbook(pb_id)
+    assert stored is not None
+    assert "Learned from successful run run_resolved_001" in stored.rationale

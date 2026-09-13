@@ -198,7 +198,7 @@ terminal paths. Neither stream blocked the other.
 - [x] B3.3 **[P0]** `NO_ACTION` always appended if absent
 - [x] B3.4 **[P0]** Deterministic inverse synthesis per action type (never LLM-generated)
 - [x] B3.5 **[P1]** Playbook signature, embeddings, pgvector retrieval, LLM confirmation
-- [ ] B3.6 **[P1]** Playbook write-back with evidence refs and success counters
+- [x] B3.6 **[P1]** Playbook write-back with evidence refs and success counters
 
 **Checkpoint B3**
 - [ ] `ust plan` returns N+1 plans; every one validates; every one has an inverse except NO_ACTION

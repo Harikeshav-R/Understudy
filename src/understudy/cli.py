@@ -1210,5 +1210,122 @@ def playbook_list(
         )
 
 
+@playbook_app.command("write")
+def playbook_write(
+    context_file: Annotated[
+        Path,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON fixture.",
+        ),
+    ],
+    plan_file: Annotated[
+        Path,
+        typer.Option(
+            "--plan",
+            "-p",
+            help="Path to RemediationPlan JSON fixture.",
+        ),
+    ],
+    run_id: Annotated[
+        str,
+        typer.Option(
+            "--run-id",
+            "-r",
+            help="Run identifier of the successful resolution.",
+        ),
+    ],
+    origin: Annotated[
+        str,
+        typer.Option(
+            "--origin",
+            help="Origin of the resolution ('incident' or 'shadow').",
+        ),
+    ] = "incident",
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use in-memory fake store.",
+        ),
+    ] = False,
+) -> None:
+    """Upsert a playbook on successful run resolution, keyed by incident signature."""
+    import asyncio
+    import json
+
+    from understudy.contracts.incident import IncidentContext
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.playbook.write import write_playbook
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    if not context_file.exists():
+        typer.echo(f"Context file not found: {context_file}", err=True)
+        raise typer.Exit(code=1)
+
+    if not plan_file.exists():
+        typer.echo(f"Plan file not found: {plan_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        context = IncidentContext.model_validate_json(context_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        typer.echo(f"Failed to parse IncidentContext: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        plan = RemediationPlan.model_validate_json(plan_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        typer.echo(f"Failed to parse RemediationPlan: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _write() -> str:
+        store: FakePlaybookStore | PostgresPlaybookStore
+        if fake:
+            store = FakePlaybookStore()
+            seed_path = Path("fixtures/playbooks_seed.json")
+            if seed_path.exists():
+                from understudy.contracts.enums import FailureClass
+                from understudy.playbook.signature import deterministic_signature_embedding
+
+                seed_data = json.loads(seed_path.read_text(encoding="utf-8"))
+                for s in seed_data:
+                    fc_raw = s["failure_class"]
+                    fc = (
+                        FailureClass(fc_raw)
+                        if fc_raw in FailureClass._value2member_map_
+                        else fc_raw
+                    )
+                    await store.save_playbook(
+                        playbook_id=s["playbook_id"],
+                        failure_class=fc,
+                        signature_text=s["signature_text"],
+                        embedding=s.get("embedding")
+                        or deterministic_signature_embedding(s["signature_text"]),
+                        plan=RemediationPlan.model_validate(s["plan"]),
+                        evidence_refs=s.get("evidence_refs", []),
+                        origin=s.get("origin", "seed"),
+                    )
+        else:
+            store = PostgresPlaybookStore()
+
+        return await write_playbook(
+            context=context,
+            plan=plan,
+            run_id=run_id,
+            store=store,
+            origin=origin,
+        )
+
+    try:
+        pb_id = asyncio.run(_write())
+        typer.echo(f"Playbook write-back completed: {pb_id}")
+    except Exception as exc:
+        typer.echo(f"Playbook write error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 if __name__ == "__main__":
     app()
