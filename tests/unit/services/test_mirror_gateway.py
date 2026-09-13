@@ -915,3 +915,56 @@ async def test_mirror_gateway_proxy_prod_errors_record_latency(client: httpx.Asy
     assert metrics_resp.status_code == status.HTTP_200_OK
     text = metrics_resp.text
     assert 'target="prod"' in text
+
+
+@pytest.mark.asyncio
+async def test_mirror_gateway_prod_stats_and_path_tracking(client: httpx.AsyncClient) -> None:
+    """Gateway tracks production requests and path distributions, exposed via /prod/stats."""
+    mock_http = AsyncMock(spec=httpx.AsyncClient)
+    mock_http.request = AsyncMock(return_value=httpx.Response(200, content=b'{"status":"ok"}'))
+    app.state.http_client = mock_http
+    manager: MirrorGatewayManager = app.state.mirror_manager
+    manager.client = mock_http
+
+    # Register a twin to receive mirrored traffic
+    reg_resp = await client.post(
+        "/twins",
+        json={"twin_id": "path-twin", "base_url": "http://twin:8080", "incident_id": "inc_paths"},
+    )
+    assert reg_resp.status_code == status.HTTP_201_CREATED
+
+    # Send proxy requests through different paths
+    await client.get("/api/items")
+    await client.get("/api/items")
+    await client.post("/api/checkout", json={"order_id": "123"})
+
+    # Check /prod/stats
+    prod_resp = await client.get("/prod/stats")
+    assert prod_resp.status_code == status.HTTP_200_OK
+    prod_data = prod_resp.json()
+    assert prod_data["twin_id"] == "prod"
+    assert prod_data["delivered"] >= 3
+    assert prod_data["paths"]["/api/items"] >= 2
+    assert prod_data["paths"]["/api/checkout"] >= 1
+
+    # Check via get_stats("prod")
+    manager_prod = manager.get_stats("prod")
+    assert manager_prod is not None
+
+    assert manager_prod.twin_id == "prod"
+    assert manager_prod.paths["/api/items"] >= 2
+
+    # Wait for twin queue to drain
+    twin = manager.registered_twins["path-twin"]
+    for _ in range(50):
+        if twin.delivered >= 3:
+            break
+        await asyncio.sleep(0.02)
+
+    twin_stats_resp = await client.get("/twins/path-twin/stats")
+    assert twin_stats_resp.status_code == status.HTTP_200_OK
+    twin_data = twin_stats_resp.json()
+    assert twin_data["paths"]["/api/items"] >= 2
+    assert twin_data["paths"]["/api/checkout"] >= 1
+
+    await client.delete("/twins/path-twin")

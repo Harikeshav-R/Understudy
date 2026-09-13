@@ -19,6 +19,7 @@ import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from services._common.headers import strip_hop_by_hop_headers
 from services._common.health import setup_health_routes
 from services._common.logging import get_logger
 from services._common.metrics import setup_metrics
@@ -115,7 +116,10 @@ def get_target_prod_url() -> str:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage lifecycle of shared HTTP client and MirrorGatewayManager."""
     settings = get_services_settings().mirror_gateway
-    limits = httpx.Limits(max_connections=200, max_keepalive_connections=50)
+    limits = httpx.Limits(
+        max_connections=settings.max_connections,
+        max_keepalive_connections=settings.max_keepalive_connections,
+    )
     client = httpx.AsyncClient(timeout=settings.http_timeout_seconds, limits=limits)
     metrics: MirrorGatewayMetrics | None = getattr(app.state, "mirror_metrics", None)
     manager = MirrorGatewayManager(
@@ -225,6 +229,18 @@ async def get_all_twins_stats() -> dict[str, MirrorStats]:
     return manager.get_all_stats()
 
 
+@app.get(
+    "/prod/stats",
+    response_model=MirrorStats,
+    tags=["Twins"],
+    summary="Fetch delivery and path statistics for production proxy",
+)
+async def get_prod_stats() -> MirrorStats:
+    """Fetch delivery and path statistics for production proxy."""
+    manager: MirrorGatewayManager = app.state.mirror_manager
+    return manager.get_prod_stats()
+
+
 @app.api_route(
     "/{path:path}",
     methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
@@ -236,11 +252,7 @@ async def proxy_request(request: Request, path: str) -> Response:
     body = await request.body()
 
     # Filter hop-by-hop headers for forwarding
-    headers = dict(request.headers)
-    for h in ["host", "content-length", "connection", "transfer-encoding"]:
-        for k in list(headers.keys()):
-            if k.lower() == h:
-                del headers[k]
+    headers = strip_hop_by_hop_headers(request.headers)
 
     # Asynchronous fan-out to registered twins (fire-and-forget, never blocks prod)
     mirrored = MirroredRequest(
@@ -254,6 +266,7 @@ async def proxy_request(request: Request, path: str) -> Response:
     manager.dispatch_to_twins(mirrored)
 
     # Synchronous forward to production
+    manager.record_prod_request(request.url.path)
     prod_base = get_target_prod_url()
     target_url = f"{prod_base}/{path.lstrip('/')}"
     if request.url.query:

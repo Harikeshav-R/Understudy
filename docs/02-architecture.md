@@ -436,7 +436,10 @@ section) and layered from `config/services.yaml` → an optional, gitignored
 | `mirror_gateway` | `queue_maxsize` | `1000` | `MIRROR_QUEUE_MAXSIZE` |
 | `mirror_gateway` | `worker_timeout_seconds` | `2.0` | `MIRROR_WORKER_TIMEOUT_SECONDS` |
 | `mirror_gateway` | `http_timeout_seconds` | `5.0` | `MIRROR_HTTP_TIMEOUT_SECONDS` |
+| `mirror_gateway` | `max_connections` | `200` | `MIRROR_MAX_CONNECTIONS` |
+| `mirror_gateway` | `max_keepalive_connections` | `50` | `MIRROR_MAX_KEEPALIVE_CONNECTIONS` |
 | `metrics` | `histogram_buckets` | see `config/services.yaml` | none (edit the YAML) |
+
 
 `edge_gateway.http_timeout_seconds`, `auth_service.token_cache_max_size`,
 `worker.poll_interval_seconds`, and `faults.injection_seed` keep the exact env var

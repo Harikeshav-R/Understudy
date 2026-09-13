@@ -93,6 +93,8 @@ class MirrorGatewaySettings(BaseModel):
     queue_maxsize: int = 1000  # env: MIRROR_QUEUE_MAXSIZE
     worker_timeout_seconds: float = 2.0  # env: MIRROR_WORKER_TIMEOUT_SECONDS
     http_timeout_seconds: float = 5.0  # env: MIRROR_HTTP_TIMEOUT_SECONDS
+    max_connections: int = 200  # env: MIRROR_MAX_CONNECTIONS
+    max_keepalive_connections: int = 50  # env: MIRROR_MAX_KEEPALIVE_CONNECTIONS
 
 
 class MetricsSettings(BaseModel):
@@ -162,6 +164,8 @@ _ENV_OVERRIDES: dict[tuple[str, str], tuple[str, type]] = {
     ("mirror_gateway", "queue_maxsize"): ("MIRROR_QUEUE_MAXSIZE", int),
     ("mirror_gateway", "worker_timeout_seconds"): ("MIRROR_WORKER_TIMEOUT_SECONDS", float),
     ("mirror_gateway", "http_timeout_seconds"): ("MIRROR_HTTP_TIMEOUT_SECONDS", float),
+    ("mirror_gateway", "max_connections"): ("MIRROR_MAX_CONNECTIONS", int),
+    ("mirror_gateway", "max_keepalive_connections"): ("MIRROR_MAX_KEEPALIVE_CONNECTIONS", int),
 }
 
 

@@ -37,6 +37,8 @@ mirror_gateway:
   queue_maxsize: 1000
   worker_timeout_seconds: 2.0
   http_timeout_seconds: 5.0
+  max_connections: 200
+  max_keepalive_connections: 50
 
 metrics:
   histogram_buckets:

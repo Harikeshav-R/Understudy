@@ -32,6 +32,8 @@ def test_default_settings_loading() -> None:
     assert settings.mirror_gateway.queue_maxsize == 1000
     assert settings.mirror_gateway.worker_timeout_seconds == 2.0
     assert settings.mirror_gateway.http_timeout_seconds == 5.0
+    assert settings.mirror_gateway.max_connections == 200
+    assert settings.mirror_gateway.max_keepalive_connections == 50
     assert settings.metrics.histogram_buckets[0] == 0.005
 
 
@@ -106,6 +108,8 @@ def test_env_override_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MIRROR_QUEUE_MAXSIZE", "500")
     monkeypatch.setenv("MIRROR_WORKER_TIMEOUT_SECONDS", "3.5")
     monkeypatch.setenv("MIRROR_HTTP_TIMEOUT_SECONDS", "4.0")
+    monkeypatch.setenv("MIRROR_MAX_CONNECTIONS", "150")
+    monkeypatch.setenv("MIRROR_MAX_KEEPALIVE_CONNECTIONS", "30")
 
     settings = load_services_settings(
         config_path=Path("nonexistent-default.yaml"),
@@ -133,6 +137,8 @@ def test_env_override_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.mirror_gateway.queue_maxsize == 500
     assert settings.mirror_gateway.worker_timeout_seconds == 3.5
     assert settings.mirror_gateway.http_timeout_seconds == 4.0
+    assert settings.mirror_gateway.max_connections == 150
+    assert settings.mirror_gateway.max_keepalive_connections == 30
 
 
 def test_invalid_env_value_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -162,3 +168,5 @@ def test_real_config_services_yaml_loads() -> None:
     assert settings.mirror_gateway.queue_maxsize == 1000
     assert settings.mirror_gateway.worker_timeout_seconds == 2.0
     assert settings.mirror_gateway.http_timeout_seconds == 5.0
+    assert settings.mirror_gateway.max_connections == 200
+    assert settings.mirror_gateway.max_keepalive_connections == 50

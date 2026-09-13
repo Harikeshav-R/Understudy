@@ -11,12 +11,13 @@ Conforms to ADR-012, ADR-013, and build-plan step A3.1:
 
 import asyncio
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from services._common.headers import strip_hop_by_hop_headers
 from services._common.logging import get_logger
 from services.mirror_gateway.metrics import MirrorGatewayMetrics
 
@@ -35,7 +36,7 @@ class MirroredRequest:
 
 
 class MirrorStats(BaseModel):
-    """Mirror statistics for a registered twin."""
+    """Mirror statistics for a registered twin or production target."""
 
     model_config = ConfigDict(frozen=True)
 
@@ -43,6 +44,7 @@ class MirrorStats(BaseModel):
     delivered: int = 0
     dropped: int = 0
     drop_ratio: float = 0.0
+    paths: dict[str, int] = Field(default_factory=dict)
 
 
 # Backward-compatible alias
@@ -61,6 +63,7 @@ class TwinRegistration:
     delivered: int = 0
     dropped: int = 0
     worker_timeout_seconds: float = 2.0
+    paths: dict[str, int] = field(default_factory=dict)
 
 
 class MirrorGatewayManager:
@@ -78,11 +81,28 @@ class MirrorGatewayManager:
         self.worker_timeout_seconds = worker_timeout_seconds
         self.metrics = metrics if metrics is not None else MirrorGatewayMetrics()
         self._twins: dict[str, TwinRegistration] = {}
+        self._prod_delivered: int = 0
+        self._prod_paths: dict[str, int] = {}
 
     @property
     def registered_twins(self) -> dict[str, TwinRegistration]:
         """Return view of registered twins."""
         return self._twins
+
+    def record_prod_request(self, path: str) -> None:
+        """Record a proxied production request and track path distribution."""
+        self._prod_delivered += 1
+        self._prod_paths[path] = self._prod_paths.get(path, 0) + 1
+
+    def get_prod_stats(self) -> MirrorStats:
+        """Return traffic delivery and path statistics for production."""
+        return MirrorStats(
+            twin_id="prod",
+            delivered=self._prod_delivered,
+            dropped=0,
+            drop_ratio=0.0,
+            paths=dict(self._prod_paths),
+        )
 
     def register_twin(
         self,
@@ -159,10 +179,13 @@ class MirrorGatewayManager:
             delivered=twin.delivered,
             dropped=twin.dropped,
             drop_ratio=drop_ratio,
+            paths=dict(twin.paths),
         )
 
     def get_stats(self, twin_id: str) -> MirrorStats | None:
-        """Retrieve delivery and drop statistics for a registered twin."""
+        """Retrieve delivery and drop statistics for a registered twin or prod."""
+        if twin_id == "prod":
+            return self.get_prod_stats()
         twin = self._twins.get(twin_id)
         if twin is None:
             return None
@@ -191,19 +214,16 @@ class MirrorGatewayManager:
                 start_time = time.monotonic()
                 is_cancelled = False
                 try:
-                    headers = dict(req.headers)
+                    headers = strip_hop_by_hop_headers(req.headers)
                     headers["X-Understudy-Shadow"] = "1"
                     headers["X-Understudy-Twin"] = twin.twin_id
-                    if twin.incident_id:
-                        headers["X-Understudy-Incident"] = twin.incident_id
-                    elif "x-understudy-incident" not in {k.lower() for k in headers}:
-                        headers["X-Understudy-Incident"] = ""
-
-                    # Filter hop-by-hop headers
-                    for h in ["host", "content-length", "connection", "transfer-encoding"]:
-                        for k in list(headers.keys()):
-                            if k.lower() == h:
-                                del headers[k]
+                    incident_val = twin.incident_id
+                    if not incident_val:
+                        for k, v in req.headers.items():
+                            if k.lower() == "x-understudy-incident":
+                                incident_val = v
+                                break
+                    headers["X-Understudy-Incident"] = incident_val or ""
 
                     url = f"{twin.base_url.rstrip('/')}/{req.path.lstrip('/')}"
                     if req.query:
@@ -217,11 +237,12 @@ class MirrorGatewayManager:
                         timeout=twin.worker_timeout_seconds,
                     )
                     twin.delivered += 1
+                    twin.paths[req.path] = twin.paths.get(req.path, 0) + 1
                     self.metrics.record_delivered(twin.twin_id)
                 except asyncio.CancelledError:
                     is_cancelled = True
                     raise
-                except Exception as exc:
+                except (TimeoutError, httpx.HTTPError, OSError, RuntimeError) as exc:
                     logger.warning(
                         "mirror_drain_error",
                         twin_id=twin.twin_id,
