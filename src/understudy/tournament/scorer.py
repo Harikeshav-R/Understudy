@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from understudy.common.config import get_settings
 from understudy.common.errors import ConfigError
@@ -52,7 +52,11 @@ class ScoringConfig(BaseModel):
     violation_ceiling: int = 5
     mirror_drop_ceiling: float = 0.05
     min_probe_samples: int = 60
+    ambiguity_margin: float = 0.15
     hard_invariants: tuple[str, ...] = Field(default=("K6", "K10"))
+    service_request_shares: dict[str, float] = Field(
+        default_factory=lambda: dict(DEFAULT_SERVICE_REQUEST_SHARES)
+    )
 
     @model_validator(mode="after")
     def _validate_weights(self) -> "ScoringConfig":
@@ -86,6 +90,8 @@ class ScoringConfig(BaseModel):
             violation_ceiling=s.violation_ceiling,
             mirror_drop_ceiling=s.mirror_drop_ceiling,
             min_probe_samples=s.min_probe_samples,
+            ambiguity_margin=float(s.ambiguity_margin),
+            service_request_shares=dict(DEFAULT_SERVICE_REQUEST_SHARES),
         )
 
     @classmethod
@@ -97,7 +103,7 @@ class ScoringConfig(BaseModel):
         try:
             with file_path.open(encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-        except Exception as exc:
+        except (yaml.YAMLError, OSError) as exc:
             raise ConfigError(f"Failed to parse scoring config YAML at {file_path}: {exc}") from exc
 
         if not isinstance(data, dict):
@@ -106,17 +112,20 @@ class ScoringConfig(BaseModel):
         flattened: dict[str, Any] = {}
         for k, v in data.items():
             if isinstance(v, dict):
-                for sub_k, sub_v in v.items():
-                    if k == "weights" and not sub_k.endswith("_weight"):
-                        flattened[f"{sub_k}_weight"] = sub_v
-                    else:
-                        flattened[sub_k] = sub_v
+                if k == "service_request_shares":
+                    flattened["service_request_shares"] = v
+                else:
+                    for sub_k, sub_v in v.items():
+                        if k == "weights" and not sub_k.endswith("_weight"):
+                            flattened[f"{sub_k}_weight"] = sub_v
+                        else:
+                            flattened[sub_k] = sub_v
             else:
                 flattened[k] = v
 
         try:
             return cls.model_validate(flattened)
-        except Exception as exc:
+        except ValidationError as exc:
             raise ConfigError(f"Failed to validate scoring configuration: {exc}") from exc
 
 
@@ -165,9 +174,20 @@ def compute_blast_subscore(
     if graph is not None:
         val = sum(graph.request_share(s) for s in observed_blast_set)
     elif request_shares is not None:
-        val = sum(request_shares.get(s, 0.0) for s in observed_blast_set)
+        missing = [s for s in observed_blast_set if s not in request_shares]
+        if missing:
+            raise ValueError(
+                f"Missing request share for observed blast service(s): {', '.join(missing)}"
+            )
+        val = sum(request_shares[s] for s in observed_blast_set)
     else:
-        val = sum(DEFAULT_SERVICE_REQUEST_SHARES.get(s, 0.25) for s in observed_blast_set)
+        cfg = load_scoring_config()
+        missing = [s for s in observed_blast_set if s not in cfg.service_request_shares]
+        if missing:
+            raise ValueError(
+                f"Missing request share for observed blast service(s): {', '.join(missing)}"
+            )
+        val = sum(cfg.service_request_shares[s] for s in observed_blast_set)
 
     return min(max(float(val), 0.0), 1.0)
 

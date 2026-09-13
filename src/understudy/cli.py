@@ -1037,10 +1037,11 @@ def tournament_replay(
     """Replay candidate rehearsal evidence and arbitrate tournament outcome."""
     import json
 
+    from pydantic import ValidationError
+
     from understudy.contracts.enums import TournamentOutcome
     from understudy.contracts.evidence import CandidateEvidence
-    from understudy.tournament.arbiter import ArbiterConfig, arbitrate
-    from understudy.tournament.scorer import score_candidates
+    from understudy.tournament.api import ArbiterConfig, arbitrate, score_candidates
 
     if not fixture.is_file():
         typer.echo(f"Error: fixture file not found: {fixture}", err=True)
@@ -1049,7 +1050,7 @@ def tournament_replay(
     try:
         with fixture.open(encoding="utf-8") as f:
             raw_data = json.load(f)
-    except Exception as exc:
+    except (json.JSONDecodeError, OSError) as exc:
         typer.echo(f"Error reading JSON from fixture {fixture}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
@@ -1072,7 +1073,7 @@ def tournament_replay(
 
     try:
         evidences = [CandidateEvidence.model_validate(item) for item in raw_list]
-    except Exception as exc:
+    except (ValidationError, ValueError) as exc:
         typer.echo(f"Error validating CandidateEvidence from {fixture}: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 

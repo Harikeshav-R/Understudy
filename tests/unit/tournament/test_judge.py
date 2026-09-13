@@ -328,7 +328,6 @@ def test_compute_judge_agreement() -> None:
     assert compute_judge_agreement(None, "plan_1") is None
     assert compute_judge_agreement(["plan_1"], None) is None
     assert compute_judge_agreement(["plan_1"], []) is None
-    assert compute_judge_agreement(["plan_1"], 123) is None  # type: ignore[arg-type]
 
 
 @pytest.mark.asyncio

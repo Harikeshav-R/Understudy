@@ -179,8 +179,13 @@ def test_scoring_config_from_yaml_errors(tmp_path: Path) -> None:
         "downstream_weight: 0.0\n"
         "violations_weight: 0.0\n"
     )
-    with pytest.raises(ConfigError, match=r"Failed to validate scoring configuration"):
+    with pytest.raises(ConfigError, match=r"Scoring weights must sum to 1.0"):
         ScoringConfig.from_yaml(invalid_val)
+
+    invalid_type = tmp_path / "invalid_type.yaml"
+    invalid_type.write_text("recovery_weight: not-a-number\n")
+    with pytest.raises(ConfigError, match=r"Failed to validate scoring configuration"):
+        ScoringConfig.from_yaml(invalid_type)
 
 
 def test_load_scoring_config_fallback(tmp_path: Path) -> None:
@@ -259,17 +264,17 @@ def test_compute_blast_subscore() -> None:
         == 1.00
     )
 
-    # Unknown service in DEFAULT fallback gets 0.25 default
-    assert compute_blast_subscore(observed_blast_set=["custom-service"]) == 0.25
+    # Unknown service without share raises ValueError (AGENTS.md §5.6)
+    with pytest.raises(ValueError, match=r"Missing request share for observed blast service"):
+        compute_blast_subscore(observed_blast_set=["custom-service"])
 
     # Caller-specified request shares
     custom_shares = {"s1": 0.2, "s2": 0.3}
     assert (
         compute_blast_subscore(observed_blast_set=["s1", "s2"], request_shares=custom_shares) == 0.5
     )
-    assert (
-        compute_blast_subscore(observed_blast_set=["unknown"], request_shares=custom_shares) == 0.0
-    )
+    with pytest.raises(ValueError, match=r"Missing request share for observed blast service"):
+        compute_blast_subscore(observed_blast_set=["unknown"], request_shares=custom_shares)
 
     # Graph-backed calculation
     dummy_graph = _DummyGraph()

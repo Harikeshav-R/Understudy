@@ -103,7 +103,32 @@ class LLMJudge(Protocol):
     async def evaluate(
         self,
         evidence: Sequence[CandidateEvidence],
-        plans: Sequence[RemediationPlan] | None = None,
     ) -> JudgeEvaluation:
         """Evaluate candidate rehearsal evidence and return an advisory ranking with reasons."""
         raise NotImplementedError
+
+
+# Re-exports for consumers adhering to sibling import boundaries (AGENTS.md §5.2)
+from understudy.tournament.arbiter import ArbiterConfig, arbitrate  # noqa: E402
+from understudy.tournament.scorer import (  # noqa: E402
+    ScoringConfig,
+    score_candidate,
+    score_candidates,
+)
+
+__all__ = [
+    "ArbiterConfig",
+    "BlastEvaluation",
+    "BlastTracker",
+    "CandidateScorer",
+    "EnvironmentBaseline",
+    "EnvironmentProbe",
+    "JudgeEvaluation",
+    "LLMJudge",
+    "ProbeResult",
+    "ScoringConfig",
+    "Tournament",
+    "arbitrate",
+    "score_candidate",
+    "score_candidates",
+]

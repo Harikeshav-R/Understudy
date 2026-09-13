@@ -93,27 +93,26 @@ def test_detect_recovery_consecutive_success_streak_start_and_end() -> None:
     # Intentionally shuffle/unsort to verify sorting inside detect_recovery
     all_probes = healthy_probes[5:] + warmup_probes + healthy_probes[:5]
 
-    # streak_start mode: recovery time = start of streak = 20.0s
     rec1, sec1 = detect_recovery(
         all_probes,
         applied_at,
         warmup_seconds=20.0,
         consecutive_healthy_threshold=15,
-        recovery_time_mode="streak_start",
     )
     assert rec1 is True
     assert sec1 == 20.0
 
-    # streak_end mode: recovery time = 15th sample = 34.0s
+    # Explicit forked_at test: forked 10s before applied_at
+    forked_at = applied_at - timedelta(seconds=10)
     rec2, sec2 = detect_recovery(
         all_probes,
         applied_at,
+        forked_at=forked_at,
         warmup_seconds=20.0,
         consecutive_healthy_threshold=15,
-        recovery_time_mode="streak_end",
     )
     assert rec2 is True
-    assert sec2 == 34.0
+    assert sec2 == 20.0
 
 
 def test_detect_recovery_intermittent_unhealthy_resets_streak() -> None:

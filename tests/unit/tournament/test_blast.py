@@ -33,7 +33,6 @@ def test_blast_config_defaults_and_from_settings() -> None:
     assert cfg.zero_baseline_latency_floor_ms == 1.0
     assert cfg.zero_baseline_error_rate_floor == 0.01
     assert cfg.downstream_error_ceiling == 0.10
-    assert cfg.downstream_aggregation == "weighted"
 
     loaded = BlastConfig.from_settings()
     assert loaded.degradation_threshold == 0.10
@@ -292,22 +291,8 @@ def test_compute_downstream_error_delta_weighted_and_aggregations() -> None:
         ),
     }
 
-    weighted = compute_downstream_error_delta(
-        "data-service", baselines, post_windows, graph, aggregation="weighted"
-    )
+    weighted = compute_downstream_error_delta("data-service", baselines, post_windows, graph)
     assert weighted == pytest.approx(0.0467, abs=1e-4)
-
-    # Max aggregation: max(0.04, 0.06) = 0.06
-    max_delta = compute_downstream_error_delta(
-        "data-service", baselines, post_windows, graph, aggregation="max"
-    )
-    assert max_delta == pytest.approx(0.06)
-
-    # Mean aggregation: (0.04 + 0.06) / 2 = 0.05
-    mean_delta = compute_downstream_error_delta(
-        "data-service", baselines, post_windows, graph, aggregation="mean"
-    )
-    assert mean_delta == pytest.approx(0.05)
 
 
 def test_compute_downstream_error_delta_zero_shares_and_missing_windows() -> None:
@@ -329,12 +314,7 @@ def test_compute_downstream_error_delta_zero_shares_and_missing_windows() -> Non
         )
     }
     # Total weight <= 0 yields 0.0
-    assert (
-        compute_downstream_error_delta(
-            "target", baselines, post_windows, graph, aggregation="weighted"
-        )
-        == 0.0
-    )
+    assert compute_downstream_error_delta("target", baselines, post_windows, graph) == 0.0
 
 
 def test_compute_downstream_error_delta_negative_improvement() -> None:
@@ -503,8 +483,8 @@ async def test_blast_coordinator_declared_services_fallback() -> None:
         observability=adapter,
         dependency_graph=broken_graph,
     )
-    svcs = coordinator._get_declared_services()
-    assert svcs == ["edge-gateway", "auth-service", "data-service", "worker"]
+    with pytest.raises(RuntimeError, match="Broken graph"):
+        coordinator._get_declared_services()
 
     empty_graph = Mock()
     empty_snapshot = Mock()
@@ -514,12 +494,8 @@ async def test_blast_coordinator_declared_services_fallback() -> None:
         observability=adapter,
         dependency_graph=empty_graph,
     )
-    assert coordinator_empty._get_declared_services() == [
-        "edge-gateway",
-        "auth-service",
-        "data-service",
-        "worker",
-    ]
+    with pytest.raises(ValueError, match="contains no nodes"):
+        coordinator_empty._get_declared_services()
 
 
 @pytest.mark.asyncio

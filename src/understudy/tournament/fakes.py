@@ -252,10 +252,8 @@ class FakeLLMJudge(LLMJudge):
     async def evaluate(
         self,
         evidence: Sequence[CandidateEvidence],
-        plans: Sequence[RemediationPlan] | None = None,
     ) -> JudgeEvaluation:
         """Produce deterministic advisory ranking and reasons."""
-        _ = plans
         if not evidence:
             return JudgeEvaluation(model="fake-llm-judge")
 

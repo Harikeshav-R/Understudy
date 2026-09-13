@@ -3,7 +3,6 @@
 import asyncio
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -32,7 +31,6 @@ class ProbeConfig(BaseModel):
     slo_error_rate: float = 0.02
     min_probe_samples: int = 60
     metric_lookback_seconds: float = 15.0
-    recovery_time_mode: Literal["streak_start", "streak_end"] = "streak_start"
 
     @classmethod
     def from_settings(cls) -> "ProbeConfig":
@@ -62,16 +60,20 @@ class ProbeResult(BaseModel):
 def detect_recovery(
     probes: Sequence[ProbeSample],
     applied_at: datetime,
+    forked_at: datetime | None = None,
     warmup_seconds: float = 20.0,
     consecutive_healthy_threshold: int = 15,
     timeout_seconds: float = 180.0,
-    recovery_time_mode: Literal["streak_start", "streak_end"] = "streak_start",
 ) -> tuple[bool, float | None]:
     """Pure function evaluating recovery across a sequence of probe samples.
 
-    Samples taken within `warmup_seconds` after `applied_at` are excluded from qualifying
-    for the consecutive healthy sample count. Recovery requires `consecutive_healthy_threshold`
-    consecutive healthy samples observed after the warmup window and within `timeout_seconds`.
+    Samples taken within `warmup_seconds` after `forked_at` (or `applied_at` if
+    `forked_at` is not provided) are excluded from qualifying for the consecutive
+    healthy sample count per architecture §2.6 so cold starts are not scored.
+
+    Recovery requires `consecutive_healthy_threshold` consecutive healthy samples
+    observed after the warmup window and within `timeout_seconds` of `applied_at`.
+    Recovery time is measured from `applied_at` to the start of the consecutive streak.
 
     Returns:
         tuple[bool, float | None]: (recovered, recovery_seconds).
@@ -80,7 +82,8 @@ def detect_recovery(
         return False, None
 
     sorted_probes = sorted(probes, key=lambda p: p.at)
-    warmup_threshold = applied_at + timedelta(seconds=warmup_seconds)
+    warmup_reference = forked_at if forked_at is not None else applied_at
+    warmup_threshold = warmup_reference + timedelta(seconds=warmup_seconds)
     timeout_threshold = applied_at + timedelta(seconds=timeout_seconds)
 
     consecutive_healthy = 0
@@ -104,10 +107,7 @@ def detect_recovery(
 
             if consecutive_healthy >= consecutive_healthy_threshold:
                 assert streak_start_time is not None
-                if recovery_time_mode == "streak_start":
-                    rec_sec = max(0.0, (streak_start_time - applied_at).total_seconds())
-                else:
-                    rec_sec = max(0.0, (probe.at - applied_at).total_seconds())
+                rec_sec = max(0.0, (streak_start_time - applied_at).total_seconds())
                 return True, round(rec_sec, 3)
         else:
             consecutive_healthy = 0
@@ -205,9 +205,6 @@ class ProbeSampler:
         probes: list[ProbeSample] = []
         timeout_limit = applied_at + timedelta(seconds=self.config.timeout_seconds)
 
-        # Baseline timestamp for warmup window: forked_at if provided, else applied_at
-        warmup_reference = forked_at or applied_at
-
         recovered = False
         recovery_seconds: float | None = None
         timeout_exceeded = False
@@ -219,26 +216,15 @@ class ProbeSampler:
             if not recovered:
                 rec, rec_sec = detect_recovery(
                     probes=probes,
-                    applied_at=warmup_reference,
+                    applied_at=applied_at,
+                    forked_at=forked_at,
                     warmup_seconds=self.config.warmup_seconds,
                     consecutive_healthy_threshold=self.config.consecutive_healthy_threshold,
                     timeout_seconds=self.config.timeout_seconds,
-                    recovery_time_mode=self.config.recovery_time_mode,
                 )
                 if rec:
                     recovered = True
-                    # If warmup_reference was forked_at, adjust recovery_seconds
-                    # relative to applied_at
-                    if warmup_reference != applied_at and rec_sec is not None:
-                        # Re-calculate directly against applied_at
-                        rec_against_applied = max(
-                            0.0,
-                            rec_sec - (applied_at - warmup_reference).total_seconds(),
-                        )
-                        recovery_seconds = round(rec_against_applied, 3)
-                    else:
-                        recovery_seconds = rec_sec
-
+                    recovery_seconds = rec_sec
                     self.logger.info(
                         "probe_recovery_detected",
                         namespace=namespace,

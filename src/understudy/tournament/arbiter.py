@@ -12,12 +12,13 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import httpx
 import yaml
 from pydantic import BaseModel, ConfigDict
 
 from understudy.common.clock import Clock, resolve_clock
 from understudy.common.config import get_settings
-from understudy.common.errors import ConfigError
+from understudy.common.errors import ConfigError, UnderstudyError
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import TournamentOutcome
 from understudy.contracts.evidence import (
@@ -27,6 +28,7 @@ from understudy.contracts.evidence import (
 )
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.twin import MirrorStats, TwinHandle
+from understudy.mirror.api import MirrorRegistry
 from understudy.tournament.api import (
     BlastTracker,
     CandidateScorer,
@@ -35,6 +37,7 @@ from understudy.tournament.api import (
     Tournament,
 )
 from understudy.tournament.judge import (
+    JudgeError,
     JudgeEvaluation,
     compute_judge_agreement,
 )
@@ -67,7 +70,7 @@ class ArbiterConfig(BaseModel):
         try:
             with file_path.open(encoding="utf-8") as f:
                 data = yaml.safe_load(f)
-        except Exception as exc:
+        except (yaml.YAMLError, OSError) as exc:
             raise ConfigError(f"Failed to parse arbiter config YAML at {file_path}: {exc}") from exc
 
         if not isinstance(data, dict):
@@ -85,6 +88,37 @@ class ArbiterConfig(BaseModel):
             raise ConfigError(f"Invalid ambiguity_margin value in {file_path}: {exc}") from exc
 
 
+def derive_winner_from_scores(
+    scores: Sequence[CandidateScore],
+    ambiguity_margin: float = 0.15,
+) -> str | None:
+    """Pure mathematical derivation of tournament winner solely from deterministic scores.
+
+    Guarantees that winner derivation is completely independent of advisory LLM rankings,
+    telemetry representations, or any non-score context per architecture §2.8.
+    """
+    viable = [s for s in scores if not s.disqualified]
+    if not viable:
+        return None
+    sorted_viable = sorted(viable, key=lambda s: (s.composite, s.plan_id))
+    top = sorted_viable[0]
+
+    if len(sorted_viable) > 1:
+        runner_up = sorted_viable[1]
+        margin = runner_up.composite - top.composite
+    else:
+        other_scores = [s for s in scores if s.plan_id != top.plan_id]
+        if other_scores:
+            runner_up = min(other_scores, key=lambda s: (s.composite, s.plan_id))
+            margin = runner_up.composite - top.composite
+        else:
+            margin = 1.0 - top.composite
+
+    if margin < ambiguity_margin - 1e-6:
+        return None
+    return top.plan_id
+
+
 def arbitrate(
     scores: Sequence[CandidateScore],
     evidence: Sequence[CandidateEvidence] | None = None,
@@ -97,7 +131,7 @@ def arbitrate(
     """Deterministically arbitrate candidate scores and rehearsal evidence.
 
     Per ADR-017, ADR-018, and architecture §2.7-§2.8:
-    1. Only non-disqualified candidates with complete evidence are viable.
+    1. Only non-disqualified candidates are viable (scoring encodes evidence completeness).
     2. Candidates are ranked deterministically by composite score (lower is better).
     3. The winner must beat the runner-up by at least ambiguity_margin (default 0.15).
        If margin < 0.15, the outcome is AMBIGUOUS and winner_plan_id is None.
@@ -119,6 +153,7 @@ def arbitrate(
     """
     cfg = config or ArbiterConfig.from_settings()
     now = resolve_clock(clock).now()
+    del evidence  # Winner derives purely from scores per ADR-017 / architecture §2.8
 
     if not scores:
         logger.info("tournament_no_viable_candidate", reason="empty_scores")
@@ -136,18 +171,8 @@ def arbitrate(
     elif judge_evaluation is not None and judge_evaluation.ranking:
         effective_llm_ranking = list(judge_evaluation.ranking)
 
-    # Map empirical evidence by plan ID for completeness checks
-    evidence_by_plan = {e.plan_id: e for e in (evidence or [])}
-
-    # Filter viable candidates: non-disqualified and evidence_complete (ADR-018)
-    viable_scores: list[CandidateScore] = []
-    for s in scores:
-        if s.disqualified:
-            continue
-        ev = evidence_by_plan.get(s.plan_id)
-        if ev is not None and not ev.evidence_complete:
-            continue
-        viable_scores.append(s)
+    # Filter viable candidates: non-disqualified (scoring already encodes evidence completeness)
+    viable_scores = [s for s in scores if not s.disqualified]
 
     if not viable_scores:
         logger.info(
@@ -191,13 +216,9 @@ def arbitrate(
             runner_up_id = None
             margin = round(1.0 - top_candidate.composite, 4)
 
-    # Evaluate ambiguity margin (ADR-018)
-    # A near-tie occurs when multiple viable candidates exist and margin < ambiguity_margin
-    is_ambiguous = (
-        len(sorted_viable) > 1
-        and runner_up_candidate is not None
-        and (margin < cfg.ambiguity_margin - 1e-6)
-    )
+    # Evaluate ambiguity margin (ADR-018):
+    # Winner must beat the runner-up (or baseline 1.0) by at least ambiguity_margin.
+    is_ambiguous = margin < (cfg.ambiguity_margin - 1e-6)
 
     if is_ambiguous:
         outcome = TournamentOutcome.AMBIGUOUS
@@ -210,10 +231,10 @@ def arbitrate(
 
     # Prime Directive (ADR-017 & architecture §2.8):
     # Winner derives strictly and solely from deterministic scores.
-    deterministic_expected_winner = top_candidate.plan_id if not is_ambiguous else None
-    assert winner_plan_id == deterministic_expected_winner, (
-        f"Tournament winner '{winner_plan_id}' does not match deterministic scores winner "
-        f"'{deterministic_expected_winner}'"
+    score_only_winner = derive_winner_from_scores(scores, cfg.ambiguity_margin)
+    assert winner_plan_id == score_only_winner, (
+        f"Tournament winner '{winner_plan_id}' does not match deterministic score-only winner "
+        f"'{score_only_winner}'"
     )
 
     # Compute top-1 agreement between advisory LLM ranking and deterministic winner
@@ -292,6 +313,7 @@ class RehearsalTournament(Tournament):
         blast: BlastTracker | None = None,
         scorer: CandidateScorer | None = None,
         judge: LLMJudge | None = None,
+        mirror: MirrorRegistry | None = None,
         arbiter: TournamentArbiter | None = None,
         config: ArbiterConfig | None = None,
         clock: Clock | None = None,
@@ -302,6 +324,7 @@ class RehearsalTournament(Tournament):
         self.blast = blast
         self.scorer = scorer or DeterministicCandidateScorer()
         self.judge = judge
+        self.mirror = mirror
         self.arbiter = arbiter or TournamentArbiter(config=self.config, clock=self.clock)
 
     async def observe_and_score(
@@ -321,12 +344,18 @@ class RehearsalTournament(Tournament):
         evidences: list[CandidateEvidence] = []
         for twin, plan in zip(twins, plans, strict=False):
             applied_at = twin.ready_at or now
+
+            # 1. Capture pre-apply telemetry baseline BEFORE candidate rehearsal (architecture §2.6)
+            baseline = await self.blast.capture_baseline(namespace=twin.namespace, at=applied_at)
+
+            # 2. Probe environment under mirrored traffic until recovery or timeout
             probe_result = await self.probe.probe_environment(
                 namespace=twin.namespace,
                 applied_at=applied_at,
                 forked_at=twin.forked_from_snapshot_at,
             )
-            baseline = await self.blast.capture_baseline(namespace=twin.namespace, at=applied_at)
+
+            # 3. Evaluate post-apply blast radius against baseline
             blast_result = await self.blast.evaluate_environment(
                 plan=plan,
                 namespace=twin.namespace,
@@ -334,7 +363,11 @@ class RehearsalTournament(Tournament):
                 applied_at=applied_at,
             )
 
-            mirror_stats = MirrorStats(twin_id=twin.twin_id, delivered=100, dropped=0)
+            if self.mirror is not None:
+                mirror_stats = await self.mirror.get_stats(twin.twin_id)
+            else:
+                mirror_stats = MirrorStats(twin_id=twin.twin_id, delivered=0, dropped=0)
+
             evidence_complete = (
                 probe_result.recovered or len(probe_result.probes) >= 60
             ) and mirror_stats.drop_ratio <= 0.05
@@ -359,8 +392,8 @@ class RehearsalTournament(Tournament):
         judge_eval: JudgeEvaluation | None = None
         if self.judge is not None:
             try:
-                judge_eval = await self.judge.evaluate(evidences, plans)
-            except Exception as exc:
+                judge_eval = await self.judge.evaluate(evidences)
+            except (JudgeError, httpx.HTTPError, UnderstudyError) as exc:
                 logger.warning("llm_judge_evaluation_failed", error=str(exc))
                 judge_eval = None
 

@@ -10,3 +10,11 @@ downstream_error_ceiling: 0.10
 violation_ceiling: 5
 mirror_drop_ceiling: 0.05
 min_probe_samples: 60
+ambiguity_margin: 0.15
+
+# Canonical traffic request shares per demo service (architecture §2.6)
+service_request_shares:
+  edge-gateway: 0.40
+  auth-service: 0.30
+  data-service: 0.20
+  worker: 0.10

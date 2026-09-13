@@ -372,13 +372,11 @@ class AdvisoryLLMJudge:
     async def evaluate(
         self,
         evidence: Sequence[CandidateEvidence],
-        plans: Sequence[RemediationPlan] | None = None,
     ) -> JudgeEvaluation:
         """Evaluate candidate rehearsal evidence and return an advisory ranking.
 
         Args:
             evidence: Rehearsal evidence gathered across digital twins.
-            plans: Optional remediation plans corresponding to the candidates.
 
         Returns:
             JudgeEvaluation with ordered ranking and justifications.
@@ -400,7 +398,7 @@ class AdvisoryLLMJudge:
         if not self.config.api_key:
             raise JudgeConfigError("OPENROUTER_API_KEY is required for AdvisoryLLMJudge")
 
-        serialized = serialize_evidence_for_judge(evidence, plans)
+        serialized = serialize_evidence_for_judge(evidence)
         system_prompt = build_judge_system_prompt()
         user_prompt = build_judge_user_prompt(serialized)
 

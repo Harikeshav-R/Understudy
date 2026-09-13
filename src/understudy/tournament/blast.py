@@ -14,7 +14,6 @@ where:
 import asyncio
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Literal
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -41,7 +40,6 @@ class BlastConfig(BaseModel):
     zero_baseline_latency_floor_ms: float = 1.0
     zero_baseline_error_rate_floor: float = 0.01
     downstream_error_ceiling: float = 0.10
-    downstream_aggregation: Literal["weighted", "max", "mean"] = "weighted"
 
     @classmethod
     def from_settings(cls) -> "BlastConfig":
@@ -155,11 +153,11 @@ def compute_downstream_error_delta(
     pre_apply_baselines: dict[str, MetricWindow],
     post_apply_windows: dict[str, MetricWindow],
     graph: DependencyGraph,
-    aggregation: Literal["weighted", "max", "mean"] = "weighted",
 ) -> float:
     """Calculate post-apply error rate minus pre-apply baseline, downstream only.
 
     Downstream services are the reachable dependents: reachable_set(target, dep_graph).
+    The delta is weighted by request share across reachable services per architecture §2.6.
     """
     if not target_service or target_service == "none":
         return 0.0
@@ -175,11 +173,6 @@ def compute_downstream_error_delta(
         post_err = (post_window.error_rate if post_window else None) or 0.0
         pre_err = (pre_window.error_rate if pre_window else None) or 0.0
         deltas[s] = post_err - pre_err
-
-    if aggregation == "max":
-        return round(max(deltas.values()), 4)
-    if aggregation == "mean":
-        return round(sum(deltas.values()) / len(deltas), 4)
 
     # Weighted by request share across reachable services
     weights = {s: graph.request_share(s) for s in reachable}
@@ -233,7 +226,6 @@ def evaluate_blast(
         pre_apply_baselines=pre_apply_baselines,
         post_apply_windows=post_apply_windows,
         graph=graph,
-        aggregation=cfg.downstream_aggregation,
     )
 
     observed_blast_set = sorted(affected)
@@ -267,14 +259,13 @@ class BlastCoordinator:
         self.logger = get_logger(component="blast_coordinator")
 
     def _get_declared_services(self) -> list[str]:
-        """Resolve declared services from dependency graph snapshot or fallback list."""
-        try:
-            snapshot = self.dependency_graph.snapshot()
-            if snapshot.nodes:
-                return sorted(snapshot.nodes)
-        except Exception:
-            pass
-        return ["edge-gateway", "auth-service", "data-service", "worker"]
+        """Resolve declared services from dependency graph snapshot."""
+        snapshot = self.dependency_graph.snapshot()
+        if not snapshot.nodes:
+            raise ValueError(
+                "Cannot resolve declared services: dependency graph snapshot contains no nodes"
+            )
+        return sorted(snapshot.nodes)
 
     async def capture_baseline(
         self,

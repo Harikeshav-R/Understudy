@@ -26,8 +26,9 @@ from understudy.tournament import (
     TournamentArbiter,
     arbitrate,
 )
+from understudy.tournament.arbiter import derive_winner_from_scores
 from understudy.tournament.blast import BlastEvaluation, EnvironmentBaseline
-from understudy.tournament.judge import JudgeEvaluation
+from understudy.tournament.judge import JudgeAPIError, JudgeEvaluation
 from understudy.tournament.probe import ProbeResult
 
 
@@ -149,9 +150,9 @@ def test_arbitrate_all_disqualified() -> None:
 
 
 def test_arbitrate_evidence_incomplete_candidate_not_viable() -> None:
-    """Candidate with evidence_complete=False in evidence is treated as non-viable."""
+    """Candidate with evidence_complete=False is disqualified in scores and non-viable."""
     clock = FrozenClock(datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC))
-    s1 = _make_score("p1", 0.05, disqualified=False)
+    s1 = _make_score("p1", 1.0, disqualified=True, disqualification_reason="evidence_incomplete")
     ev1 = _make_evidence("p1", evidence_complete=False)
 
     res = arbitrate(scores=[s1], evidence=[ev1], clock=clock)
@@ -416,10 +417,14 @@ async def test_rehearsal_tournament_observe_and_score() -> None:
         reasons={"plan_0": "Clean recovery"},
     )
 
+    mock_mirror = AsyncMock()
+    mock_mirror.get_stats.return_value = MirrorStats(twin_id="twin_0", delivered=1000, dropped=10)
+
     tournament = RehearsalTournament(
         probe=mock_probe,
         blast=mock_blast,
         judge=mock_judge,
+        mirror=mock_mirror,
         clock=clock,
     )
 
@@ -503,7 +508,7 @@ async def test_rehearsal_tournament_judge_failure_handled_gracefully() -> None:
     )
 
     mock_judge = AsyncMock()
-    mock_judge.evaluate.side_effect = RuntimeError("OpenRouter 503 Service Unavailable")
+    mock_judge.evaluate.side_effect = JudgeAPIError("OpenRouter 503 Service Unavailable")
 
     tournament = RehearsalTournament(
         probe=mock_probe,
@@ -622,3 +627,10 @@ async def test_rehearsal_tournament_without_judge() -> None:
     assert result.winner_plan_id == "plan_0"
     assert result.llm_ranking is None
     assert result.llm_agreement is None
+
+
+def test_derive_winner_from_scores_all_disqualified() -> None:
+    """derive_winner_from_scores returns None when all candidates are disqualified or empty."""
+    scores = [_make_score("p1", 0.2, disqualified=True, disqualification_reason="sla_breach")]
+    assert derive_winner_from_scores(scores) is None
+    assert derive_winner_from_scores([]) is None
