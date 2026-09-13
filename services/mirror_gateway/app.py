@@ -11,10 +11,12 @@ Conforms to ADR-012, ADR-013, and build-plan step A3.1:
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Literal
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from services._common.health import setup_health_routes
 from services._common.logging import get_logger
@@ -23,7 +25,7 @@ from services._common.settings import get_services_settings
 from services.mirror_gateway.core import (
     MirroredRequest,
     MirrorGatewayManager,
-    MirrorStatsResponse,
+    MirrorStats,
 )
 
 logger = get_logger(__name__)
@@ -32,9 +34,74 @@ logger = get_logger(__name__)
 class TwinRegistrationRequest(BaseModel):
     """Payload for registering a twin with the mirror gateway."""
 
+    model_config = ConfigDict(frozen=True)
+
+    twin_id: str = Field(
+        ...,
+        min_length=1,
+        max_length=128,
+        pattern=r"^[a-zA-Z0-9_\-\.]+$",
+        description="Unique identifier for the twin environment",
+    )
+    base_url: str = Field(
+        ...,
+        min_length=1,
+        description="Base URL of the twin edge-gateway destination",
+    )
+    incident_id: str = Field(
+        default="",
+        max_length=128,
+        description="Associated incident ID for header tracking",
+    )
+
+    @field_validator("twin_id", mode="before")
+    @classmethod
+    def validate_twin_id(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("twin_id must be a string")
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("twin_id cannot be empty or whitespace")
+        return trimmed
+
+    @field_validator("base_url", mode="before")
+    @classmethod
+    def validate_base_url(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("base_url must be a string")
+        trimmed = v.strip().rstrip("/")
+        if not trimmed:
+            raise ValueError("base_url cannot be empty or whitespace")
+        parsed = urlparse(trimmed)
+        if parsed.scheme not in ("http", "https") or not parsed.netloc:
+            raise ValueError(f"base_url must be a valid HTTP/HTTPS URL with host, got: {v}")
+        return trimmed
+
+    @field_validator("incident_id", mode="before")
+    @classmethod
+    def validate_incident_id(cls, v: object) -> str:
+        if not isinstance(v, str):
+            raise ValueError("incident_id must be a string")
+        return v.strip()
+
+
+class TwinRegistrationResponse(BaseModel):
+    """Response payload for successful twin registration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["registered"] = "registered"
     twin_id: str
     base_url: str
-    incident_id: str = ""
+
+
+class TwinUnregistrationResponse(BaseModel):
+    """Response payload for successful twin unregistration."""
+
+    model_config = ConfigDict(frozen=True)
+
+    status: Literal["unregistered"] = "unregistered"
+    twin_id: str
 
 
 def get_target_prod_url() -> str:
@@ -81,11 +148,12 @@ setup_health_routes(app, [check_prod_reachability])
 
 @app.post(
     "/twins",
+    response_model=TwinRegistrationResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["Twins"],
     summary="Register a twin for mirrored traffic fan-out",
 )
-async def register_twin(payload: TwinRegistrationRequest) -> dict[str, str]:
+async def register_twin(payload: TwinRegistrationRequest) -> TwinRegistrationResponse:
     """Register an active twin destination with the gateway."""
     manager: MirrorGatewayManager = app.state.mirror_manager
     manager.register_twin(
@@ -93,56 +161,59 @@ async def register_twin(payload: TwinRegistrationRequest) -> dict[str, str]:
         base_url=payload.base_url,
         incident_id=payload.incident_id,
     )
-    return {
-        "status": "registered",
-        "twin_id": payload.twin_id,
-        "base_url": payload.base_url,
-    }
+    return TwinRegistrationResponse(
+        status="registered",
+        twin_id=payload.twin_id,
+        base_url=payload.base_url,
+    )
 
 
 @app.delete(
     "/twins/{twin_id}",
+    response_model=TwinUnregistrationResponse,
     status_code=status.HTTP_200_OK,
     tags=["Twins"],
     summary="Unregister a twin from mirrored traffic fan-out",
 )
-async def unregister_twin(twin_id: str) -> dict[str, str]:
+async def unregister_twin(twin_id: str) -> TwinUnregistrationResponse:
     """Unregister a twin from the gateway and cancel its drain worker."""
+    clean_twin_id = twin_id.strip()
     manager: MirrorGatewayManager = app.state.mirror_manager
-    unregistered = manager.unregister_twin(twin_id)
+    unregistered = manager.unregister_twin(clean_twin_id)
     if not unregistered:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Twin {twin_id} is not registered",
+            detail=f"Twin {clean_twin_id} is not registered",
         )
-    return {"status": "unregistered", "twin_id": twin_id}
+    return TwinUnregistrationResponse(status="unregistered", twin_id=clean_twin_id)
 
 
 @app.get(
     "/twins/{twin_id}/stats",
-    response_model=MirrorStatsResponse,
+    response_model=MirrorStats,
     tags=["Twins"],
     summary="Fetch delivery and drop metrics for a twin",
 )
-async def get_twin_stats(twin_id: str) -> MirrorStatsResponse:
+async def get_twin_stats(twin_id: str) -> MirrorStats:
     """Fetch delivery and drop metrics for a registered twin."""
+    clean_twin_id = twin_id.strip()
     manager: MirrorGatewayManager = app.state.mirror_manager
-    stats = manager.get_stats(twin_id)
+    stats = manager.get_stats(clean_twin_id)
     if stats is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Twin {twin_id} is not registered",
+            detail=f"Twin {clean_twin_id} is not registered",
         )
     return stats
 
 
 @app.get(
     "/twins",
-    response_model=dict[str, MirrorStatsResponse],
+    response_model=dict[str, MirrorStats],
     tags=["Twins"],
     summary="Fetch delivery and drop metrics for all registered twins",
 )
-async def get_all_twins_stats() -> dict[str, MirrorStatsResponse]:
+async def get_all_twins_stats() -> dict[str, MirrorStats]:
     """Fetch delivery and drop metrics for all registered twins."""
     manager: MirrorGatewayManager = app.state.mirror_manager
     return manager.get_all_stats()

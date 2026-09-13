@@ -32,7 +32,7 @@ class MirroredRequest:
     body: bytes
 
 
-class MirrorStatsResponse(BaseModel):
+class MirrorStats(BaseModel):
     """Mirror statistics for a registered twin."""
 
     model_config = ConfigDict(frozen=True)
@@ -41,6 +41,10 @@ class MirrorStatsResponse(BaseModel):
     delivered: int = 0
     dropped: int = 0
     drop_ratio: float = 0.0
+
+
+# Backward-compatible alias
+MirrorStatsResponse = MirrorStats
 
 
 @dataclass
@@ -83,24 +87,31 @@ class MirrorGatewayManager:
         incident_id: str = "",
     ) -> TwinRegistration:
         """Register an active twin, allocate a bounded queue, and start a drain worker."""
-        if twin_id in self._twins:
-            self.unregister_twin(twin_id)
+        clean_twin_id = twin_id.strip()
+        clean_base_url = base_url.strip().rstrip("/")
+        if not clean_twin_id:
+            raise ValueError("twin_id cannot be empty")
+        if not clean_base_url:
+            raise ValueError("base_url cannot be empty")
+
+        if clean_twin_id in self._twins:
+            self.unregister_twin(clean_twin_id)
 
         queue: asyncio.Queue[MirroredRequest] = asyncio.Queue(maxsize=self.queue_maxsize)
         twin = TwinRegistration(
-            twin_id=twin_id,
-            base_url=base_url,
-            incident_id=incident_id,
+            twin_id=clean_twin_id,
+            base_url=clean_base_url,
+            incident_id=incident_id.strip(),
             queue=queue,
             worker_timeout_seconds=self.worker_timeout_seconds,
         )
         worker_task = asyncio.create_task(
             self._drain_worker(twin),
-            name=f"mirror-worker-{twin_id}",
+            name=f"mirror-worker-{clean_twin_id}",
         )
         twin.worker_task = worker_task
-        self._twins[twin_id] = twin
-        logger.info("twin_registered", twin_id=twin_id, base_url=base_url)
+        self._twins[clean_twin_id] = twin
+        logger.info("twin_registered", twin_id=clean_twin_id, base_url=clean_base_url)
         return twin
 
     def unregister_twin(self, twin_id: str) -> bool:
@@ -121,7 +132,7 @@ class MirrorGatewayManager:
         If a twin's bounded queue is full, the request is dropped immediately and
         the drop counter for that twin is incremented.
         """
-        for twin in self._twins.values():
+        for twin in list(self._twins.values()):
             try:
                 twin.queue.put_nowait(request)
             except asyncio.QueueFull:
@@ -132,25 +143,25 @@ class MirrorGatewayManager:
                     dropped=twin.dropped,
                 )
 
-    def _build_stats(self, twin: TwinRegistration) -> MirrorStatsResponse:
+    def _build_stats(self, twin: TwinRegistration) -> MirrorStats:
         """Calculate statistics for a twin registration."""
         total = twin.delivered + twin.dropped
         drop_ratio = (twin.dropped / total) if total > 0 else 0.0
-        return MirrorStatsResponse(
+        return MirrorStats(
             twin_id=twin.twin_id,
             delivered=twin.delivered,
             dropped=twin.dropped,
             drop_ratio=drop_ratio,
         )
 
-    def get_stats(self, twin_id: str) -> MirrorStatsResponse | None:
+    def get_stats(self, twin_id: str) -> MirrorStats | None:
         """Retrieve delivery and drop statistics for a registered twin."""
         twin = self._twins.get(twin_id)
         if twin is None:
             return None
         return self._build_stats(twin)
 
-    def get_all_stats(self) -> dict[str, MirrorStatsResponse]:
+    def get_all_stats(self) -> dict[str, MirrorStats]:
         """Retrieve statistics for all registered twins."""
         return {twin_id: self._build_stats(twin) for twin_id, twin in self._twins.items()}
 

@@ -79,8 +79,20 @@ against yesterday's system. A runtime twin fleet validates an agent's *decision*
 time, against the system as it exists at the moment of the incident. Those catch different
 classes of failure. Understudy is a claim about where the sandbox belongs.
 
+**The claim is about placement, not subject.** A tempting adjacent framing — *they twin your
+dependencies, we twin your product* — is weaker and should not be used anywhere, in the
+brief or the video. It is a claim about what gets replicated, and nothing in Arga's
+positioning rules out replicating your own services, so it can be dissolved in one sentence
+by the only people qualified to dissolve it. Placement holds regardless of what their
+product covers.
+
 We say this plainly in the brief rather than pretending not to have noticed whose
-infrastructure thesis we are building on top of.
+infrastructure thesis we are building on top of. In the video we make the argument without
+naming them (`docs/09-demo-video.md` §9.3.2); recognition lands better than flattery.
+
+Before Phase 7, verify Arga Labs' current positioning from their own materials. Everything
+in this section derives from the hackathon handoff document, and describing a judge's
+company inaccurately in a submission to that company is an unforced error.
 
 ## 0.5 Who it is for
 

@@ -17,6 +17,7 @@ from services.mirror_gateway.app import (
 from services.mirror_gateway.core import (
     MirroredRequest,
     MirrorGatewayManager,
+    MirrorStats,
     MirrorStatsResponse,
 )
 
@@ -537,4 +538,149 @@ async def test_drain_worker_cancellation_mid_request() -> None:
     twin.worker_task.cancel()
     await asyncio.sleep(0.01)
     assert twin.worker_task.done()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_mirror_stats_type_alias() -> None:
+    """MirrorStats and MirrorStatsResponse are aliases for the same class."""
+    assert MirrorStats is MirrorStatsResponse
+    stats = MirrorStats(twin_id="twin-alias", delivered=5, dropped=1, drop_ratio=1 / 6)
+    assert isinstance(stats, MirrorStatsResponse)
+
+
+@pytest.mark.asyncio
+async def test_registration_validation_errors(client: httpx.AsyncClient) -> None:
+    """Invalid twin_id or base_url payloads are rejected with 422 Unprocessable Entity."""
+    # 1. Empty twin_id
+    resp = await client.post("/twins", json={"twin_id": "", "base_url": "http://twin:8000"})
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 1b. Non-string twin_id
+    resp = await client.post("/twins", json={"twin_id": 123, "base_url": "http://twin:8000"})
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 2. Whitespace twin_id
+    resp = await client.post("/twins", json={"twin_id": "   ", "base_url": "http://twin:8000"})
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 3. Invalid characters in twin_id
+    resp = await client.post(
+        "/twins", json={"twin_id": "twin!invalid", "base_url": "http://twin:8000"}
+    )
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 4. Empty base_url
+    resp = await client.post("/twins", json={"twin_id": "valid-twin", "base_url": ""})
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 4b. Whitespace base_url
+    resp = await client.post("/twins", json={"twin_id": "valid-twin", "base_url": "   "})
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 4c. Non-string base_url
+    resp = await client.post("/twins", json={"twin_id": "valid-twin", "base_url": 123})
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 5. Invalid scheme in base_url
+    resp = await client.post(
+        "/twins", json={"twin_id": "valid-twin", "base_url": "ftp://twin:8000"}
+    )
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 6. Missing host in base_url
+    resp = await client.post("/twins", json={"twin_id": "valid-twin", "base_url": "http://"})
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 6b. Non-string incident_id
+    resp = await client.post(
+        "/twins",
+        json={"twin_id": "valid-twin", "base_url": "http://twin:8000", "incident_id": 123},
+    )
+    assert resp.status_code == status.HTTP_422_UNPROCESSABLE_CONTENT
+
+    # 7. Valid registration with trailing slashes is normalized
+    resp = await client.post(
+        "/twins",
+        json={
+            "twin_id": "norm-twin",
+            "base_url": "http://norm-twin:8000///",
+            "incident_id": "  inc-norm  ",
+        },
+    )
+    assert resp.status_code == status.HTTP_201_CREATED
+    data = resp.json()
+    assert data["status"] == "registered"
+    assert data["twin_id"] == "norm-twin"
+    assert data["base_url"] == "http://norm-twin:8000"
+
+    # Cleanup
+    del_resp = await client.delete("/twins/norm-twin")
+    assert del_resp.status_code == status.HTTP_200_OK
+
+
+@pytest.mark.asyncio
+async def test_manager_register_twin_defensive_errors() -> None:
+    """MirrorGatewayManager raises ValueError on empty or whitespace twin_id or base_url."""
+    mock_http = AsyncMock(spec=httpx.AsyncClient)
+    manager = MirrorGatewayManager(client=mock_http)
+
+    with pytest.raises(ValueError, match="twin_id cannot be empty"):
+        manager.register_twin("", "http://twin:8000")
+
+    with pytest.raises(ValueError, match="twin_id cannot be empty"):
+        manager.register_twin("   ", "http://twin:8000")
+
+    with pytest.raises(ValueError, match="base_url cannot be empty"):
+        manager.register_twin("valid-id", "")
+
+    with pytest.raises(ValueError, match="base_url cannot be empty"):
+        manager.register_twin("valid-id", "   ")
+
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_mirror_stats_contract_compatibility(client: httpx.AsyncClient) -> None:
+    """Gateway MirrorStats JSON response is deserializable by
+    understudy.contracts.twin.MirrorStats.
+    """
+    from understudy.contracts.twin import MirrorStats as ContractMirrorStats
+
+    reg_resp = await client.post(
+        "/twins",
+        json={"twin_id": "compat-twin", "base_url": "http://compat:8000"},
+    )
+    assert reg_resp.status_code == status.HTTP_201_CREATED
+
+    stats_resp = await client.get("/twins/compat-twin/stats")
+    assert stats_resp.status_code == status.HTTP_200_OK
+
+    contract_stats = ContractMirrorStats.model_validate_json(stats_resp.text)
+    assert contract_stats.twin_id == "compat-twin"
+    assert contract_stats.delivered == 0
+    assert contract_stats.dropped == 0
+    assert contract_stats.drop_ratio == 0.0
+
+    await client.delete("/twins/compat-twin")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_concurrent_with_unregister() -> None:
+    """Dispatching to twins while an unregister occurs does not raise dictionary mutation errors."""
+    mock_http = AsyncMock(spec=httpx.AsyncClient)
+    manager = MirrorGatewayManager(client=mock_http)
+    manager.register_twin("twin-c1", "http://c1:8000")
+    manager.register_twin("twin-c2", "http://c2:8000")
+
+    req = MirroredRequest(method="GET", path="/test", query="", headers={}, body=b"")
+
+    # Concurrent unregister and dispatch
+    manager.dispatch_to_twins(req)
+    manager.unregister_twin("twin-c1")
+    manager.dispatch_to_twins(req)
+
+    assert "twin-c1" not in manager.registered_twins
+    assert "twin-c2" in manager.registered_twins
+
     await manager.close()
