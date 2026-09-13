@@ -18,13 +18,27 @@ from understudy.planner.prompt import (
     prompt_candidate_to_remediation_plan,
     render_candidate_generation_prompt,
 )
+from understudy.planner.validate import (
+    LLMPlanner,
+    PlannerSchemaValidationError,
+    compute_blast_set_validity,
+    generate_candidates_with_retry,
+    normalise_plan,
+    normalise_plans,
+    resolve_commit_ref,
+    resolve_workload_name,
+    validate_and_parse_plans,
+)
 
 __all__ = [
+    "LLMPlanner",
     "PlannerPromptResponse",
+    "PlannerSchemaValidationError",
     "PromptCandidatePlan",
     "PromptInversePlan",
     "build_system_prompt",
     "build_user_prompt",
+    "compute_blast_set_validity",
     "format_alert",
     "format_dependency_graph",
     "format_deploys",
@@ -32,8 +46,14 @@ __all__ = [
     "format_metrics",
     "format_playbook_candidate",
     "format_signatures",
+    "generate_candidates_with_retry",
     "get_planner_output_schema",
+    "normalise_plan",
+    "normalise_plans",
     "parse_raw_planner_json",
     "prompt_candidate_to_remediation_plan",
     "render_candidate_generation_prompt",
+    "resolve_commit_ref",
+    "resolve_workload_name",
+    "validate_and_parse_plans",
 ]
