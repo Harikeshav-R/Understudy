@@ -942,3 +942,223 @@ def test_cli_graph_show_prometheus_error(monkeypatch: "pytest.MonkeyPatch") -> N
     assert "Error cross-checking observed traffic: Connection timed out" in (
         result.stderr or result.stdout
     )
+
+
+def test_cli_mirror_help() -> None:
+    """Verify ust mirror --help lists register, stats, unregister, compare."""
+    result = runner.invoke(app, ["mirror", "--help"])
+    assert result.exit_code == 0
+    assert "register" in result.stdout
+    assert "stats" in result.stdout
+    assert "unregister" in result.stdout
+    assert "compare" in result.stdout
+
+
+def test_cli_mirror_register_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror register registers synthesized twin handles successfully."""
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    registered_twins: list[str] = []
+
+    async def _mock_register_twin(
+        _self: Any, twin_handle: Any, _base_url: str | None = None
+    ) -> None:
+        registered_twins.append(twin_handle.twin_id)
+
+    monkeypatch.setattr(HttpMirrorRegistry, "register_twin", _mock_register_twin)
+
+    result = runner.invoke(app, ["mirror", "register", "--incident", "inc_test", "--count", "2"])
+    assert result.exit_code == 0
+    assert "registered twin_id=twin_inc_test_0" in result.stdout
+    assert "registered twin_id=twin_inc_test_1" in result.stdout
+    assert len(registered_twins) == 2
+
+
+def test_cli_mirror_register_failure(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror register exits 1 on failure."""
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_register_twin(*_args: Any, **_kwargs: Any) -> None:
+        raise MirrorError("Gateway unavailable")
+
+    monkeypatch.setattr(HttpMirrorRegistry, "register_twin", _mock_register_twin)
+
+    result = runner.invoke(app, ["mirror", "register", "--incident", "inc_fail"])
+    assert result.exit_code == 1
+    assert "Error registering twins with mirror gateway: Gateway unavailable" in (
+        result.stderr or result.stdout
+    )
+
+
+def test_cli_mirror_stats_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror stats prints tabular data for matching twins."""
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_get_all_stats(_self: Any) -> dict[str, MirrorStats]:
+        return {
+            "twin_inc_mirror_0": MirrorStats(
+                twin_id="twin_inc_mirror_0", delivered=3000, dropped=10
+            ),
+            "twin_inc_mirror_1": MirrorStats(
+                twin_id="twin_inc_mirror_1", delivered=3000, dropped=0
+            ),
+            "twin_other_0": MirrorStats(twin_id="twin_other_0", delivered=50, dropped=0),
+        }
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_get_all_stats)
+
+    # Filtered by incident
+    result = runner.invoke(app, ["mirror", "stats", "--incident", "inc_mirror"])
+    assert result.exit_code == 0
+    assert "twin_inc_mirror_0" in result.stdout
+    assert "twin_inc_mirror_1" in result.stdout
+    assert "twin_other_0" not in result.stdout
+
+    # All twins
+    result_all = runner.invoke(app, ["mirror", "stats"])
+    assert result_all.exit_code == 0
+    assert "twin_other_0" in result_all.stdout
+
+
+def test_cli_mirror_stats_empty_and_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror stats handles empty results and errors."""
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_get_all_empty(_self: Any) -> dict[str, MirrorStats]:
+        return {}
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_get_all_empty)
+
+    result_empty = runner.invoke(app, ["mirror", "stats", "--incident", "inc_none"])
+    assert result_empty.exit_code == 0
+    assert "No mirror stats found for incident=inc_none" in result_empty.stdout
+
+    result_all_empty = runner.invoke(app, ["mirror", "stats"])
+    assert result_all_empty.exit_code == 0
+    assert "No mirror stats found" in result_all_empty.stdout
+
+    async def _mock_get_all_error(_self: Any) -> dict[str, MirrorStats]:
+        raise MirrorError("Network timeout")
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_get_all_error)
+    result_err = runner.invoke(app, ["mirror", "stats"])
+    assert result_err.exit_code == 1
+    assert "Error fetching mirror stats: Network timeout" in (
+        result_err.stderr or result_err.stdout
+    )
+
+
+def test_cli_mirror_unregister(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror unregister handles success and error."""
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    unregistered: list[str] = []
+
+    async def _mock_unreg(_self: Any, twin_id: str, **_kwargs: Any) -> None:
+        if twin_id == "fail_id":
+            raise MirrorError("Failed to unregister")
+        unregistered.append(twin_id)
+
+    monkeypatch.setattr(HttpMirrorRegistry, "unregister_twin", _mock_unreg)
+
+    res_ok = runner.invoke(app, ["mirror", "unregister", "--twin-id", "twin-1"])
+    assert res_ok.exit_code == 0
+    assert "unregistered twin_id=twin-1" in res_ok.stdout
+    assert "twin-1" in unregistered
+
+    res_fail = runner.invoke(app, ["mirror", "unregister", "--twin-id", "fail_id"])
+    assert res_fail.exit_code == 1
+    assert "Error unregistering twin: Failed to unregister" in (res_fail.stderr or res_fail.stdout)
+
+
+def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror compare computes fidelity deltas and handles missing incident."""
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_stats(_self: Any) -> dict[str, MirrorStats]:
+        return {
+            "twin_inc_comp_0": MirrorStats(twin_id="twin_inc_comp_0", delivered=1000, dropped=0),
+            "twin_inc_comp_1": MirrorStats(twin_id="twin_inc_comp_1", delivered=990, dropped=10),
+            "twin_inc_comp_2": MirrorStats(twin_id="twin_inc_comp_2", delivered=800, dropped=200),
+        }
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats)
+
+    res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
+    assert res.exit_code == 0
+    assert "twin_inc_comp_0" in res.stdout
+    assert "OK" in res.stdout
+    assert "DEGRADED" in res.stdout
+
+    # All twins passing fidelity check
+    async def _mock_stats_all_ok(_self: Any) -> dict[str, MirrorStats]:
+        return {
+            "twin_inc_comp_0": MirrorStats(twin_id="twin_inc_comp_0", delivered=1000, dropped=0),
+            "twin_inc_comp_1": MirrorStats(twin_id="twin_inc_comp_1", delivered=995, dropped=5),
+        }
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats_all_ok)
+    res_all_ok = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
+    assert res_all_ok.exit_code == 0
+    assert (
+        "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        in res_all_ok.stdout
+    )
+
+    # Incident with no matching twins
+    res_missing = runner.invoke(app, ["mirror", "compare", "--incident", "nonexistent"])
+    assert res_missing.exit_code == 1
+    assert "No registered twins found for incident=nonexistent" in (
+        res_missing.stderr or res_missing.stdout
+    )
+
+    # Error handling
+    async def _mock_stats_err(_self: Any) -> dict[str, MirrorStats]:
+        raise MirrorError("Connection refused")
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats_err)
+    res_err = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
+    assert res_err.exit_code == 1
+    assert "Error fetching stats for comparison: Connection refused" in (
+        res_err.stderr or res_err.stdout
+    )
+
+
+def test_cli_mirror_compare_with_paths(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror compare displays path breakdown when paths are present."""
+    from understudy.mirror.fidelity import TwinFidelityReport
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_reports(_self: Any, _incident: str) -> list[TwinFidelityReport]:
+        return [
+            TwinFidelityReport(
+                twin_id="twin_inc_1_0",
+                prod_delivered=100,
+                twin_delivered=100,
+                delivered_delta_ratio=0.0,
+                drop_ratio=0.0,
+                path_distribution_match=True,
+                status="OK",
+                prod_paths={"/api/items": 80, "/healthz": 20},
+                twin_paths={"/api/items": 80, "/healthz": 20},
+            )
+        ]
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_fidelity_reports", _mock_reports)
+    res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_1"])
+    assert res.exit_code == 0
+    assert "twin_inc_1_0" in res.stdout
+    assert "Path: /api/items" in res.stdout
+    assert "prod=80 (80.0%)" in res.stdout
+    assert "twin=80 (80.0%)" in res.stdout
+    assert (
+        "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        in res.stdout
+    )

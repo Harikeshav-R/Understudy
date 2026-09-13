@@ -65,3 +65,11 @@ class GraphError(UnderstudyError):
 
 class GraphDiscrepancyError(GraphError):
     """Raised when observed traffic contradicts declared dependency graph topology."""
+
+
+class MirrorError(UnderstudyError):
+    """Raised on failure to communicate with or perform operations against the mirror gateway."""
+
+
+class TwinNotFoundError(MirrorError):
+    """Raised when a requested twin is not registered with the mirror gateway."""

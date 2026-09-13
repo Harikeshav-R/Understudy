@@ -152,3 +152,45 @@ def test_loki_and_promtail_manifests() -> None:
     promtail_ds = next(d for d in promtail_docs if d.get("kind") == "DaemonSet")
     promtail_c = promtail_ds["spec"]["template"]["spec"]["containers"][0]
     assert promtail_c["resources"]["limits"]["memory"] == "100Mi"
+
+
+def test_mirror_gateway_manifest() -> None:
+    """Validate mirror-gateway Deployment and Service in ust-system per §2.10 (250 MB limit)."""
+    mg_path = Path("deploy/system/mirror-gateway.yaml")
+    mg_docs = _load_manifests(mg_path)
+    deploy = next(d for d in mg_docs if d.get("kind") == "Deployment")
+    svc = next(d for d in mg_docs if d.get("kind") == "Service")
+
+    # Verify Deployment metadata & namespace
+    assert deploy["metadata"]["namespace"] == "ust-system"
+    assert deploy["metadata"]["name"] == "mirror-gateway"
+    assert deploy["metadata"]["labels"]["app"] == "mirror-gateway"
+    assert deploy["metadata"]["labels"]["app.kubernetes.io/part-of"] == "understudy"
+    assert deploy["metadata"]["labels"]["app.kubernetes.io/component"] == "gateway"
+
+    # Container specifications & §2.10 memory budget
+    c = deploy["spec"]["template"]["spec"]["containers"][0]
+    assert c["name"] == "mirror-gateway"
+    assert c["image"] == "localhost:5001/mirror-gateway:good"
+    assert c["resources"]["limits"]["memory"] == "250Mi"
+    assert c["resources"]["requests"]["memory"] == "64Mi"
+
+    # Probes
+    assert c["livenessProbe"]["httpGet"]["path"] == "/healthz"
+    assert c["livenessProbe"]["httpGet"]["port"] == 8000
+    assert c["readinessProbe"]["httpGet"]["path"] == "/readyz"
+    assert c["readinessProbe"]["httpGet"]["port"] == 8000
+
+    # Scrape annotations
+    pod_annotations = deploy["spec"]["template"]["metadata"]["annotations"]
+    assert pod_annotations["prometheus.io/scrape"] == "true"
+    assert pod_annotations["prometheus.io/port"] == "8000"
+    assert pod_annotations["prometheus.io/path"] == "/metrics"
+
+    # Service specifications: LoadBalancer on port 8080 as the sole ingress
+    assert svc["metadata"]["namespace"] == "ust-system"
+    assert svc["metadata"]["name"] == "mirror-gateway"
+    assert svc["spec"]["type"] == "LoadBalancer"
+    port_entry = svc["spec"]["ports"][0]
+    assert port_entry["port"] == 8080
+    assert port_entry["targetPort"] == 8000

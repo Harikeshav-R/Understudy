@@ -314,6 +314,234 @@ def fleet_gc(
     )
 
 
+mirror_app = typer.Typer(
+    name="mirror",
+    help="Traffic mirroring gateway management and verification commands.",
+    no_args_is_help=True,
+)
+app.add_typer(mirror_app, name="mirror")
+
+
+@mirror_app.command("register")
+def mirror_register(
+    incident: str = typer.Option(..., "--incident", "-i", help="Incident ID (e.g. inc_mirror)."),
+    count: int = typer.Option(3, "--count", "-c", help="Number of twins to register (default: 3)."),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Register active twin environments with the traffic mirror gateway."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.clock import SystemClock
+    from understudy.common.config import get_settings
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import TwinHandle
+    from understudy.fleet.render import build_twin_namespace
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    settings = get_settings()
+    prefix = settings.cluster.twin_namespace_prefix
+    now = SystemClock().now()
+
+    twins: list[TwinHandle] = [
+        TwinHandle(
+            twin_id=f"twin_{incident}_{idx}",
+            incident_id=incident,
+            candidate_index=idx,
+            namespace=build_twin_namespace(prefix, incident, idx),
+            database=f"twin_{incident}_{idx}",
+            forked_from_snapshot_at=now,
+            ready_at=now,
+            state="ready",
+        )
+        for idx in range(count)
+    ]
+
+    async def _run() -> list[tuple[str, str]]:
+        registry = HttpMirrorRegistry(base_url=gateway_url, settings=settings)
+        registered: list[tuple[str, str]] = []
+        try:
+            for twin in twins:
+                target_url = registry.build_twin_base_url(twin)
+                await registry.register_twin(twin)
+                registered.append((twin.twin_id, target_url))
+            return registered
+        finally:
+            await registry.aclose()
+
+    try:
+        results = asyncio.run(_run())
+        for tid, url in results:
+            typer.echo(f"registered twin_id={tid} base_url={url}")
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error registering twins with mirror gateway: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@mirror_app.command("stats")
+def mirror_stats(
+    incident: str | None = typer.Option(
+        None,
+        "--incident",
+        "-i",
+        help="Filter twin statistics by incident ID (e.g. inc_mirror).",
+    ),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Fetch traffic delivery and drop statistics from the mirror gateway."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _run() -> dict[str, MirrorStats]:
+        registry = HttpMirrorRegistry(base_url=gateway_url)
+        try:
+            return await registry.get_all_stats()
+        finally:
+            await registry.aclose()
+
+    try:
+        all_stats = asyncio.run(_run())
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error fetching mirror stats: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    filtered = {tid: s for tid, s in all_stats.items() if incident is None or incident in tid}
+
+    if not filtered:
+        msg = (
+            f"No mirror stats found for incident={incident}"
+            if incident
+            else "No mirror stats found"
+        )
+        typer.echo(msg)
+        return
+
+    typer.echo(f"{'twin_id':<30} {'delivered':>10} {'dropped':>10} {'drop_ratio':>12}")
+    typer.echo("-" * 65)
+    for _, s in sorted(filtered.items()):
+        typer.echo(f"{s.twin_id:<30} {s.delivered:>10} {s.dropped:>10} {s.drop_ratio:>12.4f}")
+
+
+@mirror_app.command("unregister")
+def mirror_unregister(
+    twin_id: str = typer.Option(..., "--twin-id", "-t", help="Twin ID to unregister."),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Unregister a twin from the traffic mirror gateway."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _run() -> None:
+        registry = HttpMirrorRegistry(base_url=gateway_url)
+        try:
+            await registry.unregister_twin(twin_id)
+        finally:
+            await registry.aclose()
+
+    try:
+        asyncio.run(_run())
+        typer.echo(f"unregistered twin_id={twin_id}")
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error unregistering twin: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@mirror_app.command("compare")
+def mirror_compare(
+    incident: str = typer.Option(
+        ...,
+        "--incident",
+        "-i",
+        help="Incident ID to compare (e.g. inc_mirror).",
+    ),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Compare mirrored traffic counts and fidelity across twins."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.fidelity import TwinFidelityReport
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _run() -> list[TwinFidelityReport]:
+        registry = HttpMirrorRegistry(base_url=gateway_url)
+        try:
+            return await registry.get_fidelity_reports(incident)
+        finally:
+            await registry.aclose()
+
+    try:
+        reports = asyncio.run(_run())
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error fetching stats for comparison: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not reports:
+        typer.echo(f"No registered twins found for incident={incident}", err=True)
+        raise typer.Exit(code=1)
+
+    prod_delivered = reports[0].prod_delivered if reports else 0
+    typer.echo(
+        f"Mirror fidelity comparison for incident={incident} (prod delivered: {prod_delivered}):"
+    )
+    typer.echo(
+        f"{'twin_id':<30} {'delivered':>10} {'delta%':>10} {'drop_ratio':>12} {'fidelity':>12}"
+    )
+    typer.echo("-" * 78)
+
+    for r in reports:
+        delta_str = f"{r.delivered_delta_ratio * 100:>9.2f}%"
+        ratio_str = f"{r.drop_ratio:>12.4f}"
+        typer.echo(f"{r.twin_id:<30} {r.twin_delivered:>10} {delta_str} {ratio_str} {r.status:>12}")
+        if r.prod_paths:
+            for path, pcount in sorted(r.prod_paths.items()):
+                tcount = r.twin_paths.get(path, 0)
+                pfract = (pcount / prod_delivered * 100) if prod_delivered > 0 else 0.0
+                tfract = (tcount / r.twin_delivered * 100) if r.twin_delivered > 0 else 0.0
+                typer.echo(
+                    f"  Path: {path:<20} prod={pcount} ({pfract:.1f}%)"
+                    f"  twin={tcount} ({tfract:.1f}%)"
+                )
+
+    all_ok = all(r.status == "OK" for r in reports)
+    if all_ok:
+        typer.echo(
+            "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        )
+    else:
+        typer.echo(
+            "Fidelity check: DEGRADED (traffic counts or path distributions diverge from prod)."
+        )
+
+
 store_app = typer.Typer(
     name="store",
     help="Datastore migration and verification commands.",

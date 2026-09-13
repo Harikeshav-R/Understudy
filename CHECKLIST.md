@@ -26,8 +26,8 @@ Box states, used literally:
 - [-] cut, with the ADR or decision that cut it noted inline
 ```
 
-Tier tags: **[P0]** must exist or there is no submission. **[P1]** wins the rubric.
-**[P2]** only after P1 is complete (ADR-033).
+Tier tags: **[P0]** must exist or there is no submission. **[P1]** wins the rubric. **[P2]** only after P1 is complete
+(ADR-033).
 
 Streams: **A** = Platform, **B** = Reasoning. Do not pick up the other stream's boxes
 without agreeing the handoff out loud first.
@@ -50,7 +50,7 @@ Copy this block into the PR body for each step. All seven or the step is not don
 
 ---
 
-## Phase 0 — Foundations and contracts  **[P0]**
+## Phase 0 — Foundations and contracts **[P0]**
 
 Both people, one sitting. Nothing else starts until Checkpoint 0 is green.
 
@@ -65,6 +65,7 @@ Both people, one sitting. Nothing else starts until Checkpoint 0 is green.
 - [x] 0.8 `ust doctor` preflight
 
 **Checkpoint 0**
+
 - [x] `make check` — ruff ok, mypy --strict clean, import-linter contracts kept, coverage 100%
 - [x] `ust doctor` exits 0 with all preflight lines OK
 - [x] Every Protocol importable; graph deps constructible entirely from fakes
@@ -87,6 +88,7 @@ Phase 0 is not done.
 - [x] A1.8 `services/loadgen/` seeded deterministic generator
 
 **Checkpoint A1**
+
 - [x] `kubectl -n ust-prod get pods` → 4/4 Running, zero restarts
 - [x] `curl localhost:8080/api/items` returns items; Prometheus has ≥ 6 targets up
 - [x] `make loadgen RPS=20 DURATION=30` → p99 < 400 ms, error rate 0.00
@@ -104,6 +106,7 @@ Phase 0 is not done.
 - [x] B1.5 `ust demo --fake`
 
 **Checkpoint B1**
+
 - [x] `ust demo --fake --seed 42` traverses all 13 nodes in order, ends `outcome=executed`
 - [x] `ust demo --fake --seed 42 --force-veto` ends `outcome=escalated` via the escalate path
 - [x] `ust graph --render` produces the diagram used in the demo
@@ -124,35 +127,37 @@ terminal paths. Neither stream blocked the other.
 - [x] A2.5 Idempotent teardown by label, `ust fleet gc`, atexit + SIGTERM handlers
 
 **Checkpoint A2** — re-run live on 2026-09-13 after the code-review fixes below
+
 - [x] Three twin namespaces Ready within 120 s; three twin databases exist
-      (`ust fleet fork --incident inc_test --count 3` → `ust-twin-inc-test-0..2`; namespace
-      names are DNS-1123 labels, so the incident's underscores become hyphens while the
-      `understudy.dev/incident` label keeps the raw ID)
-- [x] Twin item count equals prod item count at fork time
-      (baseline read from `ust_prod` on `prod-postgres.ust-prod`, not from `snapshot_template`)
+  (`ust fleet fork --incident inc_test --count 3` → `ust-twin-inc-test-0..2`; namespace
+  names are DNS-1123 labels, so the incident's underscores become hyphens while the
+  `understudy.dev/incident` label keeps the raw ID)
+- [x] Twin item count equals prod item count at fork time (baseline read from `ust_prod` on `prod-postgres.ust-prod`,
+  not from `snapshot_template`)
 - [x] **A write to a twin is invisible in production** ← if this fails, stop everything
 - [x] **Twin cannot reach `ust-prod`** ← same. Proven with two positive controls: the same
-      probe succeeds in-namespace, and the same target is reachable from a `ust-prod` pod.
-      `auth-service.ust-prod:8000` and `prod-postgres.ust-prod:5432` both refused from a twin.
-      (The service images are `python:3.12-slim` with no `curl`, and prod's `edge-gateway`
-      Service publishes 8080, so the old `curl … edge-gateway.ust-prod:8000` check could
-      never have proven anything.)
+  probe succeeds in-namespace, and the same target is reachable from a `ust-prod` pod.
+  `auth-service.ust-prod:8000` and `prod-postgres.ust-prod:5432` both refused from a twin. (The service images are
+  `python:3.12-slim` with no `curl`, and prod's `edge-gateway`
+  Service publishes 8080, so the old `curl … edge-gateway.ust-prod:8000` check could
+  never have proven anything.)
 - [x] Teardown removes all namespaces and all twin databases
 - [x] `gc(older_than_seconds=0)` leaves an open incident's namespace and databases untouched,
-      including a database cloned before its namespace exists
+  including a database cloned before its namespace exists
 
 **Code-review fixes applied to Phase 2A (2026-09-13)**
+
 - [x] Namespaces sanitized to DNS-1123 — forks with a real `inc_<ulid>` ID previously failed 422
 - [x] Snapshot refresh fails loudly (`ON_ERROR_STOP`, dump to file, post-restore guard) instead
-      of publishing an empty `snapshot_template`; verified live against an unreachable source
+  of publishing an empty `snapshot_template`; verified live against an unreachable source
 - [x] `pg_terminate_backend` datname quoted as a SQL literal, so the pre-DROP safety net runs
 - [x] Partial fork failure tears down the twins it already created
 - [x] Digests pinned from the current ReplicaSet; unpinnable images degrade to the spec tag
-      and record `digest_pinned=False` rather than failing every twin
+  and record `digest_pinned=False` rather than failing every twin
 - [x] Probes and volumes rendered as valid Kubernetes YAML; unsupported volume sources refused
 - [x] Readiness waits only on the pods it expects, ignoring terminal and terminating leftovers
 - [x] GC never reaps an active incident, and the orphan-database sweep honours both the age
-      threshold and in-flight clones
+  threshold and in-flight clones
 
 ---
 
@@ -166,6 +171,7 @@ terminal paths. Neither stream blocked the other.
 - [x] B2.6 `graph/`: DAG from declaration, cross-check against observed traffic, blast calculator
 
 **Checkpoint B2**
+
 - [x] `ust signals deploys --limit 5` returns five real commits with digests and migration flags
 - [x] `ust signals context` returns a valid IncidentContext with real Prometheus and Loki data
 - [x] `ust graph show` prints the DAG and "declared matches observed: OK"
@@ -176,18 +182,19 @@ terminal paths. Neither stream blocked the other.
 
 ## Phase 3A — Mirror gateway (Stream A)  **[P0]**
 
-- [ ] A3.1 Sync proxy to prod + per-twin bounded queues + drain workers + drop counting
-- [ ] A3.2 Registration API and `MirrorStats` endpoint
-- [ ] A3.3 Prometheus metrics: delivered, dropped, latency
-- [ ] A3.4 `mirror/registry.py` client in the agent
-- [ ] A3.5 Loadgen repointed; gateway is the only ingress
-- [ ] A3.6 Backpressure behaviour implemented and measured
+- [x] A3.1 Sync proxy to prod + per-twin bounded queues + drain workers + drop counting
+- [x] A3.2 Registration API and `MirrorStats` endpoint
+- [x] A3.3 Prometheus metrics: delivered, dropped, latency
+- [x] A3.4 `mirror/registry.py` client in the agent
+- [x] A3.5 Loadgen repointed; gateway is the only ingress
+- [x] A3.6 Backpressure behaviour implemented and measured
 
 **Checkpoint A3**
-- [ ] Three twins registered; drop ratio < 0.01 at 50 RPS for 60 s
-- [ ] `ust mirror compare` shows per-twin counts within 2% of prod, identical path distribution
-- [ ] A dead twin does not raise prod p99 by more than 5 ms
-- [ ] A dead twin's drop ratio rises toward 1.0 without gateway errors
+
+- [x] Three twins registered; drop ratio < 0.01 at 50 RPS for 60 s
+- [x] `ust mirror compare` shows per-twin counts within 2% of prod, identical path distribution
+- [x] A dead twin does not raise prod p99 by more than 5 ms
+- [x] A dead twin's drop ratio rises toward 1.0 without gateway errors
 
 ---
 
@@ -201,6 +208,7 @@ terminal paths. Neither stream blocked the other.
 - [ ] B3.6 **[P1]** Playbook write-back with evidence refs and success counters
 
 **Checkpoint B3**
+
 - [ ] `ust plan` returns N+1 plans; every one validates; every one has an inverse except NO_ACTION
 - [ ] Every target workload and commit resolves against the live cluster and repo
 - [ ] Planner action-type stability across two seeded calls recorded (number goes in the brief)
@@ -220,6 +228,7 @@ validated, normalised, invertible plans against the real cluster.
 - [ ] A4.5 **[P0]** Arbiter with the 0.15 ambiguity margin; winner derives only from `scores`
 
 **Checkpoint A4**
+
 - [ ] Property tests pass: monotone in recovery time; disqualified never wins; NO_ACTION can win
 - [ ] `tournament replay` on the three-candidate fixture → decided, with margin
 - [ ] `tournament replay` on the near-tie fixture → **ambiguous, no winner**
@@ -244,6 +253,7 @@ validated, normalised, invertible plans against the real cluster.
 - [ ] B4.6 **[P0]** Veto rendered into actionable prose
 
 **Checkpoint B4**
+
 - [ ] Safe rollback plan → `verdict=pass`, solver_ms < 500
 - [ ] Rollback across a migration → `verdict=veto invariant=K3`, reason names both commits
 - [ ] Scale-to-zero plan → `verdict=veto invariant=K1`
@@ -255,7 +265,7 @@ should not; the kernel proves, vetoes, abstains, and explains each.
 
 ---
 
-## Phase 5 — Actuation and end-to-end  **[P0]**
+## Phase 5 — Actuation and end-to-end **[P0]**
 
 Both streams converge. Pair on this; do not split it.
 
@@ -268,6 +278,7 @@ Both streams converge. Pair on this; do not split it.
 - [ ] 5.7 End-to-end wiring test on the real cluster
 
 **Checkpoint 5 — THE P0 GATE.** Run `ust run --scenario seed/bad_deploy_data_service --live`:
+
 - [ ] Real PagerDuty alert received via the tunnel
 - [ ] Context contains real Loki signatures and the real regression commit
 - [ ] Four candidates generated, one of them the correct rollback
@@ -281,6 +292,7 @@ Both streams converge. Pair on this; do not split it.
 - [ ] Run record written and provably immutable
 
 Then `ust run --scenario seed/bad_deploy_with_migration --live`:
+
 - [ ] Kernel `verdict=veto invariant=K3`
 - [ ] **No production change** (verify `ust-prod` untouched)
 - [ ] PagerDuty note carries all four candidates with scores and the counterexample
@@ -299,6 +311,7 @@ Then `ust run --scenario seed/bad_deploy_with_migration --live`:
 - [ ] 6.B4 `ust shadow run --once` and `ust shadow daemon`
 
 **Checkpoint 6B**
+
 - [ ] A schema-valid scenario appears in `scenarios/generated/`
 - [ ] One twin forked and torn down; one playbook written with `origin=shadow` and evidence refs
 - [ ] `grep -r apply_to_production src/understudy/shadow/` returns nothing
@@ -317,6 +330,7 @@ Then `ust run --scenario seed/bad_deploy_with_migration --live`:
 - [ ] 6.A6 `make reset` canonical state, idempotent, under 60 s, verified by checksum
 
 **Checkpoint 6A**
+
 - [ ] `ust eval run --dry-run` enumerates 12 scenarios with expected outcomes
 - [ ] A full single-repeat pass completes: 12 runs, 12 result rows, zero leaked namespaces
 - [ ] `ust eval report` emits both files with every metric carrying n and an interval
@@ -324,17 +338,21 @@ Then `ust run --scenario seed/bad_deploy_with_migration --live`:
 
 ---
 
-## Phase 7 — Full evaluation, brief, demo  **[P1]**
+## Phase 7 — Full evaluation, brief, demo **[P1]**
 
 - [ ] 7.1 `ust eval run --scenarios all --repeats 3`, expect a fix-and-rerun cycle
 - [ ] 7.1a Final `eval/report.json` and `eval/report.md` committed
 - [ ] 7.2 `ust brief generate` populates the submission brief from the report
+- [ ] 7.2a Arga Labs' current positioning verified from their own site; product §0.4 and the
+  video's placement beat still accurate
 - [ ] 7.3 Demo rehearsed end to end three times on a cold machine, timed under 6:00
+- [ ] 7.3b Two-minute video produced per `docs/09-demo-video.md`, §9.7 checklist fully ticked
 - [ ] 7.3a Backup recording captured at demo resolution and layout
 - [ ] 7.4 Repo hygiene: README accurate, `.env.example` complete, docs regenerated
 - [ ] 7.5 Known-limitations section written from product §0.7 and invariants §3.6, unsoftened
 
 **Checkpoint 7**
+
 - [ ] Fresh clone on a clean path reaches `make demo` with only secrets to fill in
 - [ ] `ust brief generate --check` exits 0
 

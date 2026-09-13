@@ -420,6 +420,7 @@ section) and layered from `config/services.yaml` → an optional, gitignored
 | `worker` | `job_list_limit` | `50` | `WORKER_JOB_LIST_LIMIT` |
 | `loadgen` | `rps` | `20.0` | `LOADGEN_RPS` |
 | `loadgen` | `duration_seconds` | `30.0` | `LOADGEN_DURATION` |
+| `loadgen` | `target_url` | `"http://localhost:8080"` | `LOADGEN_TARGET_URL` |
 | `loadgen` | `seed` | `42` | `LOADGEN_SEED` |
 | `loadgen` | `auth_token` | `"valid-token"` | `LOADGEN_AUTH_TOKEN` |
 | `loadgen` | `http_timeout_seconds` | `10.0` | `LOADGEN_TIMEOUT` |
@@ -431,7 +432,14 @@ section) and layered from `config/services.yaml` → an optional, gitignored
 | `db` | `pool_timeout_seconds` | `5.0` | `DB_POOL_TIMEOUT_SECONDS` |
 | `faults` | `injection_seed` | `1337` | `FAULT_INJECTION_SEED` |
 | `faults` | `pool_exhaustion_getconn_timeout_seconds` | `1.0` | `FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS` |
+| `mirror_gateway` | `target_prod_url` | `"http://edge-gateway.ust-prod:8080"` | `TARGET_PROD_URL` |
+| `mirror_gateway` | `queue_maxsize` | `1000` | `MIRROR_QUEUE_MAXSIZE` |
+| `mirror_gateway` | `worker_timeout_seconds` | `2.0` | `MIRROR_WORKER_TIMEOUT_SECONDS` |
+| `mirror_gateway` | `http_timeout_seconds` | `5.0` | `MIRROR_HTTP_TIMEOUT_SECONDS` |
+| `mirror_gateway` | `max_connections` | `200` | `MIRROR_MAX_CONNECTIONS` |
+| `mirror_gateway` | `max_keepalive_connections` | `50` | `MIRROR_MAX_KEEPALIVE_CONNECTIONS` |
 | `metrics` | `histogram_buckets` | see `config/services.yaml` | none (edit the YAML) |
+
 
 `edge_gateway.http_timeout_seconds`, `auth_service.token_cache_max_size`,
 `worker.poll_interval_seconds`, and `faults.injection_seed` keep the exact env var

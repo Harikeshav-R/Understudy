@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: edge-gateway
-  namespace: ust-prod
+  name: mirror-gateway
+  namespace: ust-system
   labels:
-    app: edge-gateway
-    app.kubernetes.io/name: edge-gateway
+    app: mirror-gateway
+    app.kubernetes.io/name: mirror-gateway
     app.kubernetes.io/part-of: understudy
     app.kubernetes.io/component: gateway
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: edge-gateway
+      app: mirror-gateway
   template:
     metadata:
       labels:
-        app: edge-gateway
-        app.kubernetes.io/name: edge-gateway
+        app: mirror-gateway
+        app.kubernetes.io/name: mirror-gateway
         app.kubernetes.io/part-of: understudy
         understudy.dev/scrape: 'true'
       annotations:
@@ -26,35 +26,30 @@ spec:
         prometheus.io/path: /metrics
     spec:
       containers:
-        - name: edge-gateway
-          image: localhost:5001/edge-gateway:good
+        - name: mirror-gateway
+          image: localhost:5001/mirror-gateway:good
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
               name: http
           env:
             - name: UNDERSTUDY_ROLE
-              value: prod
-            - name: UNDERSTUDY_FAULT_INJECTION_ENABLED
-              value: 'false'
-            - name: AUTH_SERVICE_URL
-              value: http://auth-service:8000
-            - name: DATA_SERVICE_URL
-              value: http://data-service:8000
-            - name: HTTP_TIMEOUT_SECONDS
+              value: system
+            - name: TARGET_PROD_URL
+              value: http://edge-gateway.ust-prod:8080
+            - name: MIRROR_QUEUE_MAXSIZE
+              value: '1000'
+            - name: MIRROR_WORKER_TIMEOUT_SECONDS
+              value: '2.0'
+            - name: MIRROR_HTTP_TIMEOUT_SECONDS
               value: '5.0'
-            - name: FAULT_INJECTION_SEED
-              valueFrom:
-                configMapKeyRef:
-                  name: app-config
-                  key: FAULT_INJECTION_SEED
           resources:
             requests:
               cpu: 50m
               memory: 64Mi
             limits:
               cpu: 200m
-              memory: 150Mi
+              memory: 250Mi
           livenessProbe:
             httpGet:
               path: /healthz
@@ -71,16 +66,17 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: edge-gateway
-  namespace: ust-prod
+  name: mirror-gateway
+  namespace: ust-system
   labels:
-    app: edge-gateway
-    app.kubernetes.io/name: edge-gateway
+    app: mirror-gateway
+    app.kubernetes.io/name: mirror-gateway
     app.kubernetes.io/part-of: understudy
+    app.kubernetes.io/component: gateway
 spec:
-  type: ClusterIP
+  type: LoadBalancer
   selector:
-    app: edge-gateway
+    app: mirror-gateway
   ports:
     - name: gateway
       port: 8080

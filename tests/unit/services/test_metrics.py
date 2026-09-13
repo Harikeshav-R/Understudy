@@ -77,7 +77,18 @@ async def test_metrics_registries_are_isolated_per_service() -> None:
         assert "service-a" not in metrics_b
         # service-b never took a request, so no http_requests_total *sample* line should
         # exist (prometheus_client always emits the metric family's HELP/TYPE header even
-        # with zero samples, but a sample line only appears once .labels(...).inc() is
-        # called) -- proving service-a's /ping request didn't land here via a shared
-        # registry.
         assert "http_requests_total{" not in metrics_b
+
+
+def test_setup_metrics_returns_registry_and_sets_state() -> None:
+    """setup_metrics returns the active CollectorRegistry and attaches it to app.state."""
+    app = FastAPI()
+    custom_reg = CollectorRegistry()
+    returned_reg = setup_metrics(app, "my-service", registry=custom_reg)
+    assert returned_reg is custom_reg
+    assert app.state.metrics_registry is custom_reg
+
+    app2 = FastAPI()
+    default_reg = setup_metrics(app2, "my-service-2")
+    assert isinstance(default_reg, CollectorRegistry)
+    assert app2.state.metrics_registry is default_reg
