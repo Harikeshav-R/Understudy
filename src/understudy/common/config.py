@@ -24,6 +24,7 @@ class ScoringSettings(BaseModel):
     min_probe_samples: int = 60
     recovery_consecutive_seconds: int = 15
     recovery_timeout_seconds: int = 180
+    warm_up_seconds: int = 20
     downstream_error_ceiling: float = 0.10
     violation_ceiling: int = 5
 

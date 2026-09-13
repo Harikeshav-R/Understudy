@@ -1,0 +1,1138 @@
+[
+  {
+    "plan_id": "plan_rollback",
+    "twin_id": "twin_0",
+    "applied_at": "2026-09-13T12:00:00Z",
+    "probes": [
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 95.0,
+        "error_rate": 0.0
+      }
+    ],
+    "recovered": true,
+    "recovery_seconds": 12.0,
+    "observed_blast_set": [],
+    "downstream_error_delta": 0.0,
+    "invariant_violations": [],
+    "mirror_stats": {
+      "twin_id": "twin_0",
+      "delivered": 1000,
+      "dropped": 2
+    },
+    "evidence_complete": true
+  },
+  {
+    "plan_id": "plan_restart",
+    "twin_id": "twin_1",
+    "applied_at": "2026-09-13T12:00:00Z",
+    "probes": [
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": true,
+        "p99_latency_ms": 140.0,
+        "error_rate": 0.01
+      }
+    ],
+    "recovered": true,
+    "recovery_seconds": 50.0,
+    "observed_blast_set": [
+      "data-service"
+    ],
+    "downstream_error_delta": 0.02,
+    "invariant_violations": [],
+    "mirror_stats": {
+      "twin_id": "twin_1",
+      "delivered": 1000,
+      "dropped": 5
+    },
+    "evidence_complete": true
+  },
+  {
+    "plan_id": "plan_no_action",
+    "twin_id": "twin_2",
+    "applied_at": "2026-09-13T12:00:00Z",
+    "probes": [
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      },
+      {
+        "at": "2026-09-13T12:00:00Z",
+        "healthy": false,
+        "p99_latency_ms": 450.0,
+        "error_rate": 0.05
+      }
+    ],
+    "recovered": false,
+    "recovery_seconds": null,
+    "observed_blast_set": [],
+    "downstream_error_delta": 0.0,
+    "invariant_violations": [],
+    "mirror_stats": {
+      "twin_id": "twin_2",
+      "delivered": 1000,
+      "dropped": 0
+    },
+    "evidence_complete": true
+  }
+]
