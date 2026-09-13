@@ -675,7 +675,7 @@ def test_normalise_plan_rollback_deploy() -> None:
     )
     assert normalise_plan(bad_inv_commit_plan, ctx) is None
 
-    # 8. Plan with inverse is None
+    # 8. Plan with inverse is None -> B3.4 deterministically synthesizes inverse
     cand_no_inv = RemediationPlan(
         plan_id="cand_no_inv",
         candidate_index=0,
@@ -691,7 +691,8 @@ def test_normalise_plan_rollback_deploy() -> None:
     )
     norm_no_inv = normalise_plan(cand_no_inv, ctx)
     assert norm_no_inv is not None
-    assert norm_no_inv.inverse is None
+    assert norm_no_inv.inverse is not None
+    assert norm_no_inv.inverse.action == ActionType.RESTART_WORKLOAD
 
     # 9. Inverse with empty workload (non-rollback)
     plan_inv_empty_wl = plan.model_copy(
@@ -707,7 +708,8 @@ def test_normalise_plan_rollback_deploy() -> None:
     norm_empty_wl = normalise_plan(plan_inv_empty_wl, ctx)
     assert norm_empty_wl is not None
 
-    # 10. Inverse with action other than ROLLBACK_DEPLOY (e.g. SCALE_WORKLOAD)
+    # 10. Inverse with mismatched action (e.g. LLM generated SCALE_WORKLOAD for a rollback)
+    # Under B3.4, deterministic inverse synthesis overrides with proper ROLLBACK_DEPLOY inverse
     plan_inv_scale = plan.model_copy(
         update={
             "inverse": plan.inverse.model_copy(
@@ -721,7 +723,23 @@ def test_normalise_plan_rollback_deploy() -> None:
     norm_inv_scale = normalise_plan(plan_inv_scale, ctx)
     assert norm_inv_scale is not None
     assert norm_inv_scale.inverse is not None
-    assert norm_inv_scale.inverse.action == ActionType.SCALE_WORKLOAD
+    assert norm_inv_scale.inverse.action == ActionType.ROLLBACK_DEPLOY
+
+    # 11. Inverse synthesis fails -> dropped
+    bad_inv_synth_plan = RemediationPlan(
+        plan_id="plan_bad_inv_synth",
+        candidate_index=0,
+        action=ActionType.SCALE_WORKLOAD,
+        params=ActionParams(workload="data-service", replica_delta=0),
+        target_resources=[
+            ResourceRef(namespace="ust-twin", kind="Deployment", name="data-service")
+        ],
+        declared_blast_set=["data-service"],
+        inverse=None,
+        rationale="Scale with zero delta",
+        origin="planner",
+    )
+    assert normalise_plan(bad_inv_synth_plan, ctx) is None
 
 
 def test_normalise_plans_batch_filtering_and_reindexing() -> None:

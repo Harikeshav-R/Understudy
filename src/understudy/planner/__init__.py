@@ -1,5 +1,9 @@
 """Planner package: remediation candidate generation and normalisation."""
 
+from understudy.planner.inverse import (
+    invert_plan,
+    synthesize_inverse,
+)
 from understudy.planner.prompt import (
     PlannerPromptResponse,
     PromptCandidatePlan,
@@ -52,6 +56,7 @@ __all__ = [
     "format_signatures",
     "generate_candidates_with_retry",
     "get_planner_output_schema",
+    "invert_plan",
     "normalise_plan",
     "normalise_plans",
     "parse_raw_planner_json",
@@ -59,5 +64,6 @@ __all__ = [
     "render_candidate_generation_prompt",
     "resolve_commit_ref",
     "resolve_workload_name",
+    "synthesize_inverse",
     "validate_and_parse_plans",
 ]

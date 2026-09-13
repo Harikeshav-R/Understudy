@@ -30,6 +30,7 @@ from understudy.contracts.incident import (
 from understudy.contracts.plan import ActionParams, RemediationPlan
 from understudy.graph.api import DependencyGraph
 from understudy.planner.api import Planner
+from understudy.planner.inverse import synthesize_inverse
 from understudy.planner.prompt import (
     PlannerPromptResponse,
     PromptCandidatePlan,
@@ -47,6 +48,7 @@ class PlannerSchemaValidationError(PlannerError):
 
 def validate_and_parse_plans(
     raw_payload: str | dict[str, Any] | PlannerPromptResponse,
+    require_inverse: bool = True,
 ) -> list[RemediationPlan]:
     """Parse raw payload into candidate RemediationPlans, strictly validating schema.
 
@@ -84,14 +86,18 @@ def validate_and_parse_plans(
 
     plans: list[RemediationPlan] = []
     for idx, candidate in enumerate(parsed_response.plans):
-        _validate_candidate_schema(candidate, candidate_index=idx)
+        _validate_candidate_schema(candidate, candidate_index=idx, require_inverse=require_inverse)
         plan = prompt_candidate_to_remediation_plan(candidate, candidate_index=idx)
         plans.append(plan)
 
     return plans
 
 
-def _validate_candidate_schema(candidate: PromptCandidatePlan, candidate_index: int) -> None:
+def _validate_candidate_schema(
+    candidate: PromptCandidatePlan,
+    candidate_index: int,
+    require_inverse: bool = True,
+) -> None:
     """Validate action-specific constraints and invariant prerequisites."""
     if not candidate.rationale.strip():
         raise PlannerSchemaValidationError(
@@ -121,7 +127,7 @@ def _validate_candidate_schema(candidate: PromptCandidatePlan, candidate_index: 
                 },
             )
     else:
-        if candidate.inverse is None:
+        if require_inverse and candidate.inverse is None:
             raise PlannerSchemaValidationError(
                 (
                     f"Candidate at index {candidate_index} ({candidate.action.value}) "
@@ -397,6 +403,22 @@ def normalise_plan(
         }
     )
 
+    # Synthesize deterministic inverse per action type (B3.4)
+    # Never ask the LLM for the inverse or trust an unverified LLM inverse.
+    try:
+        normalised_inverse = synthesize_inverse(
+            plan=plan.model_copy(update={"params": updated_params, "inverse": normalised_inverse}),
+            context=context,
+            cluster_workloads=valid_workloads,
+        )
+    except PlannerError as exc:
+        logger.warning(
+            "planner_drop_inverse_synthesis_failed",
+            plan_id=plan.plan_id,
+            error=str(exc),
+        )
+        return None
+
     return plan.model_copy(
         update={
             "params": updated_params,
@@ -545,7 +567,7 @@ async def generate_candidates_with_retry(
     for attempt in range(max_retries + 1):
         raw_text = await llm_caller(messages)
         try:
-            unnormalised_plans = validate_and_parse_plans(raw_text)
+            unnormalised_plans = validate_and_parse_plans(raw_text, require_inverse=False)
             logger.info(
                 "planner_schema_validated",
                 attempt=attempt,
@@ -687,5 +709,6 @@ __all__ = [
     "normalise_plans",
     "resolve_commit_ref",
     "resolve_workload_name",
+    "synthesize_inverse",
     "validate_and_parse_plans",
 ]

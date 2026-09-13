@@ -72,7 +72,8 @@ class PromptCandidatePlan(BaseModel):
     inverse: PromptInversePlan | None = Field(
         default=None,
         description=(
-            "Inverse plan reversing this action. Required for all actions except no_action."
+            "Inverse plan reversing this action. Optional; if omitted, Understudy "
+            "synthesizes the inverse deterministically."
         ),
     )
     rationale: str = Field(
@@ -324,8 +325,8 @@ SAFETY AND FORMAL INVARIANT REQUIREMENTS:
 - Target Workload: Must be an existing service named in the Dependency Graph or Alert.
 - Declared Blast Set: You must declare all services expected to experience metric or traffic
   impact. This MUST be a subset of services present in the dependency graph topology.
-- Reversibility: Every plan except "no_action" MUST declare a valid inverse plan that
-  restores prior state. For "no_action", the inverse field must be null.
+- Reversibility: Every plan except "no_action" is reversible. Understudy synthesizes
+  all inverse plans deterministically per ADR-016. For "no_action", the inverse field is null.
 - Diversity: When asked for N candidates, generate diverse, distinct hypotheses (e.g. rollback
   vs scale vs restart vs config revert) rather than minor variations of the same action.
 - Playbook Match: If a playbook match candidate is provided, evaluate whether it fits the
@@ -357,8 +358,7 @@ def build_user_prompt(
 
 INSTRUCTION:
 Generate exactly {count} distinct, viable, and diverse candidate remediation plans.
-Each candidate must belong to the closed action enum and contain an appropriate inverse.
-For no_action, the inverse must be null.
+Each candidate must belong to the closed action enum. Inverses are synthesized deterministically.
 Output the response as a JSON object matching the required schema with the "plans" array.
 """
 
