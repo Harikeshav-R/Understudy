@@ -25,7 +25,13 @@ from understudy.contracts.plan import ActionParams, RemediationPlan
 from understudy.contracts.run import RunRecord
 from understudy.contracts.twin import TwinHandle
 from understudy.eval.fakes import FakeEvalHarness
-from understudy.fleet.fakes import FakeFleetController
+from understudy.fleet.fakes import (
+    FakeDatabaseCloner,
+    FakeDatabaseCommandExecutor,
+    FakeFleetController,
+    FakeSnapshotRefresher,
+    FakeWorkloadReader,
+)
 from understudy.graph.fakes import FakeBlastRadiusCalculator, FakeDependencyGraph
 from understudy.kernel.fakes import FakeSafetyKernel
 from understudy.mirror.fakes import FakeMirrorRegistry
@@ -358,6 +364,155 @@ async def test_fake_fleet_controller() -> None:
 
     await fleet.teardown_all("inc_001")
     assert "inc_001" not in fleet._twins
+
+
+@pytest.mark.asyncio
+async def test_fake_workload_reader() -> None:
+    reader = FakeWorkloadReader()
+    snapshot = await reader.read_workloads("ust-prod")
+    assert snapshot.namespace == "ust-prod"
+    assert len(snapshot.workloads) == 5
+    assert "edge-gateway" in snapshot.workloads
+    assert "prod-postgres" in snapshot.workloads
+    assert "app-config" in snapshot.config_maps
+
+    filtered = await reader.read_workloads("ust-prod", exclude_components={"database"})
+    assert len(filtered.workloads) == 4
+    assert "prod-postgres" not in filtered.workloads
+    assert "data-service" in filtered.workloads
+    data_svc = filtered.workloads["data-service"]
+    assert len(data_svc.containers) == 1
+    assert data_svc.containers[0].pinned_image.startswith("localhost:5001/data-service@sha256:")
+
+
+@pytest.mark.asyncio
+async def test_fake_database_command_executor() -> None:
+    executor = FakeDatabaseCommandExecutor()
+    code, out, _ = await executor.run_sql(
+        ["SELECT 1 FROM pg_database WHERE datname = 'snapshot_template';"]
+    )
+    assert code == 0
+    assert "1" in out
+
+    executor.databases.remove("snapshot_template")
+    code, out, _ = await executor.run_sql(
+        ["SELECT 1 FROM pg_database WHERE datname = 'snapshot_template';"]
+    )
+    assert code == 0
+    assert out == ""
+
+    # Test pipeline
+    code, out, _ = await executor.run_pipeline("echo test")
+    assert code == 0
+    assert "snapshot_template" in executor.databases
+
+    executor.fail_pipeline = True
+    code, _, err = await executor.run_pipeline("echo test")
+    assert code == 1
+    assert "Simulated pipeline" in err
+
+    executor.fail_sql = "simulated sql error"
+    code, _, err = await executor.run_sql(["SELECT 1;"])
+    assert code == 1
+    assert "simulated sql error" in err
+    executor.fail_sql = None
+
+    # Test clone with in_use simulation
+    executor.in_use_counter = 1
+    code, _, err = await executor.run_sql(
+        ["CREATE DATABASE twin_test_0 TEMPLATE snapshot_template;"]
+    )
+    assert code == 1
+    assert "is being accessed by other users" in err
+
+    code, out, _ = await executor.run_sql(
+        ["CREATE DATABASE twin_test_0 TEMPLATE snapshot_template;"]
+    )
+    assert code == 0
+    assert "twin_test_0" in executor.databases
+
+    code, out, _ = await executor.run_sql(["SELECT datname FROM pg_database;"])
+    assert "twin_test_0" in out
+
+    code, out, _ = await executor.run_sql(["SELECT count(*) FROM items;"], database="twin_test_0")
+    assert out == "207"
+
+    code, out, _ = await executor.run_sql(["SELECT pg_terminate_backend(1);"])
+    assert out == "t"
+
+    code, out, _ = await executor.run_sql(["SELECT 'other';"])
+    assert out == "ok"
+
+    code, out, _ = await executor.run_sql(["DROP DATABASE IF EXISTS twin_test_0;"])
+    assert code == 0
+    assert "twin_test_0" not in executor.databases
+
+
+@pytest.mark.asyncio
+async def test_fake_snapshot_refresher() -> None:
+    refresher = FakeSnapshotRefresher()
+    assert await refresher.get_last_snapshot_time() is None
+    assert refresher.is_running is False
+
+    refreshed = await refresher.refresh_snapshot()
+    assert refreshed is not None
+    assert await refresher.get_last_snapshot_time() == refreshed
+    assert refresher.refresh_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fake_snapshot_refresher_start_stop() -> None:
+    refresher = FakeSnapshotRefresher()
+    await refresher.start()
+    assert refresher.is_running is True
+
+    await refresher.stop()
+    refresher_idle = FakeSnapshotRefresher()
+    await refresher_idle.stop()
+    assert refresher_idle.is_running is False
+
+
+@pytest.mark.asyncio
+async def test_fake_database_cloner() -> None:
+    refresher = FakeSnapshotRefresher()
+    await refresher.refresh_snapshot()
+
+    cloner = FakeDatabaseCloner(refresher=refresher)
+    res = await cloner.clone_twin_database("inc-001", 0)
+    assert res.database_name == "twin_inc_001_0"
+    assert res.candidate_index == 0
+    assert res.incident_id == "inc-001"
+    assert res.forked_from_snapshot_at == await refresher.get_last_snapshot_time()
+
+    twins = await cloner.list_twin_databases("inc-001")
+    assert twins == ["twin_inc_001_0"]
+    all_twins = await cloner.list_twin_databases()
+    assert all_twins == ["twin_inc_001_0"]
+
+    count = await cloner.get_item_count("twin_inc_001_0")
+    assert count == 207
+
+    # Ages are reported for garbage collection; an unstamped database reports None.
+    infos = await cloner.list_twin_databases_with_age()
+    assert [i.name for i in infos] == ["twin_inc_001_0"]
+    assert infos[0].age_seconds is not None
+    assert infos[0].age_seconds < 60.0
+    cloner.unknown_age_databases.add("twin_inc_001_0")
+    assert (await cloner.list_twin_databases_with_age())[0].age_seconds is None
+    cloner.unknown_age_databases.clear()
+
+    dropped = await cloner.drop_all_incident_databases("inc-001")
+    assert dropped == ["twin_inc_001_0"]
+    assert await cloner.list_twin_databases("inc-001") == []
+
+    # Failure simulation
+    fail_cloner = FakeDatabaseCloner(simulated_in_use_failures=1)
+    with pytest.raises(Exception, match="is being accessed by other users"):
+        await fail_cloner.clone_twin_database("inc-002", 0)
+
+    # Second attempt succeeds after simulated failure counter decrements
+    success = await fail_cloner.clone_twin_database("inc-002", 0)
+    assert success.database_name == "twin_inc_002_0"
 
 
 @pytest.mark.asyncio

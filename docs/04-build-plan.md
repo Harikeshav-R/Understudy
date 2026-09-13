@@ -248,7 +248,9 @@ anything labelled and older than 1 hour. `atexit` and SIGTERM handlers registere
 #### Checkpoint A2
 ```bash
 ust fleet fork --incident inc_test --count 3
-# expect: three namespaces ust-twin-inc_test-0..2, all pods Ready within 120s
+# expect: three namespaces ust-twin-inc-test-0..2, all pods Ready within 120s
+# (namespace names are DNS-1123 labels, so the incident's underscores become hyphens;
+#  the understudy.dev/incident label keeps the raw ID)
 kubectl get ns -l understudy.dev/incident=inc_test        # expect: 3
 
 # data isolation
@@ -260,10 +262,16 @@ curl -sX POST localhost:8090/api/items -d '{"name":"twin-only"}'
 curl -s localhost:8080/api/items | jq '[.items[] | select(.name=="twin-only")] | length'
 # expect: 0   <-- production must not see the twin's write
 
-# egress denial
-kubectl -n ust-twin-inc_test-0 exec deploy/edge-gateway -- \
-  curl -s --max-time 3 http://edge-gateway.ust-prod:8000/healthz
-# expect: timeout / connection refused, non-zero exit
+# egress denial (the service images are python:3.12-slim, which has no curl)
+kubectl -n ust-twin-inc-test-0 exec deploy/edge-gateway -- python -c \
+  "import socket; socket.create_connection(('auth-service.ust-prod',8000),3)"
+# expect: ConnectionRefusedError / TimeoutError, non-zero exit
+# two controls, or the check is vacuous:
+#   kubectl -n ust-twin-inc-test-0 exec deploy/edge-gateway -- python -c \
+#     "import socket; socket.create_connection(('auth-service',8000),3)"     # expect: succeeds
+#   kubectl -n ust-prod exec deploy/worker -- python -c \
+#     "import socket; socket.create_connection(('auth-service.ust-prod',8000),3)"  # succeeds
+# (prod's edge-gateway Service publishes 8080, not 8000, so it is the wrong probe target)
 
 ust fleet teardown --incident inc_test
 kubectl get ns -l understudy.dev/incident=inc_test        # expect: 0

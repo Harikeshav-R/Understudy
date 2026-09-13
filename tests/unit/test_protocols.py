@@ -6,7 +6,14 @@ from datetime import UTC, datetime
 from understudy.actuator.api import Actuator
 from understudy.contracts.incident import Alert
 from understudy.eval.api import EvalHarness
-from understudy.fleet.api import FleetController
+from understudy.fleet.api import (
+    DatabaseCloner,
+    FleetController,
+    ManifestRenderer,
+    SnapshotRefresher,
+    WorkloadReader,
+)
+from understudy.fleet.database import DatabaseCommandExecutor
 from understudy.graph.api import BlastRadiusCalculator, DependencyGraph
 from understudy.kernel.api import SafetyKernel
 from understudy.mirror.api import MirrorRegistry
@@ -35,6 +42,11 @@ def test_all_protocols_are_protocols() -> None:
         PlaybookLibrary,
         Planner,
         FleetController,
+        WorkloadReader,
+        ManifestRenderer,
+        SnapshotRefresher,
+        DatabaseCloner,
+        DatabaseCommandExecutor,
         MirrorRegistry,
         Tournament,
         SafetyKernel,

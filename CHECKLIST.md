@@ -116,19 +116,43 @@ terminal paths. Neither stream blocked the other.
 
 ## Phase 2A — Fleet controller (Stream A)  **[P0]**
 
-- [ ] A2.1 Read prod workloads via K8s API, resolve tags to **digests**
-- [ ] A2.2 Twin manifest rendering: namespace, role, DSN, egress-stub, NetworkPolicy
-- [ ] A2.3 Snapshot refresher (staging + rename, never a live connection to the template)
-- [ ] A2.3a Twin DB cloner with retry on "source database is being accessed"
-- [ ] A2.4 `fork(incident_id, n)` concurrent, 120 s readiness, K6 policy confirmed before ready
-- [ ] A2.5 Idempotent teardown by label, `ust fleet gc`, atexit + SIGTERM handlers
+- [x] A2.1 Read prod workloads via K8s API, resolve tags to **digests**
+- [x] A2.2 Twin manifest rendering: namespace, role, DSN, egress-stub, NetworkPolicy
+- [x] A2.3 Snapshot refresher (staging + rename, never a live connection to the template)
+- [x] A2.3a Twin DB cloner with retry on "source database is being accessed"
+- [x] A2.4 `fork(incident_id, n)` concurrent, 120 s readiness, K6 policy confirmed before ready
+- [x] A2.5 Idempotent teardown by label, `ust fleet gc`, atexit + SIGTERM handlers
 
-**Checkpoint A2**
-- [ ] Three twin namespaces Ready within 120 s; three twin databases exist
-- [ ] Twin item count equals prod item count at fork time
-- [ ] **A write to a twin is invisible in production** ← if this fails, stop everything
-- [ ] **Twin cannot reach `ust-prod`** (curl from twin pod times out) ← same
-- [ ] Teardown removes all namespaces and all twin databases
+**Checkpoint A2** — re-run live on 2026-09-13 after the code-review fixes below
+- [x] Three twin namespaces Ready within 120 s; three twin databases exist
+      (`ust fleet fork --incident inc_test --count 3` → `ust-twin-inc-test-0..2`; namespace
+      names are DNS-1123 labels, so the incident's underscores become hyphens while the
+      `understudy.dev/incident` label keeps the raw ID)
+- [x] Twin item count equals prod item count at fork time
+      (baseline read from `ust_prod` on `prod-postgres.ust-prod`, not from `snapshot_template`)
+- [x] **A write to a twin is invisible in production** ← if this fails, stop everything
+- [x] **Twin cannot reach `ust-prod`** ← same. Proven with two positive controls: the same
+      probe succeeds in-namespace, and the same target is reachable from a `ust-prod` pod.
+      `auth-service.ust-prod:8000` and `prod-postgres.ust-prod:5432` both refused from a twin.
+      (The service images are `python:3.12-slim` with no `curl`, and prod's `edge-gateway`
+      Service publishes 8080, so the old `curl … edge-gateway.ust-prod:8000` check could
+      never have proven anything.)
+- [x] Teardown removes all namespaces and all twin databases
+- [x] `gc(older_than_seconds=0)` leaves an open incident's namespace and databases untouched,
+      including a database cloned before its namespace exists
+
+**Code-review fixes applied to Phase 2A (2026-09-13)**
+- [x] Namespaces sanitized to DNS-1123 — forks with a real `inc_<ulid>` ID previously failed 422
+- [x] Snapshot refresh fails loudly (`ON_ERROR_STOP`, dump to file, post-restore guard) instead
+      of publishing an empty `snapshot_template`; verified live against an unreachable source
+- [x] `pg_terminate_backend` datname quoted as a SQL literal, so the pre-DROP safety net runs
+- [x] Partial fork failure tears down the twins it already created
+- [x] Digests pinned from the current ReplicaSet; unpinnable images degrade to the spec tag
+      and record `digest_pinned=False` rather than failing every twin
+- [x] Probes and volumes rendered as valid Kubernetes YAML; unsupported volume sources refused
+- [x] Readiness waits only on the pods it expects, ignoring terminal and terminating leftovers
+- [x] GC never reaps an active incident, and the orphan-database sweep honours both the age
+      threshold and in-flight clones
 
 ---
 
