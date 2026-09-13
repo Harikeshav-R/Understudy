@@ -8,8 +8,10 @@ from understudy.fleet.models import (
     ContainerSnapshot,
     EnvVar,
     ResourceSpec,
+    TwinManifestBundle,
     WorkloadSnapshot,
 )
+from understudy.fleet.render import TwinManifestRenderer, render_twin_manifests
 
 
 @runtime_checkable
@@ -42,12 +44,31 @@ class WorkloadReader(Protocol):
         raise NotImplementedError
 
 
+@runtime_checkable
+class ManifestRenderer(Protocol):
+    """Protocol for rendering twin Kubernetes manifests from a cluster snapshot."""
+
+    def render(
+        self,
+        snapshot: ClusterWorkloadSnapshot,
+        incident_id: str,
+        candidate_index: int,
+        database_name: str | None = None,
+    ) -> TwinManifestBundle:
+        """Render isolated twin manifests for a specific candidate."""
+        raise NotImplementedError
+
+
 __all__ = [
     "ClusterWorkloadSnapshot",
     "ContainerSnapshot",
     "EnvVar",
     "FleetController",
+    "ManifestRenderer",
     "ResourceSpec",
+    "TwinManifestBundle",
+    "TwinManifestRenderer",
     "WorkloadReader",
     "WorkloadSnapshot",
+    "render_twin_manifests",
 ]
