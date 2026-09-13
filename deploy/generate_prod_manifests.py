@@ -179,7 +179,7 @@ INSTANCES: dict[str, dict[str, Any]] = {
             {"name": "DATA_SERVICE_URL", "value": "http://data-service:8000"},
             {"name": "HTTP_TIMEOUT_SECONDS", "value": "5.0"},
         ],
-        "service_type": "LoadBalancer",
+        "service_type": "ClusterIP",
         "service_ports": [{"name": "gateway", "port": 8080, "targetPort": 8000}],
     },
     "worker.yaml": {

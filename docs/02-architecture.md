@@ -420,6 +420,7 @@ section) and layered from `config/services.yaml` → an optional, gitignored
 | `worker` | `job_list_limit` | `50` | `WORKER_JOB_LIST_LIMIT` |
 | `loadgen` | `rps` | `20.0` | `LOADGEN_RPS` |
 | `loadgen` | `duration_seconds` | `30.0` | `LOADGEN_DURATION` |
+| `loadgen` | `target_url` | `"http://localhost:8080"` | `LOADGEN_TARGET_URL` |
 | `loadgen` | `seed` | `42` | `LOADGEN_SEED` |
 | `loadgen` | `auth_token` | `"valid-token"` | `LOADGEN_AUTH_TOKEN` |
 | `loadgen` | `http_timeout_seconds` | `10.0` | `LOADGEN_TIMEOUT` |

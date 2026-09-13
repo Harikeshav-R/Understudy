@@ -69,6 +69,8 @@ build-images:
 	docker push localhost:5001/data-service:regression
 	docker build -t localhost:5001/worker:good -f services/worker/Dockerfile .
 	docker push localhost:5001/worker:good
+	docker build -t localhost:5001/mirror-gateway:good -f services/mirror_gateway/Dockerfile .
+	docker push localhost:5001/mirror-gateway:good
 
 deploy-system:
 	@echo "Deploying ust-system backing infrastructure..."
@@ -76,7 +78,7 @@ deploy-system:
 	@kubectl apply -f deploy/system/namespace.yaml
 	@kubectl apply -f deploy/system/
 	@kubectl wait --for=condition=Ready pod -l app=prod-postgres -n ust-prod --timeout=120s
-	@kubectl wait --for=condition=Ready pods -l app.kubernetes.io/part-of=understudy -n ust-system --timeout=120s
+	@kubectl wait --for=condition=Ready pods -l app.kubernetes.io/part-of=understudy,app!=mirror-gateway -n ust-system --timeout=120s
 
 deploy-prod: build-images
 	@echo "Deploying ust-prod demo stack..."
@@ -91,6 +93,7 @@ deploy-prod: build-images
 	@kubectl apply -f deploy/prod/worker.yaml
 	@kubectl wait --for=condition=Ready pod -l app=prod-postgres -n ust-prod --timeout=120s
 	@kubectl wait --for=condition=Ready pods -l app.kubernetes.io/part-of=understudy -n ust-prod --timeout=120s
+	@kubectl wait --for=condition=Ready pod -l app=mirror-gateway -n ust-system --timeout=120s
 
 RPS ?= 20
 DURATION ?= 30

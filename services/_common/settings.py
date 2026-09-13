@@ -55,6 +55,7 @@ class LoadgenSettings(BaseModel):
 
     rps: float = 20.0  # env: LOADGEN_RPS
     duration_seconds: float = 30.0  # env: LOADGEN_DURATION
+    target_url: str = "http://localhost:8080"  # env: LOADGEN_TARGET_URL
     seed: int = 42  # env: LOADGEN_SEED
     auth_token: str = "valid-token"  # env: LOADGEN_AUTH_TOKEN
     http_timeout_seconds: float = 10.0  # env: LOADGEN_TIMEOUT
@@ -142,6 +143,7 @@ _ENV_OVERRIDES: dict[tuple[str, str], tuple[str, type]] = {
     ("worker", "job_list_limit"): ("WORKER_JOB_LIST_LIMIT", int),
     ("loadgen", "rps"): ("LOADGEN_RPS", float),
     ("loadgen", "duration_seconds"): ("LOADGEN_DURATION", float),
+    ("loadgen", "target_url"): ("LOADGEN_TARGET_URL", str),
     ("loadgen", "seed"): ("LOADGEN_SEED", int),
     ("loadgen", "auth_token"): ("LOADGEN_AUTH_TOKEN", str),
     ("loadgen", "http_timeout_seconds"): ("LOADGEN_TIMEOUT", float),

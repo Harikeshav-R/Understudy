@@ -24,6 +24,7 @@ def test_default_settings_loading() -> None:
     assert settings.worker.poll_interval_seconds == 1.0
     assert settings.worker.job_list_limit == 50
     assert settings.loadgen.rps == 20.0
+    assert settings.loadgen.target_url == "http://localhost:8080"
     assert settings.loadgen.seed == 42
     assert settings.db.pool_max_size == 10
     assert settings.faults.injection_seed == 1337
@@ -89,6 +90,7 @@ def test_env_override_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKER_JOB_LIST_LIMIT", "10")
     monkeypatch.setenv("LOADGEN_RPS", "5.0")
     monkeypatch.setenv("LOADGEN_DURATION", "60.0")
+    monkeypatch.setenv("LOADGEN_TARGET_URL", "http://custom-gw:8080")
     monkeypatch.setenv("LOADGEN_SEED", "7")
     monkeypatch.setenv("LOADGEN_AUTH_TOKEN", "token-x")
     monkeypatch.setenv("LOADGEN_TIMEOUT", "2.0")
@@ -115,6 +117,7 @@ def test_env_override_every_field(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.worker.job_list_limit == 10
     assert settings.loadgen.rps == 5.0
     assert settings.loadgen.duration_seconds == 60.0
+    assert settings.loadgen.target_url == "http://custom-gw:8080"
     assert settings.loadgen.seed == 7
     assert settings.loadgen.auth_token == "token-x"
     assert settings.loadgen.http_timeout_seconds == 2.0

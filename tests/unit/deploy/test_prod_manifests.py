@@ -132,14 +132,14 @@ def test_prod_service_manifests_match_generator() -> None:
 
 
 def test_edge_gateway_service_ports() -> None:
-    """Validate edge-gateway service exposes port 8080 for k3d mapping."""
+    """Validate edge-gateway service exposes port 8080 as ClusterIP behind mirror-gateway."""
     path = Path("deploy/prod/edge-gateway.yaml")
     docs = _load_manifests(path)
     svc = next(d for d in docs if d.get("kind") == "Service")
     ports = {p["port"]: p["targetPort"] for p in svc["spec"]["ports"]}
     assert 8080 in ports
     assert ports[8080] == 8000
-    assert svc["spec"]["type"] == "LoadBalancer"
+    assert svc["spec"]["type"] == "ClusterIP"
 
 
 def test_data_service_ports() -> None:

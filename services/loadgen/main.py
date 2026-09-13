@@ -2,7 +2,6 @@
 
 import argparse
 import asyncio
-import os
 import sys
 
 from services._common.settings import load_services_settings
@@ -35,8 +34,8 @@ def parse_args(args: list[str] | None = None) -> LoadgenConfig:
     parser.add_argument(
         "--target-url",
         type=str,
-        default=os.getenv("LOADGEN_TARGET_URL", "http://localhost:8080"),
-        help="Target base URL (default: http://localhost:8080)",
+        default=loadgen_defaults.target_url,
+        help=f"Target base URL (default: {loadgen_defaults.target_url})",
     )
     parser.add_argument(
         "--seed",
