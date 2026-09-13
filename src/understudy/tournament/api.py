@@ -1,5 +1,6 @@
 """Tournament component protocol interfaces."""
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Protocol, runtime_checkable
 
@@ -11,6 +12,7 @@ from understudy.contracts.evidence import (
 )
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.twin import TwinHandle
+from understudy.tournament.blast import BlastEvaluation, EnvironmentBaseline
 from understudy.tournament.probe import ProbeResult
 
 
@@ -32,6 +34,33 @@ class EnvironmentProbe(Protocol):
         target_service: str = "edge-gateway",
     ) -> ProbeResult:
         """Run probe loop against environment until recovery or timeout."""
+        raise NotImplementedError
+
+
+@runtime_checkable
+class BlastTracker(Protocol):
+    """Protocol for capturing pre-apply environment baselines and evaluating blast radius."""
+
+    async def capture_baseline(
+        self,
+        namespace: str,
+        services: Sequence[str] | None = None,
+        at: datetime | None = None,
+        lookback_seconds: float | None = None,
+    ) -> EnvironmentBaseline:
+        """Capture pre-apply telemetry metrics baseline for an environment."""
+        raise NotImplementedError
+
+    async def evaluate_environment(
+        self,
+        plan: RemediationPlan,
+        namespace: str,
+        baseline: EnvironmentBaseline,
+        applied_at: datetime,
+        until: datetime | None = None,
+        services: Sequence[str] | None = None,
+    ) -> BlastEvaluation:
+        """Capture post-apply telemetry and evaluate blast radius against baseline."""
         raise NotImplementedError
 
 
