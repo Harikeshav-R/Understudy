@@ -6,11 +6,11 @@ Verifies against the live k3d-ust cluster:
    - Three twin databases cloned from snapshot_template.
    - Invariant K6 NetworkPolicy present and enforced in each twin namespace.
 2. Twin item fidelity:
-   - Twin item count equals production item count.
+   - Twin item count equals production item count, read from ust_prod on prod-postgres.
 3. Write isolation:
    - A write to a twin database is strictly isolated from production.
 4. Egress containment (K6):
-   - A twin pod cannot reach ust-prod.
+   - A twin pod cannot reach ust-prod, proven against an in-namespace positive control.
 5. Teardown:
    - teardown_all cleanly removes all twin namespaces and twin databases.
 """
@@ -44,6 +44,63 @@ def _cluster_available() -> bool:
         return False
 
 
+_CONNECT_PROBE = """
+import socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+try:
+    with socket.create_connection((host, port), timeout=3):
+        print("OK")
+except Exception as exc:
+    print(f"BLOCKED:{type(exc).__name__}")
+"""
+
+
+def _connect_probe(namespace: str, workload: str, host: str, port: int) -> str:
+    """Attempt a TCP connection from a pod, returning 'OK' or 'BLOCKED:<exception>'.
+
+    Uses the stdlib rather than curl (absent from python:3.12-slim) and always exits 0, so a
+    broken `kubectl exec` fails the assertion instead of masquerading as containment.
+    """
+    result = subprocess.run(
+        [
+            "kubectl",
+            "-n",
+            namespace,
+            "exec",
+            f"deploy/{workload}",
+            "--context=k3d-ust",
+            "--",
+            "python",
+            "-c",
+            _CONNECT_PROBE,
+            host,
+            str(port),
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, (
+        f"connection probe failed to run in {namespace}/{workload}: "
+        f"rc={result.returncode} stdout={result.stdout!r} stderr={result.stderr!r}"
+    )
+    output = result.stdout.strip()
+    assert output == "OK" or output.startswith("BLOCKED:"), (
+        f"unexpected probe output from {namespace}/{workload}: {result.stdout!r}"
+    )
+    return output
+
+
+async def _prod_item_count(db_executor: KubectlDatabaseExecutor) -> int:
+    """Count rows in production's items table, read from prod-postgres in ust-prod."""
+    code, out, err = await db_executor.run_pipeline(
+        "psql -v ON_ERROR_STOP=1 -h prod-postgres.ust-prod -U postgres -d ust_prod "
+        "-tAc 'SELECT count(*) FROM items;'"
+    )
+    assert code == 0, f"failed to read production item count: {err or out}"
+    return int(out.strip())
+
+
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_fleet_controller_live_fork_and_teardown() -> None:
@@ -51,7 +108,8 @@ async def test_fleet_controller_live_fork_and_teardown() -> None:
     if not _cluster_available():
         pytest.skip("k3d-ust cluster is not reachable (requires make up)")
 
-    incident_id = f"inc-ctrl-{uuid.uuid4().hex[:6]}"
+    # Underscored, like the real new_incident_id(): the namespace renderer must sanitize it.
+    incident_id = f"inc_ctrl_{uuid.uuid4().hex[:6]}"
     controller = K8sFleetController(
         poll_interval_seconds=1.0,
         readiness_timeout_seconds=120.0,
@@ -96,14 +154,12 @@ async def test_fleet_controller_live_fork_and_teardown() -> None:
         twin_dbs = await cloner.list_twin_databases(incident_id)
         assert len(twin_dbs) == 3
 
-        # Assert twin item count equals prod item count
+        # Assert twin item count equals PRODUCTION item count. The baseline must come from
+        # ust_prod itself: reading snapshot_template instead would make this tautological with
+        # respect to the refresher and could not detect an empty or stale template.
         twin_0_db = sanitize_database_name(incident_id, 0)
         twin_count = await cloner.get_item_count(twin_0_db)
-        prod_count_code, prod_count_out, _ = await db_executor.run_sql(
-            ["SELECT count(*) FROM items;"], database="snapshot_template"
-        )
-        assert prod_count_code == 0
-        prod_count = int(prod_count_out.strip())
+        prod_count = await _prod_item_count(db_executor)
         assert twin_count == prod_count
 
         # 3. Checkpoint A2 assertion: A write to a twin is invisible in production
@@ -114,35 +170,41 @@ async def test_fleet_controller_live_fork_and_teardown() -> None:
         assert write_code == 0
         assert await cloner.get_item_count(twin_0_db) == prod_count + 1
 
-        # Check production template count remains unchanged
-        _, prod_count_after, _ = await db_executor.run_sql(
+        # Production must not see the twin's write
+        assert await _prod_item_count(db_executor) == prod_count
+
+        # And the template the twins were cloned from is untouched as well
+        _, template_count_out, _ = await db_executor.run_sql(
             ["SELECT count(*) FROM items;"], database="snapshot_template"
         )
-        assert int(prod_count_after.strip()) == prod_count
+        assert int(template_count_out.strip()) == prod_count
 
-        # 4. Checkpoint A2 assertion: Twin cannot reach ust-prod (NetworkPolicy egress denial)
-        egress_check = subprocess.run(
-            [
-                "kubectl",
-                "-n",
-                f"ust-twin-{incident_id}-0",
-                "exec",
-                "deploy/edge-gateway",
-                "--context=k3d-ust",
-                "--",
-                "curl",
-                "-s",
-                "--max-time",
-                "3",
-                "http://edge-gateway.ust-prod:8000/healthz",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
+        # 4. Checkpoint A2 assertion: Twin cannot reach ust-prod (NetworkPolicy egress denial).
+        # Two positive controls guard against a vacuous pass, because "the connection failed"
+        # is also what a missing binary, a wrong pod, or a target nobody can reach looks like:
+        #   a) the same probe must succeed inside the twin namespace (the probe works), and
+        #   b) the same target must be reachable from a ust-prod pod (the target is live).
+        # Both targets are ClusterIP services listening on 8000; note prod's edge-gateway
+        # Service publishes 8080, so probing it on 8000 would fail for everyone.
+        twin_ns = twins[0].namespace
+        assert _connect_probe(twin_ns, "edge-gateway", "auth-service", 8000) == "OK", (
+            "in-namespace egress is permitted by the twin NetworkPolicy; if this fails the "
+            "probe itself cannot be trusted to detect containment"
         )
-        # Egress to ust-prod must fail (timed out / connection refused)
-        assert egress_check.returncode != 0, (
-            f"K6 Invariant violated: twin pod reached ust-prod! Output: {egress_check.stdout}"
+        assert _connect_probe("ust-prod", "worker", "auth-service.ust-prod", 8000) == "OK", (
+            "auth-service.ust-prod must be reachable from inside ust-prod, otherwise a "
+            "blocked twin proves nothing about the NetworkPolicy"
+        )
+
+        egress_check = _connect_probe(twin_ns, "edge-gateway", "auth-service.ust-prod", 8000)
+        assert egress_check.startswith("BLOCKED:"), (
+            f"K6 Invariant violated: twin pod reached ust-prod! Output: {egress_check!r}"
+        )
+
+        # The path that matters most: a twin must never reach production's database.
+        db_egress = _connect_probe(twin_ns, "edge-gateway", "prod-postgres.ust-prod", 5432)
+        assert db_egress.startswith("BLOCKED:"), (
+            f"K6 Invariant violated: twin pod reached prod-postgres! Output: {db_egress!r}"
         )
 
     finally:
