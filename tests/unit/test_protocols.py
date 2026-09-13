@@ -24,7 +24,7 @@ from understudy.playbook.api import PlaybookLibrary
 from understudy.shadow.api import ShadowLoop
 from understudy.signals.api import AlertSource, DeployHistory, ObservabilityAdapter
 from understudy.store.api import CheckpointStore, EvalStore, PlaybookStore, RunStore
-from understudy.tournament.api import Tournament
+from understudy.tournament.api import EnvironmentProbe, Tournament
 
 
 def test_all_protocols_are_protocols() -> None:
@@ -49,6 +49,7 @@ def test_all_protocols_are_protocols() -> None:
         DatabaseCommandExecutor,
         MirrorRegistry,
         Tournament,
+        EnvironmentProbe,
         SafetyKernel,
         Actuator,
         Notifier,

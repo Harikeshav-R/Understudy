@@ -1,5 +1,7 @@
 """Deterministic fake tournament implementation."""
 
+from datetime import datetime
+
 from understudy.common.clock import Clock, resolve_clock
 from understudy.contracts.enums import TournamentOutcome
 from understudy.contracts.evidence import (
@@ -10,7 +12,8 @@ from understudy.contracts.evidence import (
 )
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.twin import MirrorStats, TwinHandle
-from understudy.tournament.api import Tournament
+from understudy.tournament.api import EnvironmentProbe, Tournament
+from understudy.tournament.probe import ProbeResult
 
 
 class FakeTournament(Tournament):
@@ -113,4 +116,50 @@ class FakeTournament(Tournament):
             runner_up_plan_id=runner_up.plan_id if runner_up else None,
             margin=margin,
             decided_at=now,
+        )
+
+
+class FakeEnvironmentProbe(EnvironmentProbe):
+    """Deterministic fake environment SLO probe."""
+
+    def __init__(
+        self,
+        recovered: bool = True,
+        recovery_seconds: float = 12.0,
+        seed: int = 42,
+        clock: Clock | None = None,
+    ) -> None:
+        self.recovered = recovered
+        self.recovery_seconds = recovery_seconds
+        self.seed = seed
+        self.clock: Clock = resolve_clock(clock)
+
+    async def sample_once(
+        self, namespace: str, target_service: str = "edge-gateway"
+    ) -> ProbeSample:
+        _ = (namespace, target_service)
+        now = self.clock.now()
+        return ProbeSample(
+            at=now,
+            healthy=self.recovered,
+            p99_latency_ms=95.0 if self.recovered else 500.0,
+            error_rate=0.0 if self.recovered else 0.05,
+        )
+
+    async def probe_environment(
+        self,
+        namespace: str,
+        applied_at: datetime,
+        forked_at: datetime | None = None,
+        target_service: str = "edge-gateway",
+    ) -> ProbeResult:
+        _ = (applied_at, forked_at)
+        sample = await self.sample_once(namespace, target_service)
+        return ProbeResult(
+            namespace=namespace,
+            target_service=target_service,
+            probes=[sample],
+            recovered=self.recovered,
+            recovery_seconds=self.recovery_seconds if self.recovered else None,
+            timeout_exceeded=not self.recovered,
         )

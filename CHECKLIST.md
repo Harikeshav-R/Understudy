@@ -221,7 +221,7 @@ validated, normalised, invertible plans against the real cluster.
 
 ## Phase 4A — Tournament (Stream A)
 
-- [ ] A4.1 **[P0]** 1 Hz probe, 20 s warm-up exclusion, 15-sample recovery, 180 s timeout
+- [x] A4.1 **[P0]** 1 Hz probe, 20 s warm-up exclusion, 15-sample recovery, 180 s timeout
 - [ ] A4.2 **[P0]** Blast-radius computation with per-environment pre-apply baselines
 - [ ] A4.3 **[P0]** Deterministic scorer, weights from config, disqualification rules
 - [ ] A4.4 **[P1]** Advisory LLM judge (no access to deterministic scores)
