@@ -120,3 +120,27 @@ class TwinManifestBundle(BaseModel):
     def deployment_manifests(self) -> list[dict[str, Any]]:
         """Return all Deployment manifests."""
         return [m for m in self.manifests if m.get("kind") == "Deployment"]
+
+
+class DatabaseSnapshotMetadata(BaseModel):
+    """Metadata recorded for a successful snapshot refresh cycle."""
+
+    model_config = ConfigDict(frozen=True)
+
+    snapshot_name: str
+    source_database: str
+    source_namespace: str
+    refreshed_at: datetime
+    duration_seconds: float = 0.0
+
+
+class DatabaseCloneResult(BaseModel):
+    """Result of cloning a twin database from the snapshot template."""
+
+    model_config = ConfigDict(frozen=True)
+
+    database_name: str
+    incident_id: str
+    candidate_index: int
+    forked_from_snapshot_at: datetime
+    cloned_at: datetime

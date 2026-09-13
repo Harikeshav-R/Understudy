@@ -118,8 +118,8 @@ terminal paths. Neither stream blocked the other.
 
 - [x] A2.1 Read prod workloads via K8s API, resolve tags to **digests**
 - [x] A2.2 Twin manifest rendering: namespace, role, DSN, egress-stub, NetworkPolicy
-- [ ] A2.3 Snapshot refresher (staging + rename, never a live connection to the template)
-- [ ] A2.3a Twin DB cloner with retry on "source database is being accessed"
+- [x] A2.3 Snapshot refresher (staging + rename, never a live connection to the template)
+- [x] A2.3a Twin DB cloner with retry on "source database is being accessed"
 - [ ] A2.4 `fork(incident_id, n)` concurrent, 120 s readiness, K6 policy confirmed before ready
 - [ ] A2.5 Idempotent teardown by label, `ust fleet gc`, atexit + SIGTERM handlers
 

@@ -1,15 +1,24 @@
-"""Deterministic fake fleet controller and workload reader implementations."""
+from collections.abc import Sequence
+from datetime import datetime
 
 from understudy.common.clock import Clock, resolve_clock
+from understudy.common.errors import FleetError
 from understudy.contracts.twin import TwinHandle
-from understudy.fleet.api import FleetController, WorkloadReader
+from understudy.fleet.api import DatabaseCloner, FleetController, SnapshotRefresher, WorkloadReader
+from understudy.fleet.database import (
+    DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    DEFAULT_PIPELINE_TIMEOUT_SECONDS,
+    DatabaseCommandExecutor,
+)
 from understudy.fleet.models import (
     ClusterWorkloadSnapshot,
     ContainerSnapshot,
+    DatabaseCloneResult,
     EnvVar,
     ResourceSpec,
     WorkloadSnapshot,
 )
+from understudy.fleet.render import sanitize_database_name
 
 
 class FakeFleetController(FleetController):
@@ -257,3 +266,180 @@ class FakeWorkloadReader(WorkloadReader):
             config_maps=config_maps,
             captured_at=self.clock.now(),
         )
+
+
+class FakeDatabaseCommandExecutor(DatabaseCommandExecutor):
+    """Deterministic in-memory database command executor for unit tests."""
+
+    def __init__(self) -> None:
+        self.sql_history: list[tuple[str, list[str]]] = []
+        self.pipeline_history: list[str] = []
+        self.databases: set[str] = {"postgres", "snapshot_template"}
+        self.items_count: dict[str, int] = {"snapshot_template": 207}
+        self.in_use_counter: int = 0
+        self.fail_sql: str | None = None
+        self.fail_pipeline: bool = False
+
+    async def run_sql(
+        self,
+        sql_commands: Sequence[str],
+        database: str = "postgres",
+        timeout: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    ) -> tuple[int, str, str]:
+        _ = timeout
+        self.sql_history.append((database, list(sql_commands)))
+        if self.fail_sql:
+            return 1, "", self.fail_sql
+
+        out_lines: list[str] = []
+        for cmd in sql_commands:
+            normalized = cmd.strip()
+            if "SELECT 1 FROM pg_database WHERE datname" in normalized:
+                if "snapshot_template" in self.databases:
+                    out_lines.append("1")
+                else:
+                    return 0, "", ""
+            elif normalized.startswith("CREATE DATABASE"):
+                if self.in_use_counter > 0:
+                    self.in_use_counter -= 1
+                    return (
+                        1,
+                        "",
+                        'ERROR: source database "snapshot_template" '
+                        "is being accessed by other users\n"
+                        "DETAIL: There is 1 other session using the database.",
+                    )
+                parts = normalized.replace(";", "").split()
+                db_name = parts[2]
+                self.databases.add(db_name)
+                self.items_count[db_name] = self.items_count.get("snapshot_template", 207)
+                out_lines.append("CREATE DATABASE")
+            elif normalized.startswith("DROP DATABASE"):
+                parts = normalized.replace(";", "").split()
+                db_name = parts[-1]
+                self.databases.discard(db_name)
+                self.items_count.pop(db_name, None)
+                out_lines.append("DROP DATABASE")
+            elif "SELECT datname FROM pg_database" in normalized:
+                twins = sorted([d for d in self.databases if d.startswith("twin_")])
+                out_lines.extend(twins)
+            elif "SELECT count(*) FROM items" in normalized:
+                count = self.items_count.get(database, 207)
+                out_lines.append(str(count))
+            elif "pg_terminate_backend" in normalized:
+                out_lines.append("t")
+            else:
+                out_lines.append("ok")
+
+        return 0, "\n".join(out_lines), ""
+
+    async def run_pipeline(
+        self,
+        shell_script: str,
+        timeout: float = DEFAULT_PIPELINE_TIMEOUT_SECONDS,
+    ) -> tuple[int, str, str]:
+        _ = timeout
+        self.pipeline_history.append(shell_script)
+        if self.fail_pipeline:
+            return 1, "", "Simulated pipeline execution failure"
+        self.databases.add("snapshot_template")
+        self.items_count["snapshot_template"] = 207
+        return 0, "Pipeline completed successfully", ""
+
+
+class FakeSnapshotRefresher(SnapshotRefresher):
+    """Deterministic in-memory snapshot template refresher."""
+
+    def __init__(self, clock: Clock | None = None) -> None:
+        self.clock: Clock = resolve_clock(clock)
+        self.refreshed_at: datetime | None = None
+        self.refresh_count: int = 0
+        self._is_running = False
+
+    @property
+    def is_running(self) -> bool:
+        """Return whether the refresher background task is running."""
+        return self._is_running
+
+    @is_running.setter
+    def is_running(self, value: bool) -> None:
+        self._is_running = value
+
+    async def refresh_snapshot(self) -> datetime:
+        now = self.clock.now()
+        self.refreshed_at = now
+        self.refresh_count += 1
+        return now
+
+    async def get_last_snapshot_time(self) -> datetime | None:
+        return self.refreshed_at
+
+    async def start(self) -> None:
+        self.is_running = True
+
+    async def stop(self) -> None:
+        self.is_running = False
+
+
+class FakeDatabaseCloner(DatabaseCloner):
+    """Deterministic in-memory database cloner."""
+
+    def __init__(
+        self,
+        clock: Clock | None = None,
+        refresher: SnapshotRefresher | None = None,
+        simulated_in_use_failures: int = 0,
+    ) -> None:
+        self.clock: Clock = resolve_clock(clock)
+        self.refresher = refresher
+        self.cloned_databases: dict[str, DatabaseCloneResult] = {}
+        self.simulated_in_use_failures = simulated_in_use_failures
+        self.items_count: dict[str, int] = {}
+
+    async def clone_twin_database(
+        self, incident_id: str, candidate_index: int
+    ) -> DatabaseCloneResult:
+        if self.simulated_in_use_failures > 0:
+            self.simulated_in_use_failures -= 1
+            raise FleetError(
+                'ERROR: source database "snapshot_template" is being accessed by other users'
+            )
+
+        db_name = sanitize_database_name(incident_id, candidate_index)
+        now = self.clock.now()
+        forked_at = (
+            await self.refresher.get_last_snapshot_time() if self.refresher is not None else None
+        ) or now
+
+        result = DatabaseCloneResult(
+            database_name=db_name,
+            incident_id=incident_id,
+            candidate_index=candidate_index,
+            forked_from_snapshot_at=forked_at,
+            cloned_at=now,
+        )
+        self.cloned_databases[db_name] = result
+        self.items_count[db_name] = 207
+        return result
+
+    async def drop_twin_database(self, database_name: str) -> None:
+        self.cloned_databases.pop(database_name, None)
+        self.items_count.pop(database_name, None)
+
+    async def drop_all_incident_databases(self, incident_id: str) -> list[str]:
+        clean = incident_id.replace("-", "_").strip()
+        prefix = f"twin_{clean}_"
+        matching = [name for name in self.cloned_databases if name.startswith(prefix)]
+        for name in matching:
+            await self.drop_twin_database(name)
+        return matching
+
+    async def list_twin_databases(self, incident_id: str | None = None) -> list[str]:
+        if incident_id:
+            clean = incident_id.replace("-", "_").strip()
+            prefix = f"twin_{clean}_"
+            return sorted([name for name in self.cloned_databases if name.startswith(prefix)])
+        return sorted(self.cloned_databases.keys())
+
+    async def get_item_count(self, database_name: str) -> int:
+        return self.items_count.get(database_name, 207)
