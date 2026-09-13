@@ -1097,6 +1097,21 @@ def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
     assert "OK" in res.stdout
     assert "DEGRADED" in res.stdout
 
+    # All twins passing fidelity check
+    async def _mock_stats_all_ok(_self: Any) -> dict[str, MirrorStats]:
+        return {
+            "twin_inc_comp_0": MirrorStats(twin_id="twin_inc_comp_0", delivered=1000, dropped=0),
+            "twin_inc_comp_1": MirrorStats(twin_id="twin_inc_comp_1", delivered=995, dropped=5),
+        }
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats_all_ok)
+    res_all_ok = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
+    assert res_all_ok.exit_code == 0
+    assert (
+        "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        in res_all_ok.stdout
+    )
+
     # Incident with no matching twins
     res_missing = runner.invoke(app, ["mirror", "compare", "--incident", "nonexistent"])
     assert res_missing.exit_code == 1

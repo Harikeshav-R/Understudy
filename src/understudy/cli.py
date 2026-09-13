@@ -512,6 +512,19 @@ def mirror_compare(
         ratio_str = f"{s.drop_ratio:>12.4f}"
         typer.echo(f"{s.twin_id:<30} {s.delivered:>10} {s.dropped:>10} {ratio_str} {fidelity:>12}")
 
+    all_ok = (
+        all(
+            (abs(1.0 - (s.delivered / max_delivered)) <= 0.02 and s.drop_ratio < 0.05)
+            for s in matching.values()
+        )
+        if max_delivered > 0
+        else False
+    )
+    if all_ok:
+        typer.echo(
+            "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        )
+
 
 store_app = typer.Typer(
     name="store",

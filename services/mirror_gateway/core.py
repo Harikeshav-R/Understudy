@@ -143,11 +143,12 @@ class MirrorGatewayManager:
             except asyncio.QueueFull:
                 twin.dropped += 1
                 self.metrics.record_dropped(twin.twin_id)
-                logger.warning(
-                    "mirror_queue_overflow",
-                    twin_id=twin.twin_id,
-                    dropped=twin.dropped,
-                )
+                if twin.dropped <= 5 or twin.dropped % 100 == 0:
+                    logger.warning(
+                        "mirror_queue_overflow",
+                        twin_id=twin.twin_id,
+                        dropped=twin.dropped,
+                    )
 
     def _build_stats(self, twin: TwinRegistration) -> MirrorStats:
         """Calculate statistics for a twin registration."""

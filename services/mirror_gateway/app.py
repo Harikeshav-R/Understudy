@@ -115,7 +115,8 @@ def get_target_prod_url() -> str:
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Manage lifecycle of shared HTTP client and MirrorGatewayManager."""
     settings = get_services_settings().mirror_gateway
-    client = httpx.AsyncClient(timeout=settings.http_timeout_seconds)
+    limits = httpx.Limits(max_connections=200, max_keepalive_connections=50)
+    client = httpx.AsyncClient(timeout=settings.http_timeout_seconds, limits=limits)
     metrics: MirrorGatewayMetrics | None = getattr(app.state, "mirror_metrics", None)
     manager = MirrorGatewayManager(
         client=client,

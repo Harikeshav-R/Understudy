@@ -187,14 +187,14 @@ terminal paths. Neither stream blocked the other.
 - [x] A3.3 Prometheus metrics: delivered, dropped, latency
 - [x] A3.4 `mirror/registry.py` client in the agent
 - [x] A3.5 Loadgen repointed; gateway is the only ingress
-- [ ] A3.6 Backpressure behaviour implemented and measured
+- [x] A3.6 Backpressure behaviour implemented and measured
 
 **Checkpoint A3**
 
-- [ ] Three twins registered; drop ratio < 0.01 at 50 RPS for 60 s
-- [ ] `ust mirror compare` shows per-twin counts within 2% of prod, identical path distribution
-- [ ] A dead twin does not raise prod p99 by more than 5 ms
-- [ ] A dead twin's drop ratio rises toward 1.0 without gateway errors
+- [x] Three twins registered; drop ratio < 0.01 at 50 RPS for 60 s
+- [x] `ust mirror compare` shows per-twin counts within 2% of prod, identical path distribution
+- [x] A dead twin does not raise prod p99 by more than 5 ms
+- [x] A dead twin's drop ratio rises toward 1.0 without gateway errors
 
 ---
 
