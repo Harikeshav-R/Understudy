@@ -23,6 +23,7 @@ from understudy.common.errors import (
     EvidenceError,
     FleetError,
     KernelError,
+    StoreError,
     UnderstudyError,
 )
 from understudy.common.ids import (
@@ -52,6 +53,7 @@ __all__ = [
     "ScoringSettings",
     "SecretSettings",
     "Settings",
+    "StoreError",
     "SystemClock",
     "TimeoutSettings",
     "UnderstudyError",

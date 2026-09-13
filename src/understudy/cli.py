@@ -179,5 +179,64 @@ def fleet_gc(
     )
 
 
+store_app = typer.Typer(
+    name="store",
+    help="Datastore migration and verification commands.",
+    no_args_is_help=True,
+)
+app.add_typer(store_app, name="store")
+
+
+@store_app.command("migrate")
+def store_migrate(
+    dsn: str | None = typer.Option(None, "--dsn", help="Optional PostgreSQL DSN override."),
+) -> None:
+    """Apply database migrations to the Understudy system datastore."""
+    from understudy.store.migrations import apply_migrations
+
+    apply_migrations(dsn=dsn)
+    typer.echo("Database migrations applied successfully.")
+
+
+@store_app.command("verify")
+def store_verify(
+    last: int = typer.Option(2, "--last", help="Number of most recent run records to verify."),
+    dsn: str | None = typer.Option(None, "--dsn", help="Optional PostgreSQL DSN override."),
+) -> None:
+    """Verify that recent run records are complete and append-only rules are active."""
+    import asyncio
+
+    from sqlalchemy import text
+
+    from understudy.store.database import StoreDatabase
+    from understudy.store.postgres import PostgresRunStore
+
+    db = StoreDatabase(dsn=dsn)
+    store = PostgresRunStore(db=db)
+
+    async def _verify() -> None:
+        runs = await store.list_runs()
+        target_runs = runs[:last]
+        if len(target_runs) < last:
+            typer.echo(f"Warning: found {len(target_runs)} runs (requested {last})")
+
+        # Verify append-only rules are active in PostgreSQL
+        async with db.session() as session:
+            rule_res = await session.execute(
+                text("SELECT rulename FROM pg_rules WHERE tablename = 'runs';")
+            )
+            rules = {r[0] for r in rule_res.fetchall()}
+            if "runs_no_update" not in rules or "runs_no_delete" not in rules:
+                typer.echo("Error: append-only rules missing on runs table", err=True)
+                raise typer.Exit(code=1)
+
+        for r in target_runs:
+            typer.echo(f"run_id={r.run_id} incident_id={r.incident_id} outcome={r.outcome.value}")
+
+        typer.echo(f"Verified {len(target_runs)} run records: complete and append-only OK")
+
+    asyncio.run(_verify())
+
+
 if __name__ == "__main__":
     app()

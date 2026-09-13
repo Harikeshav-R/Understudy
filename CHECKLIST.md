@@ -158,7 +158,7 @@ terminal paths. Neither stream blocked the other.
 
 ## Phase 2B — Signals and store (Stream B)  **[P0]**
 
-- [ ] B2.1 `store/` models, migrations, RunStore / PlaybookStore / EvalStore, append-only rules
+- [x] B2.1 `store/` models, migrations, RunStore / PlaybookStore / EvalStore, append-only rules
 - [ ] B2.2 PagerDuty webhook receiver, HMAC verification, `ust tunnel`, synthetic-alert fallback
 - [ ] B2.3 Prometheus + Loki `ObservabilityAdapter`, namespace-parameterised
 - [ ] B2.4 GitHub `DeployHistory` with digests and migration detection
@@ -170,7 +170,7 @@ terminal paths. Neither stream blocked the other.
 - [ ] `ust signals context` returns a valid IncidentContext with real Prometheus and Loki data
 - [ ] `ust graph show` prints the DAG and "declared matches observed: OK"
 - [ ] A real PagerDuty test incident reaches the receiver within 5 s
-- [ ] `test_run_store_append_only` passes against a real Postgres
+- [x] `test_run_store_append_only` passes against a real Postgres
 
 ---
 

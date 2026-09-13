@@ -37,3 +37,7 @@ class EvidenceError(UnderstudyError):
 
 class OrchestratorError(UnderstudyError):
     """Raised on orchestrator state transition or control loop failure."""
+
+
+class StoreError(UnderstudyError):
+    """Raised on persistence, query, or constraint failures in the store."""

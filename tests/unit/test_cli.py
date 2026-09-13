@@ -1,7 +1,7 @@
 """Unit tests for Understudy CLI entrypoint and package metadata."""
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from typer.testing import CliRunner
 
@@ -239,3 +239,90 @@ def test_cli_fleet_gc(monkeypatch: "pytest.MonkeyPatch") -> None:
     assert result.exit_code == 0
     assert "reaped 1 namespaces, 1 databases" in result.stdout
     mock_mgr.gc.assert_called_once_with(older_than_seconds=1800.0)
+
+
+def test_cli_store_migrate(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store migrate calls apply_migrations."""
+    from unittest.mock import MagicMock
+
+    import understudy.store.migrations
+
+    mock_apply = MagicMock()
+    monkeypatch.setattr(understudy.store.migrations, "apply_migrations", mock_apply)
+
+    result = runner.invoke(app, ["store", "migrate", "--dsn", "postgresql://test/db"])
+    assert result.exit_code == 0
+    assert "Database migrations applied successfully." in result.stdout
+    mock_apply.assert_called_once_with(dsn="postgresql://test/db")
+
+
+def test_cli_store_verify_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store verify checks runs and rules."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    mock_run = MagicMock()
+    mock_run.run_id = "run_test_1"
+    mock_run.incident_id = "inc_test_1"
+    mock_run.outcome = RunOutcome.EXECUTED
+
+    mock_store = MagicMock()
+    mock_store.list_runs = AsyncMock(return_value=[mock_run])
+
+    mock_session = AsyncMock()
+    rule_res = MagicMock()
+    rule_res.fetchall.return_value = [("runs_no_update",), ("runs_no_delete",)]
+    mock_session.execute = AsyncMock(return_value=rule_res)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        @asynccontextmanager
+        async def session(self) -> Any:
+            yield mock_session
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "verify", "--last", "1"])
+    assert result.exit_code == 0
+    assert "run_id=run_test_1" in result.stdout
+    assert "Verified 1 run records: complete and append-only OK" in result.stdout
+
+
+def test_cli_store_verify_missing_rules(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store verify fails when append-only rules are missing."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_store = MagicMock()
+    mock_store.list_runs = AsyncMock(return_value=[])
+
+    mock_session = AsyncMock()
+    rule_res = MagicMock()
+    rule_res.fetchall.return_value = []  # No rules
+    mock_session.execute = AsyncMock(return_value=rule_res)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        @asynccontextmanager
+        async def session(self) -> Any:
+            yield mock_session
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "verify", "--last", "2"])
+    assert result.exit_code == 1
+    assert "Error: append-only rules missing on runs table" in result.output
