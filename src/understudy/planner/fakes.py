@@ -4,6 +4,7 @@ from understudy.contracts.enums import ActionType
 from understudy.contracts.incident import IncidentContext
 from understudy.contracts.plan import ActionParams, RemediationPlan, ResourceRef
 from understudy.planner.api import Planner
+from understudy.planner.validate import ensure_no_action_candidate
 
 
 class FakePlanner(Planner):
@@ -83,4 +84,5 @@ class FakePlanner(Planner):
         )
 
         all_candidates = [plan_0, plan_1, plan_2]
-        return all_candidates[:count]
+        selected = all_candidates[:count]
+        return ensure_no_action_candidate(selected, context=context)

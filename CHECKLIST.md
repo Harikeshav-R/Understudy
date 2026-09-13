@@ -195,7 +195,7 @@ terminal paths. Neither stream blocked the other.
 
 - [x] B3.1 **[P0]** Candidate-generation prompt over the closed action enum
 - [x] B3.2 **[P0]** Parse, validate, retry ≤ 2, then normalise against the live cluster; drop, never repair
-- [ ] B3.3 **[P0]** `NO_ACTION` always appended if absent
+- [x] B3.3 **[P0]** `NO_ACTION` always appended if absent
 - [ ] B3.4 **[P0]** Deterministic inverse synthesis per action type (never LLM-generated)
 - [ ] B3.5 **[P1]** Playbook signature, embeddings, pgvector retrieval, LLM confirmation
 - [ ] B3.6 **[P1]** Playbook write-back with evidence refs and success counters

@@ -8,6 +8,7 @@ import typer
 from understudy.common.logging import get_logger
 
 if TYPE_CHECKING:
+    from understudy.planner.api import Planner
     from understudy.signals.api import ObservabilityAdapter
 
 logger = get_logger(__name__)
@@ -778,6 +779,129 @@ def signals_deploys(
             if d.image_digests:
                 for svc, digest in sorted(d.image_digests.items()):
                     typer.echo(f"    {svc}: {digest}")
+
+
+@app.command("plan")
+def plan_cmd(
+    context_file: Annotated[
+        Path,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON fixture.",
+        ),
+    ],
+    count: Annotated[
+        int,
+        typer.Option(
+            "--count",
+            "-n",
+            help="Number of active candidate plans to generate.",
+        ),
+    ] = 3,
+    seed: Annotated[
+        int | None,
+        typer.Option(
+            "--seed",
+            help="Optional random seed for deterministic planner / variance evaluation.",
+        ),
+    ] = None,
+    twice: Annotated[
+        bool,
+        typer.Option(
+            "--twice",
+            help="Run planner twice to evaluate action-type stability across calls.",
+        ),
+    ] = False,
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use FakePlanner instead of live LLMPlanner.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output full RemediationPlan JSON array.",
+        ),
+    ] = False,
+) -> None:
+    """Generate candidate remediation plans, guaranteeing NO_ACTION on the ballot."""
+    import asyncio
+    import json
+
+    from understudy.contracts.incident import IncidentContext
+    from understudy.planner.fakes import FakePlanner
+    from understudy.planner.validate import LLMPlanner
+
+    if not context_file.exists():
+        typer.echo(f"Context file not found: {context_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        raw_text = context_file.read_text(encoding="utf-8")
+        context = IncidentContext.model_validate_json(raw_text)
+    except Exception as exc:
+        typer.echo(f"Failed to parse IncidentContext from {context_file}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    cluster_workloads: set[str] = set(context.dependency_graph.nodes)
+
+    planner: Planner
+    if fake:
+        planner = FakePlanner(seed=seed if seed is not None else 42)
+    else:
+        planner = LLMPlanner(cluster_workloads=cluster_workloads)
+
+    async def _run_planner() -> list[Any]:
+        return await planner.generate_candidates(context, count=count)
+
+    try:
+        plans = asyncio.run(_run_planner())
+    except Exception as exc:
+        typer.echo(f"Planner error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if twice:
+        planner2: Planner
+        if fake:
+            planner2 = FakePlanner(seed=seed if seed is not None else 42)
+        else:
+            planner2 = LLMPlanner(cluster_workloads=cluster_workloads)
+
+        async def _run_planner2() -> list[Any]:
+            return await planner2.generate_candidates(context, count=count)
+
+        try:
+            plans2 = asyncio.run(_run_planner2())
+        except Exception as exc:
+            typer.echo(f"Second planner run failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        actions1 = [p.action.value for p in plans]
+        actions2 = [p.action.value for p in plans2]
+        matching = sum(1 for a, b in zip(actions1, actions2, strict=False) if a == b)
+        total = max(len(actions1), len(actions2), 1)
+        stability = matching / total
+
+        typer.echo(f"Planner run 1 ({len(plans)} plans): {actions1}")
+        typer.echo(f"Planner run 2 ({len(plans2)} plans): {actions2}")
+        typer.echo(f"Action-type stability: {stability:.2f} ({matching}/{total} matching)")
+        return
+
+    if json_output:
+        raw_plans = [p.model_dump(mode="json") for p in plans]
+        typer.echo(json.dumps(raw_plans, indent=2))
+    else:
+        typer.echo(f"Generated {len(plans)} candidate plan(s) for {context.incident_id}:")
+        for plan in plans:
+            inv_str = f"inverse={plan.inverse.action.value}" if plan.inverse else "inverse=none"
+            typer.echo(
+                f"  [{plan.candidate_index}] {plan.plan_id}: {plan.action.value} "
+                f"workload={plan.params.workload} ({inv_str}) - {plan.rationale}"
+            )
 
 
 if __name__ == "__main__":

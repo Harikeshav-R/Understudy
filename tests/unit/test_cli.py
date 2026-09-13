@@ -942,3 +942,178 @@ def test_cli_graph_show_prometheus_error(monkeypatch: "pytest.MonkeyPatch") -> N
     assert "Error cross-checking observed traffic: Connection timed out" in (
         result.stderr or result.stdout
     )
+
+
+# --- ust plan CLI tests ---
+
+
+def test_cli_plan_success_fake() -> None:
+    """Verify ust plan produces plans with NO_ACTION in fake mode."""
+    result = runner.invoke(
+        app,
+        ["plan", "--context", "fixtures/context_bad_deploy.json", "--count", "3", "--fake"],
+    )
+    assert result.exit_code == 0
+    assert "Generated 3 candidate plan(s)" in result.stdout
+    assert "rollback_deploy" in result.stdout
+    assert "scale_workload" in result.stdout
+    assert "no_action" in result.stdout
+
+
+def test_cli_plan_json_output() -> None:
+    """Verify ust plan --json returns valid JSON array of RemediationPlan."""
+    import json
+
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "--context",
+            "fixtures/context_bad_deploy.json",
+            "--count",
+            "3",
+            "--fake",
+            "--json",
+        ],
+    )
+    assert result.exit_code == 0
+    plans = json.loads(result.stdout)
+    assert isinstance(plans, list)
+    assert len(plans) == 3
+    assert plans[2]["action"] == "no_action"
+    assert plans[2]["inverse"] is None
+    assert plans[2]["target_resources"] == []
+    assert plans[2]["declared_blast_set"] == []
+
+
+def test_cli_plan_twice_stability() -> None:
+    """Verify ust plan --twice evaluates action-type stability."""
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "--context",
+            "fixtures/context_bad_deploy.json",
+            "--count",
+            "3",
+            "--fake",
+            "--seed",
+            "42",
+            "--twice",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Planner run 1 (3 plans)" in result.stdout
+    assert "Planner run 2 (3 plans)" in result.stdout
+    assert "Action-type stability: 1.00" in result.stdout
+
+
+def test_cli_plan_file_not_found() -> None:
+    """Verify ust plan exits 1 when context file does not exist."""
+    result = runner.invoke(
+        app,
+        ["plan", "--context", "fixtures/nonexistent_context.json"],
+    )
+    assert result.exit_code == 1
+    assert "Context file not found" in (result.stderr or result.stdout)
+
+
+def test_cli_plan_invalid_json(tmp_path: Path) -> None:
+    """Verify ust plan exits 1 when context file has invalid JSON."""
+    bad_file = tmp_path / "bad.json"
+    bad_file.write_text("invalid json content", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["plan", "--context", str(bad_file)],
+    )
+    assert result.exit_code == 1
+    assert "Failed to parse IncidentContext" in (result.stderr or result.stdout)
+
+
+def test_cli_plan_live_llm_mocked(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust plan non-fake path calls LLMPlanner."""
+    from understudy.contracts.enums import ActionType
+    from understudy.contracts.plan import ActionParams, RemediationPlan
+    from understudy.planner.validate import LLMPlanner
+
+    dummy_plan = RemediationPlan(
+        plan_id="plan_cand_0",
+        candidate_index=0,
+        action=ActionType.NO_ACTION,
+        params=ActionParams(workload="data-service"),
+        target_resources=[],
+        declared_blast_set=[],
+        inverse=None,
+        rationale="No action",
+        origin="planner",
+    )
+
+    async def _mock_generate(*_args: Any, **_kwargs: Any) -> list[RemediationPlan]:
+        return [dummy_plan]
+
+    monkeypatch.setattr(LLMPlanner, "generate_candidates", _mock_generate)
+
+    result = runner.invoke(
+        app,
+        ["plan", "--context", "fixtures/context_bad_deploy.json", "--count", "1"],
+    )
+    assert result.exit_code == 0
+    assert "Generated 1 candidate plan(s)" in result.stdout
+    assert "plan_cand_0: no_action" in result.stdout
+
+
+def test_cli_plan_live_llm_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust plan exits 1 when planner raises PlannerError."""
+    from understudy.common.errors import PlannerError
+    from understudy.planner.validate import LLMPlanner
+
+    async def _mock_generate(*_args: Any, **_kwargs: Any) -> Any:
+        raise PlannerError("OpenRouter rate limited")
+
+    monkeypatch.setattr(LLMPlanner, "generate_candidates", _mock_generate)
+
+    result = runner.invoke(
+        app,
+        ["plan", "--context", "fixtures/context_bad_deploy.json"],
+    )
+    assert result.exit_code == 1
+    assert "Planner error: OpenRouter rate limited" in (result.stderr or result.stdout)
+
+
+def test_cli_plan_twice_second_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust plan --twice exits 1 when second run fails."""
+    from understudy.common.errors import PlannerError
+    from understudy.contracts.enums import ActionType
+    from understudy.contracts.plan import ActionParams, RemediationPlan
+    from understudy.planner.validate import LLMPlanner
+
+    dummy_plan = RemediationPlan(
+        plan_id="plan_cand_0",
+        candidate_index=0,
+        action=ActionType.NO_ACTION,
+        params=ActionParams(workload="data-service"),
+        target_resources=[],
+        declared_blast_set=[],
+        inverse=None,
+        rationale="No action",
+        origin="planner",
+    )
+
+    calls = 0
+
+    async def _mock_generate(*_args: Any, **_kwargs: Any) -> list[RemediationPlan]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return [dummy_plan]
+        raise PlannerError("Second run crashed")
+
+    monkeypatch.setattr(LLMPlanner, "generate_candidates", _mock_generate)
+
+    result = runner.invoke(
+        app,
+        ["plan", "--context", "fixtures/context_bad_deploy.json", "--twice"],
+    )
+    assert result.exit_code == 1
+    assert "Second planner run failed: Second run crashed" in (result.stderr or result.stdout)

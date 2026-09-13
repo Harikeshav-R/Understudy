@@ -33,6 +33,8 @@ from understudy.planner.validate import (
     LLMPlanner,
     PlannerSchemaValidationError,
     compute_blast_set_validity,
+    create_no_action_plan,
+    ensure_no_action_candidate,
     generate_candidates_with_retry,
     normalise_plan,
     normalise_plans,
@@ -856,8 +858,12 @@ async def test_generate_candidates_with_retry_success_first_attempt() -> None:
     plans = await generate_candidates_with_retry(
         llm_caller=caller, context=ctx, count=1, max_retries=2
     )
-    assert len(plans) == 1
+    assert len(plans) == 2
     assert plans[0].action == ActionType.RESTART_WORKLOAD
+    assert plans[1].action == ActionType.NO_ACTION
+    assert plans[1].candidate_index == 1
+    assert plans[1].plan_id == "plan_cand_1"
+    assert plans[1].inverse is None
     assert caller.call_count == 1
 
 
@@ -888,8 +894,12 @@ async def test_generate_candidates_with_retry_success_second_attempt() -> None:
     plans = await generate_candidates_with_retry(
         llm_caller=caller, context=ctx, count=1, max_retries=2
     )
-    assert len(plans) == 1
+    assert len(plans) == 2
     assert plans[0].action == ActionType.SCALE_WORKLOAD
+    assert plans[1].action == ActionType.NO_ACTION
+    assert plans[1].candidate_index == 1
+    assert plans[1].plan_id == "plan_cand_1"
+    assert plans[1].inverse is None
     assert caller.call_count == 2
 
     # Verify that the second call received assistant response and error feedback
@@ -1002,8 +1012,12 @@ async def test_llm_planner_openrouter_http_client_success() -> None:
     planner = LLMPlanner(settings=settings, client=mock_client)
     plans = await planner.generate_candidates(ctx, count=1)
 
-    assert len(plans) == 1
+    assert len(plans) == 2
     assert plans[0].action == ActionType.RESTART_WORKLOAD
+    assert plans[1].action == ActionType.NO_ACTION
+    assert plans[1].candidate_index == 1
+    assert plans[1].plan_id == "plan_cand_1"
+    assert plans[1].inverse is None
     assert mock_client.post.call_count == 1
 
     # Verify request arguments
@@ -1083,3 +1097,192 @@ async def test_llm_planner_default_client_context_manager() -> None:
         plans = await planner.generate_candidates(ctx)
         assert len(plans) == 1
         assert plans[0].action == ActionType.NO_ACTION
+
+
+# --- 7. B3.3 NO_ACTION Candidate Synthesis and Appending ---
+
+
+def test_create_no_action_plan_defaults() -> None:
+    ctx = _make_context()
+    plan = create_no_action_plan(ctx, candidate_index=3)
+
+    assert plan.plan_id == "plan_cand_3"
+    assert plan.candidate_index == 3
+    assert plan.action == ActionType.NO_ACTION
+    assert plan.params.workload == "data-service"
+    assert plan.target_resources == []
+    assert plan.declared_blast_set == []
+    assert plan.inverse is None
+    assert plan.origin == "planner"
+    assert "Maintain current state" in plan.rationale
+
+
+def test_create_no_action_plan_custom_args() -> None:
+    ctx = _make_context()
+    plan = create_no_action_plan(
+        context=ctx,
+        candidate_index=1,
+        plan_id="custom_no_action_id",
+        origin="shadow",
+        cluster_workloads={"auth-service", "edge-gateway"},
+        rationale="Custom baseline check",
+    )
+
+    assert plan.plan_id == "custom_no_action_id"
+    assert plan.candidate_index == 1
+    assert plan.action == ActionType.NO_ACTION
+    assert plan.origin == "shadow"
+    assert plan.rationale == "Custom baseline check"
+    # Alert service "data-service" is not in cluster_workloads, so it falls back to first sorted:
+    assert plan.params.workload == "auth-service"
+
+
+def test_create_no_action_plan_empty_fallbacks() -> None:
+    # Context with empty graph and empty alert service
+    from understudy.common.clock import FrozenClock
+    from understudy.contracts.incident import Alert, DependencyGraphSnapshot, MetricWindow
+
+    clock = FrozenClock()
+    now = clock.now()
+    empty_ctx = IncidentContext(
+        incident_id="inc_empty",
+        alert=Alert(
+            alert_id="alt_0",
+            source="synthetic",
+            title="Empty alert",
+            service="",
+            severity="warning",
+            fired_at=now,
+            raw={},
+        ),
+        signatures=[],
+        metrics_window=MetricWindow(
+            service="",
+            start_time=now,
+            end_time=now,
+        ),
+        recent_deploys=[],
+        dependency_graph=DependencyGraphSnapshot(
+            nodes=[],
+            edges=[],
+            observed_at=now,
+        ),
+        gathered_at=now,
+    )
+
+    # 1. Empty cluster workloads, empty alert service -> falls back to default "data-service"
+    plan = create_no_action_plan(empty_ctx, cluster_workloads=set())
+    assert plan.action == ActionType.NO_ACTION
+    assert plan.params.workload == "data-service"
+
+    # 2. Empty cluster workloads, non-empty alert service -> uses alert service
+    non_empty_alert_ctx = empty_ctx.model_copy(
+        update={"alert": empty_ctx.alert.model_copy(update={"service": "custom-service"})}
+    )
+    plan2 = create_no_action_plan(non_empty_alert_ctx, cluster_workloads=set())
+    assert plan2.action == ActionType.NO_ACTION
+    assert plan2.params.workload == "custom-service"
+
+
+def test_ensure_no_action_candidate_appends_when_absent() -> None:
+    ctx = _make_context()
+    plan_0 = RemediationPlan(
+        plan_id="plan_cand_0",
+        candidate_index=0,
+        action=ActionType.RESTART_WORKLOAD,
+        params=ActionParams(workload="data-service"),
+        target_resources=[],
+        declared_blast_set=[],
+        inverse=None,
+        rationale="Restart data service",
+        origin="planner",
+    )
+
+    result = ensure_no_action_candidate([plan_0], context=ctx)
+    assert len(result) == 2
+    assert result[0] == plan_0
+    assert result[1].action == ActionType.NO_ACTION
+    assert result[1].candidate_index == 1
+    assert result[1].plan_id == "plan_cand_1"
+    assert result[1].inverse is None
+
+
+def test_ensure_no_action_candidate_idempotent_when_present() -> None:
+    ctx = _make_context()
+    plan_0 = RemediationPlan(
+        plan_id="plan_cand_0",
+        candidate_index=0,
+        action=ActionType.NO_ACTION,
+        params=ActionParams(workload="data-service"),
+        target_resources=[],
+        declared_blast_set=[],
+        inverse=None,
+        rationale="No action",
+        origin="planner",
+    )
+
+    result = ensure_no_action_candidate([plan_0], context=ctx)
+    assert len(result) == 1
+    assert result[0] == plan_0
+
+
+def test_ensure_no_action_candidate_on_empty_list() -> None:
+    ctx = _make_context()
+    result = ensure_no_action_candidate([], context=ctx)
+    assert len(result) == 1
+    assert result[0].action == ActionType.NO_ACTION
+    assert result[0].candidate_index == 0
+    assert result[0].plan_id == "plan_cand_0"
+
+
+def test_normalise_plans_with_ensure_no_action_flag() -> None:
+    ctx = _make_context()
+    # When all plans are invalid and dropped:
+    bad_plan = RemediationPlan(
+        plan_id="raw_bad",
+        candidate_index=0,
+        action=ActionType.SCALE_WORKLOAD,
+        params=ActionParams(workload="nonexistent", replica_delta=1),
+        target_resources=[],
+        declared_blast_set=[],
+        inverse=None,
+        rationale="Bad plan",
+        origin="planner",
+    )
+
+    # ensure_no_action=False (default) returns empty list
+    assert normalise_plans([bad_plan], ctx, ensure_no_action=False) == []
+
+    # ensure_no_action=True guarantees NO_ACTION even when all plans were dropped
+    result = normalise_plans([bad_plan], ctx, ensure_no_action=True)
+    assert len(result) == 1
+    assert result[0].action == ActionType.NO_ACTION
+    assert result[0].candidate_index == 0
+
+
+@pytest.mark.asyncio
+async def test_fake_planner_count_variations() -> None:
+    from understudy.planner.fakes import FakePlanner
+
+    ctx = _make_context()
+    planner = FakePlanner(seed=42)
+
+    # count=1: FakePlanner provides plan_0 (rollback). Since NO_ACTION is absent, it is appended
+    cands_1 = await planner.generate_candidates(ctx, count=1)
+    assert len(cands_1) == 2
+    assert cands_1[0].action == ActionType.ROLLBACK_DEPLOY
+    assert cands_1[1].action == ActionType.NO_ACTION
+
+    # count=2: FakePlanner provides plan_0 (rollback), plan_1 (scale). Appends NO_ACTION at index 2
+    cands_2 = await planner.generate_candidates(ctx, count=2)
+    assert len(cands_2) == 3
+    assert cands_2[0].action == ActionType.ROLLBACK_DEPLOY
+    assert cands_2[1].action == ActionType.SCALE_WORKLOAD
+    assert cands_2[2].action == ActionType.NO_ACTION
+
+    # count=3: FakePlanner provides plan_0..2 (NO_ACTION already present). No duplicate!
+    cands_3 = await planner.generate_candidates(ctx, count=3)
+    assert len(cands_3) == 3
+    assert cands_3[0].action == ActionType.ROLLBACK_DEPLOY
+    assert cands_3[1].action == ActionType.SCALE_WORKLOAD
+    assert cands_3[2].action == ActionType.NO_ACTION

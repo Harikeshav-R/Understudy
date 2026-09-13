@@ -13,7 +13,7 @@ Implements build-plan step B3.2:
 """
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from pydantic import ValidationError
@@ -27,7 +27,7 @@ from understudy.contracts.incident import (
     DeployRef,
     IncidentContext,
 )
-from understudy.contracts.plan import RemediationPlan
+from understudy.contracts.plan import ActionParams, RemediationPlan
 from understudy.graph.api import DependencyGraph
 from understudy.planner.api import Planner
 from understudy.planner.prompt import (
@@ -405,14 +405,79 @@ def normalise_plan(
     )
 
 
+def create_no_action_plan(
+    context: IncidentContext,
+    candidate_index: int = 0,
+    plan_id: str | None = None,
+    origin: Literal["planner", "playbook", "shadow"] = "planner",
+    cluster_workloads: set[str] | None = None,
+    rationale: str = "Maintain current state without automated mutation",
+) -> RemediationPlan:
+    """Synthesize a compliant NO_ACTION remediation candidate."""
+    valid_workloads = (
+        cluster_workloads if cluster_workloads is not None else set(context.dependency_graph.nodes)
+    )
+    # Prefer alert service if valid, else first sorted valid workload, else alert service
+    workload = "data-service"
+    if context.alert and context.alert.service in valid_workloads:
+        workload = context.alert.service
+    elif valid_workloads:
+        workload = sorted(valid_workloads)[0]
+    elif context.alert and context.alert.service:
+        workload = context.alert.service
+
+    assigned_plan_id = plan_id or f"plan_cand_{candidate_index}"
+
+    return RemediationPlan(
+        plan_id=assigned_plan_id,
+        candidate_index=candidate_index,
+        action=ActionType.NO_ACTION,
+        params=ActionParams(workload=workload),
+        target_resources=[],
+        declared_blast_set=[],
+        inverse=None,
+        rationale=rationale,
+        origin=origin,
+    )
+
+
+def ensure_no_action_candidate(
+    plans: list[RemediationPlan],
+    context: IncidentContext,
+    cluster_workloads: set[str] | None = None,
+    origin: Literal["planner", "playbook", "shadow"] = "planner",
+) -> list[RemediationPlan]:
+    """Ensure a NO_ACTION plan is present in the candidate ballot, appending one if absent."""
+    has_no_action = any(plan.action == ActionType.NO_ACTION for plan in plans)
+    if has_no_action:
+        return list(plans)
+
+    next_index = len(plans)
+    no_action_plan = create_no_action_plan(
+        context=context,
+        candidate_index=next_index,
+        origin=origin,
+        cluster_workloads=cluster_workloads,
+    )
+    logger.info(
+        "planner_no_action_appended",
+        plan_id=no_action_plan.plan_id,
+        candidate_index=no_action_plan.candidate_index,
+        total_candidates=next_index + 1,
+    )
+    return [*plans, no_action_plan]
+
+
 def normalise_plans(
     plans: list[RemediationPlan],
     context: IncidentContext,
     cluster_workloads: set[str] | None = None,
+    ensure_no_action: bool = False,
 ) -> list[RemediationPlan]:
     """Normalise candidate plans against cluster and repo, dropping invalid ones.
 
     Surviving plans are re-indexed with consecutive candidate_index and aligned plan_ids.
+    If ensure_no_action is True, guarantees NO_ACTION is present at the end if absent.
     """
     surviving_plans: list[RemediationPlan] = []
     for plan in plans:
@@ -452,6 +517,12 @@ def normalise_plans(
         retained_count=len(reindexed),
         dropped_count=len(plans) - len(reindexed),
     )
+    if ensure_no_action:
+        return ensure_no_action_candidate(
+            reindexed,
+            context=context,
+            cluster_workloads=cluster_workloads,
+        )
     return reindexed
 
 
@@ -466,6 +537,7 @@ async def generate_candidates_with_retry(
 
     Retries up to max_retries times upon schema failure, supplying explicit error
     feedback. Raises PlannerError if all retries are exhausted.
+    Guarantees a NO_ACTION candidate is always appended if absent from surviving plans.
     """
     messages = render_candidate_generation_prompt(context, count=count)
     last_error: Exception | None = None
@@ -479,8 +551,13 @@ async def generate_candidates_with_retry(
                 attempt=attempt,
                 count=len(unnormalised_plans),
             )
-            return normalise_plans(
+            normalised = normalise_plans(
                 plans=unnormalised_plans,
+                context=context,
+                cluster_workloads=cluster_workloads,
+            )
+            return ensure_no_action_candidate(
+                plans=normalised,
                 context=context,
                 cluster_workloads=cluster_workloads,
             )
@@ -603,6 +680,8 @@ __all__ = [
     "LLMPlanner",
     "PlannerSchemaValidationError",
     "compute_blast_set_validity",
+    "create_no_action_plan",
+    "ensure_no_action_candidate",
     "generate_candidates_with_retry",
     "normalise_plan",
     "normalise_plans",

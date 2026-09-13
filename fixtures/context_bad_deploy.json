@@ -1,0 +1,84 @@
+{
+  "incident_id": "inc_bad_deploy_001",
+  "alert": {
+    "alert_id": "alt_bad_deploy_001",
+    "source": "synthetic",
+    "title": "p99 latency SLO breach on edge-gateway",
+    "service": "data-service",
+    "severity": "critical",
+    "fired_at": "2026-09-13T12:00:00Z",
+    "raw": {
+      "scenario": "bad_deploy_data_service"
+    }
+  },
+  "signatures": [
+    {
+      "fingerprint": "sig_n_plus_one_query",
+      "message": "N+1 query execution detected on /api/items endpoint",
+      "service": "data-service",
+      "count": 142,
+      "first_seen": "2026-09-13T12:00:00Z",
+      "last_seen": "2026-09-13T12:00:00Z"
+    }
+  ],
+  "metrics_window": {
+    "service": "data-service",
+    "start_time": "2026-09-13T12:00:00Z",
+    "end_time": "2026-09-13T12:00:00Z",
+    "series": [],
+    "p99_latency_ms": 1450.0,
+    "error_rate": 0.085,
+    "request_count": 1200
+  },
+  "recent_deploys": [
+    {
+      "commit_sha": "c0ffee0000000000000000000000000000000000",
+      "image_digests": {
+        "edge-gateway": "sha256:edge000000000000000000000000000000000000000000000000000000000000",
+        "data-service": "sha256:data000000000000000000000000000000000000000000000000000000000000",
+        "auth-service": "sha256:auth000000000000000000000000000000000000000000000000000000000000",
+        "worker": "sha256:worker000000000000000000000000000000000000000000000000000000000000"
+      },
+      "deployed_at": "2026-09-13T12:00:00Z",
+      "pr_number": 102,
+      "contains_migration": false
+    },
+    {
+      "commit_sha": "deadbeef00000000000000000000000000000000",
+      "image_digests": {
+        "edge-gateway": "sha256:edge111111111111111111111111111111111111111111111111111111111111",
+        "data-service": "sha256:data111111111111111111111111111111111111111111111111111111111111",
+        "auth-service": "sha256:auth111111111111111111111111111111111111111111111111111111111111",
+        "worker": "sha256:worker111111111111111111111111111111111111111111111111111111111111"
+      },
+      "deployed_at": "2026-09-13T12:00:00Z",
+      "pr_number": 101,
+      "contains_migration": false
+    }
+  ],
+  "dependency_graph": {
+    "nodes": [
+      "edge-gateway",
+      "auth-service",
+      "data-service",
+      "worker"
+    ],
+    "edges": [
+      {
+        "source": "edge-gateway",
+        "target": "auth-service"
+      },
+      {
+        "source": "edge-gateway",
+        "target": "data-service"
+      },
+      {
+        "source": "data-service",
+        "target": "worker"
+      }
+    ],
+    "observed_at": "2026-09-13T12:00:00Z"
+  },
+  "inferred_failure_class": "bad_deploy",
+  "gathered_at": "2026-09-13T12:00:00Z"
+}
