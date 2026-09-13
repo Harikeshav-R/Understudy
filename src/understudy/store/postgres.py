@@ -17,7 +17,7 @@ from understudy.common.errors import StoreError
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
-from understudy.store.api import EvalStore, PlaybookStore, RunStore
+from understudy.store.api import EvalStore, PlaybookSearchResult, PlaybookStore, RunStore
 from understudy.store.database import StoreDatabase
 from understudy.store.models import PlaybookModel, RunModel, ScenarioResultModel
 
@@ -209,6 +209,59 @@ class PostgresPlaybookStore(PlaybookStore):
             res = await session.execute(stmt)
             models = res.scalars().all()
             return [RemediationPlan.model_validate(m.plan) for m in models]
+
+    async def search_playbooks_with_scores(
+        self, embedding: list[float], limit: int = 3
+    ) -> list[PlaybookSearchResult]:
+        """Find candidate playbooks nearest to the given embedding with similarity scores."""
+        async with self._db.session() as session:
+            similarity_expr = (1.0 - PlaybookModel.embedding.cosine_distance(embedding)).label(
+                "similarity"
+            )
+            stmt = (
+                select(PlaybookModel, similarity_expr)
+                .order_by(PlaybookModel.embedding.cosine_distance(embedding))
+                .limit(limit)
+            )
+            res = await session.execute(stmt)
+            rows = res.all()
+            results: list[PlaybookSearchResult] = []
+            for model, sim in rows:
+                results.append(
+                    PlaybookSearchResult(
+                        playbook_id=model.playbook_id,
+                        failure_class=model.failure_class,
+                        signature_text=model.signature_text,
+                        similarity=float(sim),
+                        plan=RemediationPlan.model_validate(model.plan),
+                        evidence_refs=list(model.evidence_refs),
+                        successes=model.successes,
+                        failures=model.failures,
+                        origin=model.origin,
+                    )
+                )
+            return results
+
+    async def list_playbooks(self) -> list[PlaybookSearchResult]:
+        """List all stored playbooks with operational metadata."""
+        async with self._db.session() as session:
+            stmt = select(PlaybookModel).order_by(PlaybookModel.created_at.desc())
+            res = await session.execute(stmt)
+            models = res.scalars().all()
+            return [
+                PlaybookSearchResult(
+                    playbook_id=m.playbook_id,
+                    failure_class=m.failure_class,
+                    signature_text=m.signature_text,
+                    similarity=1.0,
+                    plan=RemediationPlan.model_validate(m.plan),
+                    evidence_refs=list(m.evidence_refs),
+                    successes=m.successes,
+                    failures=m.failures,
+                    origin=m.origin,
+                )
+                for m in models
+            ]
 
     async def increment_success(self, playbook_id: str) -> None:
         """Increment the successful resolution counter for a playbook."""

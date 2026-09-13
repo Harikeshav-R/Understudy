@@ -1,10 +1,26 @@
-"""Store component protocol interfaces."""
-
 from typing import Any, Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
+
+
+class PlaybookSearchResult(BaseModel):
+    """Retrieved playbook candidate with vector similarity and operational metadata."""
+
+    model_config = ConfigDict(frozen=True)
+
+    playbook_id: str
+    failure_class: str
+    signature_text: str
+    similarity: float
+    plan: RemediationPlan
+    evidence_refs: list[str] = Field(default_factory=list)
+    successes: int = 0
+    failures: int = 0
+    origin: str = "incident"
 
 
 @runtime_checkable
@@ -70,6 +86,16 @@ class PlaybookStore(Protocol):
         self, embedding: list[float], limit: int = 5
     ) -> list[RemediationPlan]:
         """Find candidate playbooks nearest to the given embedding."""
+        raise NotImplementedError
+
+    async def search_playbooks_with_scores(
+        self, embedding: list[float], limit: int = 3
+    ) -> list[PlaybookSearchResult]:
+        """Find candidate playbooks nearest to the given embedding with similarity scores."""
+        raise NotImplementedError
+
+    async def list_playbooks(self) -> list[PlaybookSearchResult]:
+        """List all stored playbooks with operational metadata."""
         raise NotImplementedError
 
     async def increment_success(self, playbook_id: str) -> None:
@@ -186,6 +212,7 @@ class CheckpointStore(Protocol):
 __all__ = [
     "CheckpointStore",
     "EvalStore",
+    "PlaybookSearchResult",
     "PlaybookStore",
     "RunStore",
 ]

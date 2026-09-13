@@ -31,6 +31,9 @@ def test_understudy_error_hierarchy() -> None:
     from understudy.common.errors import (
         ObservabilityError,
         PlannerError,
+        PlaybookConfirmationError,
+        PlaybookEmbeddingError,
+        PlaybookError,
         SignalsError,
         StoreError,
     )
@@ -39,3 +42,6 @@ def test_understudy_error_hierarchy() -> None:
     assert issubclass(SignalsError, UnderstudyError)
     assert issubclass(ObservabilityError, SignalsError)
     assert issubclass(PlannerError, UnderstudyError)
+    assert issubclass(PlaybookError, UnderstudyError)
+    assert issubclass(PlaybookEmbeddingError, PlaybookError)
+    assert issubclass(PlaybookConfirmationError, PlaybookError)

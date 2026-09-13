@@ -904,5 +904,311 @@ def plan_cmd(
             )
 
 
+playbook_app = typer.Typer(
+    name="playbook",
+    help="Incident playbook library, matching, and seeding.",
+    no_args_is_help=True,
+)
+app.add_typer(playbook_app, name="playbook")
+
+
+@playbook_app.command("seed")
+def playbook_seed(
+    from_file: Annotated[
+        Path,
+        typer.Option(
+            "--from",
+            "-f",
+            help="Path to JSON file containing seed playbooks.",
+        ),
+    ],
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use in-memory fake store and deterministic embeddings.",
+        ),
+    ] = False,
+) -> None:
+    """Seed historical or synthetic playbooks into the playbook store."""
+    import asyncio
+    import json
+
+    from understudy.contracts.enums import FailureClass
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.playbook.signature import deterministic_signature_embedding
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    if not from_file.exists():
+        typer.echo(f"Seed file not found: {from_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        raw = json.loads(from_file.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            raw = [raw]
+    except Exception as exc:
+        typer.echo(f"Failed to parse seed playbooks JSON: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    store = FakePlaybookStore() if fake else PostgresPlaybookStore()
+
+    async def _seed_all() -> int:
+        count = 0
+        for item in raw:
+            pb_id = str(item["playbook_id"])
+            fc_raw = item["failure_class"]
+            fc = FailureClass(fc_raw) if fc_raw in FailureClass._value2member_map_ else fc_raw
+            sig_text = str(item["signature_text"])
+            plan = RemediationPlan.model_validate(item["plan"])
+            evidence_refs = list(item.get("evidence_refs", []))
+            origin = str(item.get("origin", "seed"))
+            emb = item.get("embedding")
+            if not emb or not isinstance(emb, list):
+                emb = deterministic_signature_embedding(sig_text)
+
+            await store.save_playbook(
+                playbook_id=pb_id,
+                failure_class=fc,
+                signature_text=sig_text,
+                embedding=emb,
+                plan=plan,
+                evidence_refs=evidence_refs,
+                origin=origin,
+            )
+            count += 1
+        return count
+
+    try:
+        seeded_count = asyncio.run(_seed_all())
+        typer.echo(f"Seeded {seeded_count} playbook(s) from {from_file}")
+    except Exception as exc:
+        typer.echo(f"Failed to seed playbooks into store: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@playbook_app.command("match")
+def playbook_match(
+    context_file: Annotated[
+        Path,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON fixture.",
+        ),
+    ],
+    top_k: Annotated[
+        int,
+        typer.Option(
+            "--top-k",
+            "-k",
+            help="Number of nearest candidates to retrieve from store.",
+        ),
+    ] = 3,
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use FakePlaybookLibrary or deterministic matching.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output raw PlaybookMatchResult JSON.",
+        ),
+    ] = False,
+) -> None:
+    """Find and confirm matching candidate playbook for the active incident context."""
+    import asyncio
+    import json
+
+    from understudy.contracts.enums import FailureClass
+    from understudy.contracts.incident import IncidentContext
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.playbook.confirmation import PlaybookConfirmer
+    from understudy.playbook.embeddings import OpenRouterEmbeddingClient
+    from understudy.playbook.retriever import PlaybookMatchResult, PlaybookRetriever
+    from understudy.playbook.signature import deterministic_signature_embedding
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    if not context_file.exists():
+        typer.echo(f"Context file not found: {context_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        raw_text = context_file.read_text(encoding="utf-8")
+        context = IncidentContext.model_validate_json(raw_text)
+    except Exception as exc:
+        typer.echo(f"Failed to parse IncidentContext: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _match() -> PlaybookMatchResult:
+        store: FakePlaybookStore | PostgresPlaybookStore
+        if fake:
+            store = FakePlaybookStore()
+            seed_path = Path("fixtures/playbooks_seed.json")
+            if seed_path.exists():
+                seed_data = json.loads(seed_path.read_text(encoding="utf-8"))
+                for s in seed_data:
+                    fc_raw = s["failure_class"]
+                    fc = (
+                        FailureClass(fc_raw)
+                        if fc_raw in FailureClass._value2member_map_
+                        else fc_raw
+                    )
+                    await store.save_playbook(
+                        playbook_id=s["playbook_id"],
+                        failure_class=fc,
+                        signature_text=s["signature_text"],
+                        embedding=s.get("embedding")
+                        or deterministic_signature_embedding(s["signature_text"]),
+                        plan=RemediationPlan.model_validate(s["plan"]),
+                        evidence_refs=s.get("evidence_refs", []),
+                        origin=s.get("origin", "seed"),
+                    )
+
+            async def _fake_embed(text: str) -> list[float]:
+                return deterministic_signature_embedding(text)
+
+            async def _fake_confirm(messages: list[dict[str, str]]) -> str:
+                _ = messages
+                return json.dumps(
+                    {
+                        "retained_playbook_id": "pb_bad_deploy_data_service",
+                        "confidence": 0.95,
+                        "reason": (
+                            "Matches N+1 query regression on data-service; "
+                            "rollback to deadbeef is safe and verified."
+                        ),
+                    }
+                )
+
+            embedder = OpenRouterEmbeddingClient(embed_caller=_fake_embed)
+            confirmer = PlaybookConfirmer(llm_caller=_fake_confirm)
+            retriever = PlaybookRetriever(
+                store=store,
+                embedder=embedder,
+                confirmer=confirmer,
+            )
+        else:
+            store = PostgresPlaybookStore()
+            retriever = PlaybookRetriever(store=store)
+
+        return await retriever.match_playbook(context, top_k=top_k)
+
+    from understudy.common.logging import configure_logging
+
+    try:
+        if json_output:
+            configure_logging(log_level="WARNING")
+        result = asyncio.run(_match())
+    except Exception as exc:
+        typer.echo(f"Playbook match error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    finally:
+        if json_output:
+            configure_logging(log_level="INFO")
+
+    if json_output:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+
+    if result.matched and result.plan is not None:
+        typer.echo(
+            f"Matched playbook '{result.playbook_id}' "
+            f"(cosine: {result.similarity:.2f} > 0.8):\n"
+            f"  Action: {result.plan.action.value}\n"
+            f"  Workload: {result.plan.params.workload}\n"
+            f"  Confirmation Reason: {result.confirmation_reason}\n"
+            f"  Plan ID: {result.plan.plan_id}"
+        )
+    else:
+        typer.echo(
+            f"No playbook match confirmed: {result.confirmation_reason} "
+            f"(top similarity: {result.similarity:.2f})"
+        )
+
+
+@playbook_app.command("list")
+def playbook_list(
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="List playbooks from fake store.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output JSON array.",
+        ),
+    ] = False,
+) -> None:
+    """List all registered playbooks in the library with success/failure counters."""
+    import asyncio
+    import json
+
+    from understudy.store.api import PlaybookSearchResult
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    async def _list() -> list[PlaybookSearchResult]:
+        store: FakePlaybookStore | PostgresPlaybookStore
+        if fake:
+            store = FakePlaybookStore()
+            seed_path = Path("fixtures/playbooks_seed.json")
+            if seed_path.exists():
+                from understudy.contracts.enums import FailureClass
+                from understudy.contracts.plan import RemediationPlan
+                from understudy.playbook.signature import deterministic_signature_embedding
+
+                seed_data = json.loads(seed_path.read_text(encoding="utf-8"))
+                for s in seed_data:
+                    fc_raw = s["failure_class"]
+                    fc = (
+                        FailureClass(fc_raw)
+                        if fc_raw in FailureClass._value2member_map_
+                        else fc_raw
+                    )
+                    await store.save_playbook(
+                        playbook_id=s["playbook_id"],
+                        failure_class=fc,
+                        signature_text=s["signature_text"],
+                        embedding=s.get("embedding")
+                        or deterministic_signature_embedding(s["signature_text"]),
+                        plan=RemediationPlan.model_validate(s["plan"]),
+                        evidence_refs=s.get("evidence_refs", []),
+                        origin=s.get("origin", "seed"),
+                    )
+        else:
+            store = PostgresPlaybookStore()
+
+        return await store.list_playbooks()
+
+    try:
+        playbooks = asyncio.run(_list())
+    except Exception as exc:
+        typer.echo(f"Failed to list playbooks: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        raw_list = [p.model_dump(mode="json") for p in playbooks]
+        typer.echo(json.dumps(raw_list, indent=2))
+        return
+
+    typer.echo(f"Stored Playbooks ({len(playbooks)}):")
+    for pb in playbooks:
+        typer.echo(
+            f"  {pb.playbook_id} | class={pb.failure_class} | "
+            f"action={pb.plan.action.value} | successes={pb.successes} | failures={pb.failures}"
+        )
+
+
 if __name__ == "__main__":
     app()

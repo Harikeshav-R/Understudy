@@ -153,6 +153,22 @@ async def test_fake_playbook_store() -> None:
     search_res = await store.search_playbooks([0.1, 0.2], limit=1)
     assert len(search_res) == 1
 
+    # search_playbooks_with_scores
+    scored_res = await store.search_playbooks_with_scores([0.1, 0.2], limit=1)
+    assert len(scored_res) == 1
+    assert scored_res[0].playbook_id == "pb_1"
+    assert scored_res[0].similarity > 0.99
+
+    # Zero vector handling in cosine similarity
+    zero_scored = await store.search_playbooks_with_scores([0.0, 0.0], limit=1)
+    assert len(zero_scored) == 1
+    assert zero_scored[0].similarity == 0.0
+
+    # list_playbooks
+    listed = await store.list_playbooks()
+    assert len(listed) == 1
+    assert listed[0].playbook_id == "pb_1"
+
     await store.increment_success("pb_1")
     await store.increment_failure("pb_1")
     # Coverage for non-existent key

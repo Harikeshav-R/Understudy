@@ -1,12 +1,17 @@
-"""Deterministic in-memory fake store implementations."""
-
+import math
 from typing import Any, TypedDict
 
 from understudy.common.errors import StoreError
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
-from understudy.store.api import CheckpointStore, EvalStore, PlaybookStore, RunStore
+from understudy.store.api import (
+    CheckpointStore,
+    EvalStore,
+    PlaybookSearchResult,
+    PlaybookStore,
+    RunStore,
+)
 
 
 class _PlaybookRecord(TypedDict):
@@ -62,6 +67,16 @@ class FakeRunStore(RunStore):
         return [run for run in self._runs.values() if run.finished_at is None]
 
 
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Calculate cosine similarity between two float vectors."""
+    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(x * x for x in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
 class FakePlaybookStore(PlaybookStore):
     """In-memory fake playbook store."""
 
@@ -104,6 +119,62 @@ class FakePlaybookStore(PlaybookStore):
         """Search playbooks (returns all stored plans up to limit)."""
         _ = embedding
         return [item["plan"] for item in list(self._playbooks.values())[:limit]]
+
+    async def search_playbooks_with_scores(
+        self, embedding: list[float], limit: int = 3
+    ) -> list[PlaybookSearchResult]:
+        """Find candidate playbooks nearest to the given embedding with similarity scores."""
+        scored: list[tuple[float, _PlaybookRecord]] = []
+        for record in self._playbooks.values():
+            sim = _cosine_similarity(embedding, record["embedding"])
+            scored.append((sim, record))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        results: list[PlaybookSearchResult] = []
+        for sim, record in scored[:limit]:
+            fc_val = (
+                record["failure_class"].value
+                if hasattr(record["failure_class"], "value")
+                else str(record["failure_class"])
+            )
+            results.append(
+                PlaybookSearchResult(
+                    playbook_id=record["playbook_id"],
+                    failure_class=fc_val,
+                    signature_text=record["signature_text"],
+                    similarity=sim,
+                    plan=record["plan"],
+                    evidence_refs=list(record["evidence_refs"]),
+                    successes=record["successes"],
+                    failures=record["failures"],
+                    origin=record["origin"],
+                )
+            )
+        return results
+
+    async def list_playbooks(self) -> list[PlaybookSearchResult]:
+        """List all stored playbooks with operational metadata."""
+        results: list[PlaybookSearchResult] = []
+        for record in self._playbooks.values():
+            fc_val = (
+                record["failure_class"].value
+                if hasattr(record["failure_class"], "value")
+                else str(record["failure_class"])
+            )
+            results.append(
+                PlaybookSearchResult(
+                    playbook_id=record["playbook_id"],
+                    failure_class=fc_val,
+                    signature_text=record["signature_text"],
+                    similarity=1.0,
+                    plan=record["plan"],
+                    evidence_refs=list(record["evidence_refs"]),
+                    successes=record["successes"],
+                    failures=record["failures"],
+                    origin=record["origin"],
+                )
+            )
+        return results
 
     async def increment_success(self, playbook_id: str) -> None:
         """Increment success counter."""
