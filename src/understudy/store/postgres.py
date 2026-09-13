@@ -8,7 +8,7 @@ Conforms to protocols defined in understudy.store.api:
 
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -21,6 +21,25 @@ from understudy.store.api import EvalStore, PlaybookStore, RunStore
 from understudy.store.database import StoreDatabase
 from understudy.store.models import PlaybookModel, RunModel, ScenarioResultModel
 
+# Arbitrary fixed key scoping the K5 single-writer advisory lock taken in claim_run().
+_RUN_CLAIM_ADVISORY_LOCK_KEY = 72176
+
+
+def _run_model_from_record(record: RunRecord) -> RunModel:
+    outcome_val = record.outcome.value if hasattr(record.outcome, "value") else str(record.outcome)
+    return RunModel(
+        run_id=record.run_id,
+        incident_id=record.incident_id,
+        scenario_id=record.scenario_id,
+        started_at=record.started_at,
+        finished_at=record.finished_at,
+        outcome=outcome_val,
+        prod_applied_plan=record.prod_applied_plan_id,
+        prod_outcome=record.prod_outcome,
+        escalation_reason=record.escalation_reason,
+        payload=record.model_dump(mode="json"),
+    )
+
 
 class PostgresRunStore(RunStore):
     """PostgreSQL implementation of the append-only RunStore."""
@@ -30,23 +49,40 @@ class PostgresRunStore(RunStore):
 
     async def record_run(self, record: RunRecord) -> None:
         """Persist an immutable run record append-only."""
-        outcome_val = (
-            record.outcome.value if hasattr(record.outcome, "value") else str(record.outcome)
-        )
-        model = RunModel(
-            run_id=record.run_id,
-            incident_id=record.incident_id,
-            scenario_id=record.scenario_id,
-            started_at=record.started_at,
-            finished_at=record.finished_at,
-            outcome=outcome_val,
-            prod_applied_plan=record.prod_applied_plan_id,
-            prod_outcome=record.prod_outcome,
-            escalation_reason=record.escalation_reason,
-            payload=record.model_dump(mode="json"),
-        )
+        model = _run_model_from_record(record)
         try:
             async with self._db.session() as session:
+                session.add(model)
+                await session.commit()
+        except StoreError as exc:
+            if isinstance(exc.__cause__, IntegrityError):
+                raise StoreError(
+                    f"Run {record.run_id} already exists; runs table is append-only",
+                    details={"run_id": record.run_id},
+                ) from exc
+            raise
+
+    async def claim_run(self, record: RunRecord) -> None:
+        """Atomically verify no other active run exists and persist `record`.
+
+        Takes a Postgres advisory transaction lock so the "no active run" check and
+        the insert happen atomically across concurrent callers (kernel invariant K5,
+        docs/03-invariants.md). The lock is released automatically at transaction end.
+        """
+        model = _run_model_from_record(record)
+        try:
+            async with self._db.session() as session:
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:key)"),
+                    {"key": _RUN_CLAIM_ADVISORY_LOCK_KEY},
+                )
+                stmt = select(RunModel).where(RunModel.finished_at.is_(None)).limit(1)
+                res = await session.execute(stmt)
+                if res.scalar_one_or_none() is not None:
+                    raise StoreError(
+                        "Another active run already exists; cannot claim a new run",
+                        details={"run_id": record.run_id},
+                    )
                 session.add(model)
                 await session.commit()
         except StoreError as exc:

@@ -207,20 +207,12 @@ class ServiceDependencyGraph(DependencyGraph):
         for entry in entrypoints:
             _dfs(entry, [entry])
 
-        # Filter out sub-paths if a longer path subsumes it
-        maximal_paths: list[list[str]] = []
-        for p in all_paths:
-            is_subpath = False
-            for other in all_paths:
-                if len(other) > len(p) and p[0] == other[0] and p[-1] == other[-1]:
-                    # If this is a direct edge that bypasses intermediate node in other
-                    is_subpath = True
-                    break
-            if not is_subpath:
-                maximal_paths.append(p)
-
-        # Build formatted strings
-        path_strs = [" -> ".join(p) for p in maximal_paths]
+        # Every path runs from an entrypoint (a node nothing else points to) to a
+        # terminal node (no outgoing edges), so no full path can ever be a genuine
+        # subsequence of another distinct one: an entrypoint value can only occupy
+        # position 0, and a terminal value can never have a successor to extend past.
+        # Every discovered chain is therefore already maximal.
+        path_strs = [" -> ".join(p) for p in all_paths]
         return ", ".join(path_strs)
 
     def cross_check(
@@ -233,6 +225,14 @@ class ServiceDependencyGraph(DependencyGraph):
         undeclared_services = observed.services - declared_nodes
         undeclared_edges = observed.edges - self._edges
 
+        # Declared-but-never-observed services/edges are only meaningful once we've
+        # actually collected some real traffic; a zero-traffic snapshot proves nothing.
+        missing_services: set[str] = set()
+        missing_edges: set[tuple[str, str]] = set()
+        if observed.total_requests > 0:
+            missing_services = declared_nodes - observed.services
+            missing_edges = self._edges - observed.edges
+
         mismatches: list[str] = []
         if undeclared_services:
             mismatches.append(
@@ -241,6 +241,14 @@ class ServiceDependencyGraph(DependencyGraph):
         if undeclared_edges:
             mismatches.append(
                 f"Undeclared call edges observed in traffic: {sorted(undeclared_edges)}"
+            )
+        if missing_services:
+            mismatches.append(
+                f"Declared services never observed in traffic: {sorted(missing_services)}"
+            )
+        if missing_edges:
+            mismatches.append(
+                f"Declared call edges never observed in traffic: {sorted(missing_edges)}"
             )
 
         if mismatches:
@@ -254,6 +262,8 @@ class ServiceDependencyGraph(DependencyGraph):
                     details={
                         "undeclared_services": sorted(undeclared_services),
                         "undeclared_edges": sorted(undeclared_edges),
+                        "missing_services": sorted(missing_services),
+                        "missing_edges": sorted(missing_edges),
                     },
                 )
             return CrossCheckReport(
@@ -264,6 +274,8 @@ class ServiceDependencyGraph(DependencyGraph):
                 observed_edges=observed.edges,
                 undeclared_services=undeclared_services,
                 undeclared_edges=undeclared_edges,
+                missing_services=missing_services,
+                missing_edges=missing_edges,
                 message=msg,
             )
 

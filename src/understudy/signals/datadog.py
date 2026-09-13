@@ -403,8 +403,8 @@ class DatadogAdapter(ObservabilityAdapter):
                         if raw_val is not None:
                             try:
                                 val_float = float(raw_val)
-                                # Datadog duration metrics in seconds are scaled to milliseconds
-                                ms_val = val_float * 1000.0 if val_float < 100.0 else val_float
+                                # Datadog duration metrics are in seconds; convert to milliseconds
+                                ms_val = val_float * 1000.0
                                 p99_latency_ms = round(ms_val, 2)
                             except (ValueError, TypeError):
                                 pass
@@ -484,7 +484,7 @@ class DatadogAdapter(ObservabilityAdapter):
 
     async def service_health(self, namespace: str, service: str) -> bool:
         """Check whether a service in a namespace is currently healthy."""
-        query = f"service:{service}"
+        query = f"service:{service} namespace:{namespace}"
         monitors = await self.client.check_monitors(query=query)
 
         if monitors:

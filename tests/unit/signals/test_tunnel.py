@@ -74,7 +74,7 @@ def test_extract_tunnel_url() -> None:
 
 @pytest.mark.asyncio
 async def test_tunnel_session_fake_lifecycle() -> None:
-    session = TunnelSession(port=19208, fake=True)
+    session = TunnelSession(port=19208, fake=True, secret="test-secret")
     assert session.provider == "fake"
 
     async with session:
@@ -86,7 +86,7 @@ async def test_tunnel_session_fake_lifecycle() -> None:
 
 @pytest.mark.asyncio
 async def test_tunnel_session_run_until_cancelled() -> None:
-    session = TunnelSession(port=19209, fake=True)
+    session = TunnelSession(port=19209, fake=True, secret="test-secret")
     await session.start()
 
     task = asyncio.create_task(session.run_until_cancelled())
@@ -143,7 +143,7 @@ async def test_tunnel_session_cloudflared_subprocess(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _mock_create_subprocess_exec)
 
-    session = TunnelSession(port=19210, provider="cloudflared", fake=False)
+    session = TunnelSession(port=19210, provider="cloudflared", fake=False, secret="test-secret")
     assert session.provider == "cloudflared"
 
     async with session:
@@ -167,7 +167,7 @@ async def test_tunnel_session_ngrok_subprocess(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _mock_create_subprocess_exec)
 
-    session = TunnelSession(port=19211, provider="ngrok", fake=False)
+    session = TunnelSession(port=19211, provider="ngrok", fake=False, secret="test-secret")
     assert session.provider == "ngrok"
 
     async with session:
@@ -187,7 +187,7 @@ async def test_tunnel_session_failed_url_discovery(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _mock_create_subprocess_exec)
 
-    session = TunnelSession(port=19212, provider="cloudflared", fake=False)
+    session = TunnelSession(port=19212, provider="cloudflared", fake=False, secret="test-secret")
     with pytest.raises(RuntimeError, match="Failed to discover public URL"):
         await session.start(timeout_seconds=2.0)
 
@@ -208,14 +208,14 @@ async def test_tunnel_session_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _mock_create_subprocess_exec)
 
-    session = TunnelSession(port=19213, provider="cloudflared", fake=False)
+    session = TunnelSession(port=19213, provider="cloudflared", fake=False, secret="test-secret")
     with pytest.raises(RuntimeError, match="Timed out waiting for cloudflared tunnel URL"):
         await session.start(timeout_seconds=0.05)
 
 
 @pytest.mark.asyncio
 async def test_tunnel_session_stop_kill_and_process_lookup_error() -> None:
-    session = TunnelSession(port=19214, fake=True)
+    session = TunnelSession(port=19214, fake=True, secret="test-secret")
 
     # 1. Stalling wait triggers kill
     class TimeoutProcess(DummyProcess):
@@ -249,6 +249,6 @@ async def test_tunnel_session_missing_stream(monkeypatch: pytest.MonkeyPatch) ->
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", _mock_create_subprocess_exec)
 
-    session = TunnelSession(port=19215, provider="cloudflared", fake=False)
+    session = TunnelSession(port=19215, provider="cloudflared", fake=False, secret="test-secret")
     with pytest.raises(RuntimeError, match="Failed to attach to cloudflared process stream"):
         await session.start()

@@ -29,13 +29,21 @@ class ObservabilityAdapter(Protocol):
     """Adapter for metrics, error logs, and service health queries."""
 
     async def metric_window(
-        self, service: str, since: datetime, namespace: str = "ust-prod"
+        self,
+        service: str,
+        since: datetime,
+        namespace: str = "ust-prod",
+        until: datetime | None = None,
     ) -> MetricWindow:
         """Fetch telemetry metric window for a service since a given timestamp."""
         raise NotImplementedError
 
     async def error_signatures(
-        self, service: str, since: datetime, namespace: str = "ust-prod"
+        self,
+        service: str,
+        since: datetime,
+        namespace: str = "ust-prod",
+        until: datetime | None = None,
     ) -> list[ErrorSignature]:
         """Aggregate log error signatures for a service since a given timestamp."""
         raise NotImplementedError

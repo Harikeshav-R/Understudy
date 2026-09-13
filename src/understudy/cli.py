@@ -5,8 +5,12 @@ from typing import TYPE_CHECKING, Annotated, Any
 
 import typer
 
+from understudy.common.logging import get_logger
+
 if TYPE_CHECKING:
     from understudy.signals.api import ObservabilityAdapter
+
+logger = get_logger(__name__)
 
 app = typer.Typer(
     name="ust",
@@ -226,6 +230,10 @@ def graph_show(
                     "observed_edges": [
                         {"source": s, "target": t} for s, t in sorted(report.observed_edges)
                     ],
+                    "missing_services": sorted(report.missing_services),
+                    "missing_edges": [
+                        {"source": s, "target": t} for s, t in sorted(report.missing_edges)
+                    ],
                     "message": report.message,
                 }
                 if report
@@ -399,12 +407,16 @@ def tunnel(
 
     from understudy.signals.tunnel import TunnelSession
 
-    session = TunnelSession(
-        port=port,
-        provider=provider,
-        fake=fake,
-        secret=secret,
-    )
+    try:
+        session = TunnelSession(
+            port=port,
+            provider=provider,
+            fake=fake,
+            secret=secret,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error starting webhook receiver: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
     async def _run() -> None:
         try:
@@ -419,7 +431,11 @@ def tunnel(
     import contextlib
 
     with contextlib.suppress(KeyboardInterrupt, asyncio.CancelledError):
-        asyncio.run(_run())
+        try:
+            asyncio.run(_run())
+        except (RuntimeError, TimeoutError) as exc:
+            typer.echo(f"Error starting webhook receiver: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
 
 
 alert_app = typer.Typer(
@@ -645,7 +661,8 @@ def signals_context(
             github_history = GitHubDeployHistory()
             try:
                 recent_deploys = await github_history.recent_deploys(limit=5)
-            except Exception:
+            except Exception as exc:
+                logger.warning("github_deploys_fetch_failed", error=str(exc))
                 recent_deploys = []
             finally:
                 await github_history.close()
@@ -656,7 +673,8 @@ def signals_context(
                 dep_graph = ServiceDependencyGraph.from_yaml(
                     "deploy/prod/dependencies.yaml"
                 ).snapshot()
-            except Exception:
+            except Exception as exc:
+                logger.warning("dependency_graph_load_failed", error=str(exc))
                 dep_graph = DependencyGraphSnapshot(
                     nodes=[service],
                     edges=[],

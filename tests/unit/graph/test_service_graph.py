@@ -38,10 +38,13 @@ def test_from_yaml_valid_prod_manifest() -> None:
     assert graph.request_share("worker") == 0.10
     assert graph.request_share("unknown") == 0.0
 
-    # Chain representation
-    assert (
-        graph.format_chains()
-        == "edge-gateway -> auth-service -> data-service, worker -> data-service"
+    # Chain representation — includes the direct edge-gateway -> data-service edge
+    # alongside the longer edge-gateway -> auth-service -> data-service chain, since
+    # it is a genuinely distinct declared edge, not a redundant sub-path of it.
+    assert graph.format_chains() == (
+        "edge-gateway -> auth-service -> data-service, "
+        "edge-gateway -> data-service, "
+        "worker -> data-service"
     )
 
 
@@ -164,13 +167,20 @@ def test_cross_check_clean() -> None:
     graph = ServiceDependencyGraph.from_yaml("deploy/prod/dependencies.yaml")
     traffic = ObservedTraffic(
         services={"edge-gateway", "auth-service", "data-service", "worker"},
-        edges={("edge-gateway", "auth-service"), ("auth-service", "data-service")},
+        edges={
+            ("edge-gateway", "auth-service"),
+            ("edge-gateway", "data-service"),
+            ("auth-service", "data-service"),
+            ("worker", "data-service"),
+        },
         request_counts={"edge-gateway": 50, "auth-service": 30, "data-service": 20, "worker": 0},
         total_requests=100,
     )
     report = graph.cross_check(traffic, raise_on_mismatch=True)
     assert report.status == "OK"
     assert "declared graph matches observed traffic: OK" in report.message
+    assert report.missing_services == set()
+    assert report.missing_edges == set()
     # Shares calibrated from observed counts
     assert graph.request_share("edge-gateway") == 0.50
     assert graph.request_share("auth-service") == 0.30
@@ -207,7 +217,12 @@ async def test_cross_check_prometheus(monkeypatch: pytest.MonkeyPatch) -> None:
 
     mock_traffic = ObservedTraffic(
         services={"edge-gateway", "auth-service", "data-service", "worker"},
-        edges={("edge-gateway", "auth-service"), ("worker", "data-service")},
+        edges={
+            ("edge-gateway", "auth-service"),
+            ("edge-gateway", "data-service"),
+            ("auth-service", "data-service"),
+            ("worker", "data-service"),
+        },
         request_counts={"edge-gateway": 10},
         total_requests=10,
     )
@@ -224,6 +239,29 @@ async def test_cross_check_prometheus(monkeypatch: pytest.MonkeyPatch) -> None:
 
     report = await graph.cross_check_prometheus(namespace="test-ns")
     assert report.status == "OK"
+
+
+def test_cross_check_missing_declared_edge() -> None:
+    """Cross-check flags a declared edge that never shows up in observed traffic."""
+    graph = ServiceDependencyGraph.from_yaml("deploy/prod/dependencies.yaml")
+    traffic = ObservedTraffic(
+        services={"edge-gateway", "auth-service", "data-service", "worker"},
+        edges={
+            ("edge-gateway", "auth-service"),
+            ("auth-service", "data-service"),
+            ("worker", "data-service"),
+        },
+        request_counts={"edge-gateway": 50, "auth-service": 30, "data-service": 20, "worker": 0},
+        total_requests=100,
+    )
+
+    with pytest.raises(GraphDiscrepancyError, match="Discrepancy detected"):
+        graph.cross_check(traffic, raise_on_mismatch=True)
+
+    report = graph.cross_check(traffic, raise_on_mismatch=False)
+    assert report.status == "MISMATCH"
+    assert report.missing_edges == {("edge-gateway", "data-service")}
+    assert report.missing_services == set()
 
 
 def test_cross_check_zero_requests() -> None:

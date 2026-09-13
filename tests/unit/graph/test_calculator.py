@@ -107,3 +107,11 @@ def test_compute_affected_services_zero_baselines() -> None:
     assert "svc-a" in affected
     assert "svc-b" not in affected
     assert "svc-c" in affected
+
+
+def test_compute_affected_services_zero_baseline_error_spike() -> None:
+    """A fresh 0% -> 5% error rate from a zero baseline must be flagged as affected."""
+    baselines = {"data-service": Mock(p99_latency_ms=0.0, error_rate=0.0)}
+    post_windows = {"data-service": Mock(p99_latency_ms=0.0, error_rate=0.05)}
+    affected = ServiceBlastRadiusCalculator.compute_affected_services(baselines, post_windows)
+    assert "data-service" in affected

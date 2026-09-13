@@ -228,35 +228,48 @@ class GitHubDeployHistory(DeployHistory):
         return deploys
 
     async def _fetch_commits(self, limit: int) -> list[dict[str, Any]]:
-        """Query commit list from GitHub API."""
+        """Query commit list from GitHub API, following pagination until `limit` is reached."""
         client = self._get_client()
         url = f"{self.base_url}/repos/{self.repo}/commits"
-        params: dict[str, Any] = {"per_page": min(limit, 100)}
-        if self.branch:
+        params: dict[str, Any] | None = {"per_page": min(limit, 100)}
+        if self.branch and params is not None:
             params["sha"] = self.branch
 
-        try:
-            response = await client.get(
-                url,
-                headers=self._get_headers(),
-                params=params,
-            )
-        except httpx.RequestError as exc:
-            raise GitHubError(f"GitHub API commit query request failed: {exc}") from exc
+        commits: list[dict[str, Any]] = []
+        next_url: str | None = url
+        next_params = params
+        while next_url and len(commits) < limit:
+            try:
+                response = await client.get(
+                    next_url,
+                    headers=self._get_headers(),
+                    params=next_params,
+                )
+            except httpx.RequestError as exc:
+                raise GitHubError(f"GitHub API commit query request failed: {exc}") from exc
 
-        if response.status_code != 200:
-            msg = f"GitHub API commit query failed: {response.status_code} {response.text}"
-            raise GitHubError(msg, details={"status_code": response.status_code, "url": url})
+            if response.status_code != 200:
+                msg = f"GitHub API commit query failed: {response.status_code} {response.text}"
+                raise GitHubError(
+                    msg, details={"status_code": response.status_code, "url": next_url}
+                )
 
-        try:
-            data = response.json()
-            if isinstance(data, list):
-                return cast("list[dict[str, Any]]", data)
-            raise GitHubError(f"GitHub commits endpoint returned non-list response: {type(data)}")
-        except Exception as exc:
-            if isinstance(exc, GitHubError):
-                raise
-            raise GitHubError(f"Failed to decode GitHub commits JSON: {exc}") from exc
+            try:
+                data = response.json()
+                if not isinstance(data, list):
+                    raise GitHubError(
+                        f"GitHub commits endpoint returned non-list response: {type(data)}"
+                    )
+            except Exception as exc:
+                if isinstance(exc, GitHubError):
+                    raise
+                raise GitHubError(f"Failed to decode GitHub commits JSON: {exc}") from exc
+
+            commits.extend(cast("list[dict[str, Any]]", data))
+            next_url = response.links.get("next", {}).get("url")
+            next_params = None
+
+        return commits[:limit]
 
     async def _resolve_pr_number(self, commit: dict[str, Any]) -> int | None:
         """Resolve associated pull request number from message or GitHub API."""

@@ -4,6 +4,11 @@ from typing import Any
 
 from understudy.graph.api import BlastRadiusCalculator, DependencyGraph
 
+# Zero-baseline degradation is a step function (no baseline to take a % of), so we use
+# small fixed absolute floors instead of reusing the relative `threshold` parameter.
+ZERO_BASELINE_ERROR_RATE_FLOOR = 0.01  # 1 percentage point
+ZERO_BASELINE_LATENCY_FLOOR_MS = 1.0  # 1ms
+
 
 class ServiceBlastRadiusCalculator(BlastRadiusCalculator):
     """Calculates normalized blast radius score based on reachable dependents and traffic shares."""
@@ -52,7 +57,7 @@ class ServiceBlastRadiusCalculator(BlastRadiusCalculator):
             if pre_p99 > 0.0:
                 if (post_p99 - pre_p99) / pre_p99 > threshold:
                     latency_degraded = True
-            elif post_p99 > 0.0:
+            elif post_p99 > ZERO_BASELINE_LATENCY_FLOOR_MS:
                 latency_degraded = True
 
             # 2. Error rate degradation check
@@ -60,7 +65,7 @@ class ServiceBlastRadiusCalculator(BlastRadiusCalculator):
             if pre_err > 0.0:
                 if (post_err - pre_err) / pre_err > threshold:
                     error_degraded = True
-            elif post_err > threshold:
+            elif post_err > ZERO_BASELINE_ERROR_RATE_FLOOR:
                 error_degraded = True
 
             if latency_degraded or error_degraded:

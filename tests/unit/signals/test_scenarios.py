@@ -119,3 +119,14 @@ def test_create_synthetic_alert_with_overrides() -> None:
     assert alert.title == "Custom Overridden Title"
     assert alert.service == "edge-gateway"
     assert alert.severity == "critical"
+
+
+def test_create_synthetic_alert_normalizes_service_override() -> None:
+    """A non-canonical service override is normalized like a real webhook alert."""
+    clock = FrozenClock()
+    alert = create_synthetic_alert(
+        "worker_backlog",
+        clock=clock,
+        service="auth-service-k8s",
+    )
+    assert alert.service == "auth-service"

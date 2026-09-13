@@ -165,11 +165,13 @@ def create_synthetic_alert(
     base_dir: Path | None = None,
 ) -> Alert:
     """Produce a normalized synthetic Alert based on a scenario template."""
+    from understudy.signals.pagerduty import _normalize_service_name
+
     template = load_scenario_template(scenario_id=scenario_id, base_dir=base_dir)
     resolved_clock = resolve_clock(clock)
 
     final_title = title if title is not None else template.title
-    final_service = service if service is not None else template.service
+    final_service = _normalize_service_name(service if service is not None else template.service)
     final_severity = severity if severity is not None else template.severity
 
     return Alert(

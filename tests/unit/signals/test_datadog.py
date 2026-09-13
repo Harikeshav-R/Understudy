@@ -459,7 +459,7 @@ async def test_datadog_adapter_metric_window_fallbacks_and_zero_traffic() -> Non
                 json={"status": "ok", "series": [{"pointlist": [[1789300000.0, 0.0]]}]},
             )
         if "app:data-service" in query_param and "p99:" in query_param:
-            # Value already >= 100ms
+            # Raw value in seconds; always converted to ms
             return httpx.Response(
                 200,
                 json={"status": "ok", "series": [{"pointlist": [[1789300000.0, 250.5]]}]},
@@ -483,7 +483,7 @@ async def test_datadog_adapter_metric_window_fallbacks_and_zero_traffic() -> Non
 
         assert window.request_count == 0
         assert window.error_rate == 0.0
-        assert window.p99_latency_ms == 250.5
+        assert window.p99_latency_ms == 250500.0
 
 
 @pytest.mark.asyncio

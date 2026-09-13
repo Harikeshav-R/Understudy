@@ -1,9 +1,11 @@
 """PagerDuty webhook receiver, HMAC verification, and AlertSource implementation."""
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
+import re
 import sys
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -51,7 +53,7 @@ def _normalize_service_name(raw_service: str) -> str:
     """Map external service string to a canonical demo stack microservice."""
     cleaned = raw_service.strip().lower()
     for known in KNOWN_SERVICES:
-        if known in cleaned:
+        if re.search(rf"\b{re.escape(known)}\b", cleaned):
             return known
 
     sanitized = "".join(c if c.isalnum() else "-" for c in cleaned).strip("-")
@@ -255,6 +257,11 @@ def create_webhook_app(
     webhook_secret = (
         secret if secret is not None else (get_settings().secrets.pagerduty_webhook_secret or "")
     )
+    if require_signature and not webhook_secret:
+        raise ValueError(
+            "Webhook signature verification is required but no secret was configured "
+            "(pass --secret or set PAGERDUTY_WEBHOOK_SECRET)"
+        )
 
     @app.get("/health")
     async def health() -> dict[str, str]:
@@ -371,19 +378,35 @@ class WebhookReceiverServer:
         self.server = uvicorn.Server(self.config)
         self._serve_task: asyncio.Task[None] | None = None
 
+    async def _serve(self) -> None:
+        # uvicorn signals a bind failure with sys.exit(), which raises SystemExit from
+        # inside this task. Left uncaught, asyncio re-raises BaseException subclasses
+        # like SystemExit out of the event loop's own scheduler, crashing the whole
+        # loop instead of just this task — so convert it to a plain exception here,
+        # before it ever reaches asyncio's task machinery.
+        try:
+            await self.server.serve()
+        except SystemExit as exc:
+            raise RuntimeError(f"Webhook server failed to start: {exc}") from exc
+
     async def start(self) -> None:
         """Start the ASGI server in background asyncio task."""
-        self._serve_task = asyncio.create_task(self.server.serve())
+        self._serve_task = asyncio.create_task(self._serve())
         for _ in range(50):
             if self.server.started:
                 return
+            if self._serve_task.done():
+                self._serve_task.result()
+                raise RuntimeError("Webhook server exited before starting")
             await asyncio.sleep(0.05)
+        raise TimeoutError("Webhook server did not start within the expected time")
 
     async def stop(self) -> None:
         """Signal the ASGI server to stop and await termination."""
         self.server.should_exit = True
         if self._serve_task:
-            await self._serve_task
+            with contextlib.suppress(BaseException):
+                await self._serve_task
             self._serve_task = None
 
     async def __aenter__(self) -> "WebhookReceiverServer":

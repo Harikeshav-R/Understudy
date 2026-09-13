@@ -717,3 +717,36 @@ async def test_client_context_manager() -> None:
         client = h._get_client()
         assert isinstance(client, httpx.AsyncClient)
     assert h._client is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_commits_follows_pagination_link_header() -> None:
+    page_one = [{"sha": f"page1-{i}"} for i in range(100)]
+    page_two = [{"sha": f"page2-{i}"} for i in range(60)]
+    next_url = "https://api.github.com/repos/test-owner/test-repo/commits?per_page=100&page=2"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        url_str = str(request.url)
+        if url_str == next_url:
+            return httpx.Response(200, json=page_two)
+        if url_str.endswith("/repos/test-owner/test-repo/commits?per_page=100"):
+            return httpx.Response(
+                200,
+                json=page_one,
+                headers={"Link": f'<{next_url}>; rel="next"'},
+            )
+        return httpx.Response(404, text="Not Found")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http_client:
+        history = GitHubDeployHistory(
+            token="test-token",
+            repo="test-owner/test-repo",
+            client=http_client,
+        )
+
+        commits = await history._fetch_commits(150)
+        assert len(commits) == 150
+        assert commits[0]["sha"] == "page1-0"
+        assert commits[99]["sha"] == "page1-99"
+        assert commits[100]["sha"] == "page2-0"
+        assert commits[149]["sha"] == "page2-49"

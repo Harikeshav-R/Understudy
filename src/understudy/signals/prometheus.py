@@ -306,7 +306,13 @@ class PrometheusClient:
             svc = str(metric.get("service", ""))
 
             # Match target against the requested service name
-            if svc == service or app == service or service in instance or pod.startswith(service):
+            instance_host = instance.split(".")[0].split(":")[0]
+            if (
+                svc == service
+                or app == service
+                or instance_host == service
+                or pod.startswith(f"{service}-")
+            ):
                 val_pair = item.get("value")
                 if isinstance(val_pair, list | tuple) and len(val_pair) >= 2:
                     try:
@@ -341,13 +347,14 @@ class PrometheusLokiAdapter(ObservabilityAdapter):
         service: str,
         since: datetime,
         namespace: str = "ust-prod",
+        until: datetime | None = None,
     ) -> MetricWindow:
         """Fetch telemetry metric window for a service since a given timestamp."""
         return await self.prometheus.get_metric_window(
             service=service,
             since=since,
             namespace=namespace,
-            until=self.clock.now(),
+            until=until or self.clock.now(),
         )
 
     async def error_signatures(
@@ -355,13 +362,14 @@ class PrometheusLokiAdapter(ObservabilityAdapter):
         service: str,
         since: datetime,
         namespace: str = "ust-prod",
+        until: datetime | None = None,
     ) -> list[ErrorSignature]:
         """Aggregate log error signatures for a service since a given timestamp."""
         return await self.loki.error_signatures(
             service=service,
             since=since,
             namespace=namespace,
-            until=self.clock.now(),
+            until=until or self.clock.now(),
         )
 
     async def service_health(self, namespace: str, service: str) -> bool:

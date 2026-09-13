@@ -9,6 +9,7 @@ Implements build-plan step B2.1 and Checkpoint B2:
 - Verifies PostgresEvalStore scenario execution recording.
 """
 
+import asyncio
 from datetime import UTC, datetime
 
 import psycopg
@@ -160,6 +161,39 @@ async def test_run_store_append_only(unique_run_record: RunRecord) -> None:
     assert any(r.run_id == run_id for r in active_runs)
 
     await db.dispose()
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_run_store_claim_run_concurrent_claims_serialize(
+    unique_run_record: RunRecord,
+) -> None:
+    """Two concurrent claim_run() calls against real Postgres: at most one can succeed.
+
+    Holds regardless of pre-existing active runs left behind by other integration
+    tests in this shared database: either both calls conflict with an existing active
+    run (zero successes) or exactly one of the two wins the race (one success).
+    """
+    db_a = StoreDatabase()
+    db_b = StoreDatabase()
+    store_a = PostgresRunStore(db=db_a)
+    store_b = PostgresRunStore(db=db_b)
+
+    record_a = unique_run_record
+    record_b = unique_run_record.model_copy(update={"run_id": f"{unique_run_record.run_id}_b"})
+
+    results = await asyncio.gather(
+        store_a.claim_run(record_a),
+        store_b.claim_run(record_b),
+        return_exceptions=True,
+    )
+    successes = [r for r in results if r is None]
+    failures = [r for r in results if isinstance(r, StoreError)]
+    assert len(successes) <= 1
+    assert len(successes) + len(failures) == 2
+
+    await db_a.dispose()
+    await db_b.dispose()
 
 
 @pytest.mark.integration

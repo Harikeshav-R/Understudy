@@ -55,4 +55,6 @@ class CrossCheckReport(BaseModel):
     observed_edges: set[tuple[str, str]]
     undeclared_services: set[str]
     undeclared_edges: set[tuple[str, str]]
+    missing_services: set[str] = Field(default_factory=set)
+    missing_edges: set[tuple[str, str]] = Field(default_factory=set)
     message: str

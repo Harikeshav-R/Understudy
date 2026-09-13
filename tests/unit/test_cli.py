@@ -344,10 +344,31 @@ def test_cli_tunnel_fake(monkeypatch: "pytest.MonkeyPatch") -> None:
     mock_run = AsyncMock(return_value=None)
     monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "run_until_cancelled", mock_run)
 
-    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19308"])
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19308", "--secret", "test-secret"])
     assert result.exit_code == 0
     assert "Tunnel URL: https://fake-tunnel-19308.understudy.dev" in result.stdout
     assert "Webhook URL: https://fake-tunnel-19308.understudy.dev/webhook" in result.stdout
+
+
+def test_cli_tunnel_missing_secret() -> None:
+    """Verify ust tunnel fails fast when no webhook secret is configured."""
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19320"])
+    assert result.exit_code == 1
+    assert "Error starting webhook receiver:" in (result.stderr or result.stdout)
+
+
+def test_cli_tunnel_start_failure(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust tunnel reports a clean error when the webhook server fails to start."""
+    import understudy.signals.tunnel
+
+    async def _failing_start(*_args: Any, **_kwargs: Any) -> str:
+        raise RuntimeError("Webhook server failed to start: address already in use")
+
+    monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "start", _failing_start)
+
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19321", "--secret", "test-secret"])
+    assert result.exit_code == 1
+    assert "Error starting webhook receiver:" in (result.stderr or result.stdout)
 
 
 def test_cli_tunnel_keyboard_interrupt(monkeypatch: "pytest.MonkeyPatch") -> None:
@@ -360,7 +381,7 @@ def test_cli_tunnel_keyboard_interrupt(monkeypatch: "pytest.MonkeyPatch") -> Non
 
     monkeypatch.setattr(understudy.signals.tunnel.TunnelSession, "run_until_cancelled", _interrupt)
 
-    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19309"])
+    result = runner.invoke(app, ["tunnel", "--fake", "--port", "19309", "--secret", "test-secret"])
     assert result.exit_code == 0
 
 
@@ -675,12 +696,38 @@ def test_cli_signals_context_datadog(monkeypatch: "pytest.MonkeyPatch") -> None:
 
 def test_cli_signals_context_fallback_graph(monkeypatch: "pytest.MonkeyPatch") -> None:
     """Verify ust signals context falls back to single-node snapshot if dependencies.yaml fails."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import MetricWindow
     from understudy.graph.service_graph import ServiceDependencyGraph
+    from understudy.signals.prometheus import PrometheusLokiAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
 
     def _failing_from_yaml(*_args: Any, **_kwargs: Any) -> Any:
         raise RuntimeError("Missing yaml")
 
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="data-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[],
+            p99_latency_ms=5.0,
+            error_rate=0.0,
+            request_count=50,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
     monkeypatch.setattr(ServiceDependencyGraph, "from_yaml", _failing_from_yaml)
+    monkeypatch.setattr(PrometheusLokiAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(PrometheusLokiAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(PrometheusLokiAdapter, "close", _mock_close)
 
     result = runner.invoke(app, ["signals", "context", "--service", "data-service"])
     assert result.exit_code == 0
@@ -797,7 +844,11 @@ def test_cli_graph_show_human(monkeypatch: "pytest.MonkeyPatch") -> None:
 
     result = runner.invoke(app, ["graph", "show"])
     assert result.exit_code == 0
-    assert "edge-gateway -> auth-service -> data-service, worker -> data-service" in result.stdout
+    assert (
+        "edge-gateway -> auth-service -> data-service, "
+        "edge-gateway -> data-service, "
+        "worker -> data-service"
+    ) in result.stdout
     assert "declared graph matches observed traffic: OK" in result.stdout
     assert "declared matches observed: OK" in result.stdout
 
@@ -834,7 +885,11 @@ def test_cli_graph_show_offline() -> None:
     """Verify ust graph show --offline skips Prometheus cross-check."""
     result = runner.invoke(app, ["graph", "show", "--offline"])
     assert result.exit_code == 0
-    assert "edge-gateway -> auth-service -> data-service, worker -> data-service" in result.stdout
+    assert (
+        "edge-gateway -> auth-service -> data-service, "
+        "edge-gateway -> data-service, "
+        "worker -> data-service"
+    ) in result.stdout
     assert "declared graph traffic check: SKIPPED (offline)" in result.stdout
 
 

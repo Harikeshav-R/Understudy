@@ -240,6 +240,56 @@ async def test_postgres_run_store_get_active_runs(sample_run_record: RunRecord) 
     assert active == [sample_run_record]
 
 
+@pytest.mark.asyncio
+async def test_postgres_run_store_claim_run_success(sample_run_record: RunRecord) -> None:
+    db = MockDatabase()
+    store = PostgresRunStore(db=db)  # type: ignore[arg-type]
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    db.session_mock.execute.return_value = mock_result
+
+    await store.claim_run(sample_run_record)
+    db.session_mock.add.assert_called_once()
+    db.session_mock.commit.assert_awaited_once()
+
+    added_model = db.session_mock.add.call_args[0][0]
+    assert isinstance(added_model, RunModel)
+    assert added_model.run_id == "run_001"
+
+
+@pytest.mark.asyncio
+async def test_postgres_run_store_claim_run_conflict(sample_run_record: RunRecord) -> None:
+    db = MockDatabase()
+    store = PostgresRunStore(db=db)  # type: ignore[arg-type]
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = MagicMock()  # an active run exists
+    db.session_mock.execute.return_value = mock_result
+
+    with pytest.raises(StoreError, match="Another active run already exists"):
+        await store.claim_run(sample_run_record)
+    db.session_mock.add.assert_not_called()
+    db.session_mock.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_postgres_run_store_claim_run_integrity_error(sample_run_record: RunRecord) -> None:
+    db = MockDatabase()
+    store = PostgresRunStore(db=db)  # type: ignore[arg-type]
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    db.session_mock.execute.return_value = mock_result
+
+    cause = IntegrityError("duplicate key", params=None, orig=Exception("unique constraint"))
+    db.session_mock.commit.side_effect = StoreError("session failure")
+    db.session_mock.commit.side_effect.__cause__ = cause
+
+    with pytest.raises(StoreError, match="already exists; runs table is append-only"):
+        await store.claim_run(sample_run_record)
+
+
 def test_postgres_run_store_default_init() -> None:
     store = PostgresRunStore()
     assert store._db is not None

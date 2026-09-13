@@ -420,7 +420,7 @@ def test_parse_pagerduty_webhook_v2_string_service() -> None:
 @pytest.mark.asyncio
 async def test_webhook_receiver_server_stop_without_start() -> None:
     source = PagerDutyAlertSource()
-    server = WebhookReceiverServer(alert_source=source)
+    server = WebhookReceiverServer(alert_source=source, require_signature=False)
     await server.stop()
     assert server._serve_task is None
 
@@ -430,12 +430,14 @@ async def test_webhook_receiver_server_start_timeout(monkeypatch: pytest.MonkeyP
     import asyncio
 
     source = PagerDutyAlertSource()
-    server = WebhookReceiverServer(alert_source=source)
+    server = WebhookReceiverServer(alert_source=source, require_signature=False)
 
-    async def _fake_serve() -> None:
-        await asyncio.sleep(0.5)
+    async def _hanging_serve() -> None:
+        # Never sets server.started and never completes, forcing the poll loop to
+        # exhaust its retries.
+        await asyncio.Event().wait()
 
-    monkeypatch.setattr(server.server, "serve", _fake_serve)
+    monkeypatch.setattr(server.server, "serve", _hanging_serve)
 
     real_sleep = asyncio.sleep
 
@@ -443,6 +445,83 @@ async def test_webhook_receiver_server_start_timeout(monkeypatch: pytest.MonkeyP
         await real_sleep(0.001)
 
     monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
-    await server.start()
+    with pytest.raises(TimeoutError, match="did not start"):
+        await server.start()
     assert server._serve_task is not None
+    server._serve_task.cancel()
+    await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_webhook_receiver_server_start_exits_before_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    source = PagerDutyAlertSource()
+    server = WebhookReceiverServer(alert_source=source, require_signature=False)
+
+    async def _failing_serve() -> None:
+        raise OSError("Address already in use")
+
+    monkeypatch.setattr(server.server, "serve", _failing_serve)
+
+    real_sleep = asyncio.sleep
+
+    async def _fast_sleep(_s: float) -> None:
+        await real_sleep(0.001)
+
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
+    with pytest.raises(OSError, match="Address already in use"):
+        await server.start()
+    await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_webhook_receiver_server_start_exits_cleanly_without_starting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    source = PagerDutyAlertSource()
+    server = WebhookReceiverServer(alert_source=source, require_signature=False)
+
+    async def _noop_serve() -> None:
+        return None
+
+    monkeypatch.setattr(server.server, "serve", _noop_serve)
+
+    real_sleep = asyncio.sleep
+
+    async def _fast_sleep(_s: float) -> None:
+        await real_sleep(0.001)
+
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
+    with pytest.raises(RuntimeError, match="exited before starting"):
+        await server.start()
+    await server.stop()
+
+
+@pytest.mark.asyncio
+async def test_webhook_receiver_server_start_bind_failure_system_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+
+    source = PagerDutyAlertSource()
+    server = WebhookReceiverServer(alert_source=source, require_signature=False)
+
+    async def _failing_serve() -> None:
+        raise SystemExit(3)
+
+    monkeypatch.setattr(server.server, "serve", _failing_serve)
+
+    real_sleep = asyncio.sleep
+
+    async def _fast_sleep(_s: float) -> None:
+        await real_sleep(0.001)
+
+    monkeypatch.setattr(asyncio, "sleep", _fast_sleep)
+    with pytest.raises(RuntimeError, match="Webhook server failed to start"):
+        await server.start()
     await server.stop()
