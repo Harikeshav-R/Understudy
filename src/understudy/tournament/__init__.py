@@ -4,6 +4,7 @@ from understudy.tournament.api import (
     BlastTracker,
     CandidateScorer,
     EnvironmentProbe,
+    LLMJudge,
     Tournament,
 )
 from understudy.tournament.blast import (
@@ -19,7 +20,23 @@ from understudy.tournament.blast import (
 from understudy.tournament.fakes import (
     FakeBlastTracker,
     FakeEnvironmentProbe,
+    FakeLLMJudge,
     FakeTournament,
+)
+from understudy.tournament.judge import (
+    AdvisoryLLMJudge,
+    JudgeAPIError,
+    JudgeConfig,
+    JudgeConfigError,
+    JudgeError,
+    JudgeEvaluation,
+    JudgeParseError,
+    JudgeTimeoutError,
+    build_judge_system_prompt,
+    build_judge_user_prompt,
+    compute_judge_agreement,
+    parse_judge_response,
+    serialize_evidence_for_judge,
 )
 from understudy.tournament.probe import (
     ProbeConfig,
@@ -41,6 +58,7 @@ from understudy.tournament.scorer import (
 )
 
 __all__ = [
+    "AdvisoryLLMJudge",
     "BlastConfig",
     "BlastCoordinator",
     "BlastEvaluation",
@@ -51,23 +69,37 @@ __all__ = [
     "EnvironmentProbe",
     "FakeBlastTracker",
     "FakeEnvironmentProbe",
+    "FakeLLMJudge",
     "FakeTournament",
+    "JudgeAPIError",
+    "JudgeConfig",
+    "JudgeConfigError",
+    "JudgeError",
+    "JudgeEvaluation",
+    "JudgeParseError",
+    "JudgeTimeoutError",
+    "LLMJudge",
     "ProbeConfig",
     "ProbeResult",
     "ProbeSampler",
     "ScoringConfig",
     "Tournament",
+    "build_judge_system_prompt",
+    "build_judge_user_prompt",
     "check_disqualification",
     "compute_affected_services",
     "compute_blast_radius",
     "compute_blast_subscore",
     "compute_downstream_error_delta",
     "compute_downstream_subscore",
+    "compute_judge_agreement",
     "compute_recovery_subscore",
     "compute_violations_subscore",
     "detect_recovery",
     "evaluate_blast",
     "load_scoring_config",
+    "parse_judge_response",
     "score_candidate",
     "score_candidates",
+    "serialize_evidence_for_judge",
 ]

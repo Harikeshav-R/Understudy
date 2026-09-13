@@ -13,6 +13,7 @@ from understudy.contracts.evidence import (
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.twin import TwinHandle
 from understudy.tournament.blast import BlastEvaluation, EnvironmentBaseline
+from understudy.tournament.judge import JudgeEvaluation
 from understudy.tournament.probe import ProbeResult
 
 
@@ -92,4 +93,17 @@ class CandidateScorer(Protocol):
         blast_scores: dict[str, float] | None = None,
     ) -> list[CandidateScore]:
         """Score candidate evidence deterministically."""
+        raise NotImplementedError
+
+
+@runtime_checkable
+class LLMJudge(Protocol):
+    """Protocol for advisory LLM judge evaluating candidate rehearsal evidence."""
+
+    async def evaluate(
+        self,
+        evidence: Sequence[CandidateEvidence],
+        plans: Sequence[RemediationPlan] | None = None,
+    ) -> JudgeEvaluation:
+        """Evaluate candidate rehearsal evidence and return an advisory ranking with reasons."""
         raise NotImplementedError

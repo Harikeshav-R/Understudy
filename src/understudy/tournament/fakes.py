@@ -14,8 +14,9 @@ from understudy.contracts.evidence import (
 from understudy.contracts.incident import MetricWindow
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.twin import MirrorStats, TwinHandle
-from understudy.tournament.api import BlastTracker, EnvironmentProbe, Tournament
+from understudy.tournament.api import BlastTracker, EnvironmentProbe, LLMJudge, Tournament
 from understudy.tournament.blast import BlastEvaluation, EnvironmentBaseline
+from understudy.tournament.judge import JudgeEvaluation
 from understudy.tournament.probe import ProbeResult
 
 
@@ -232,4 +233,56 @@ class FakeBlastTracker(BlastTracker):
             downstream_error_delta=self.downstream_error_delta,
             pre_apply_baselines=baseline.baselines,
             post_apply_windows={},
+        )
+
+
+class FakeLLMJudge(LLMJudge):
+    """Deterministic fake advisory LLM judge for testing and simulation."""
+
+    def __init__(
+        self,
+        ranking: list[str] | None = None,
+        agree_with_first: bool = True,
+        seed: int = 42,
+    ) -> None:
+        self.ranking = ranking
+        self.agree_with_first = agree_with_first
+        self.seed = seed
+
+    async def evaluate(
+        self,
+        evidence: Sequence[CandidateEvidence],
+        plans: Sequence[RemediationPlan] | None = None,
+    ) -> JudgeEvaluation:
+        """Produce deterministic advisory ranking and reasons."""
+        _ = plans
+        if not evidence:
+            return JudgeEvaluation(model="fake-llm-judge")
+
+        if self.ranking is not None:
+            ranking = list(self.ranking)
+            seen = set(ranking)
+            for ev in evidence:
+                if ev.plan_id not in seen:
+                    ranking.append(ev.plan_id)
+                    seen.add(ev.plan_id)
+        elif self.agree_with_first:
+            sorted_ev = sorted(
+                evidence,
+                key=lambda e: (not e.recovered, e.recovery_seconds or 999.0, e.plan_id),
+            )
+            ranking = [e.plan_id for e in sorted_ev]
+        else:
+            ranking = [e.plan_id for e in reversed(evidence)]
+
+        reasons = {
+            pid: f"Candidate {pid} ranked deterministically by FakeLLMJudge (seed={self.seed})."
+            for pid in ranking
+        }
+
+        return JudgeEvaluation(
+            ranking=ranking,
+            reasons=reasons,
+            rationale=f"Deterministic fake evaluation for {len(ranking)} candidates.",
+            model="fake-llm-judge",
         )
