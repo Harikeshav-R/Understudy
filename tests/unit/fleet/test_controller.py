@@ -518,7 +518,7 @@ async def test_readiness_polling_api_error() -> None:
     apps_api.list_namespaced_deployment.side_effect = ApiException(
         status=500, reason="Kube API down"
     )
-    controller = K8sFleetController(apps_api=apps_api)
+    controller = K8sFleetController(apps_api=apps_api, core_api=MagicMock())
 
     deps = [{"metadata": {"name": "app-dep"}, "spec": {"replicas": 1}}]
     with pytest.raises(FleetError, match="Error polling readiness in namespace 'test-ns'"):
