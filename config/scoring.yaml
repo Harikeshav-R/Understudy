@@ -1,0 +1,12 @@
+# Deterministic scoring weights and ceilings (architecture §2.7)
+recovery_weight: 0.40
+blast_weight: 0.25
+downstream_weight: 0.20
+violations_weight: 0.15
+
+# Ceilings and thresholds
+recovery_timeout_seconds: 180.0
+downstream_error_ceiling: 0.10
+violation_ceiling: 5
+mirror_drop_ceiling: 0.05
+min_probe_samples: 60

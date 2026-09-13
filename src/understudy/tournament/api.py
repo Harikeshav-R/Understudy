@@ -79,3 +79,17 @@ class Tournament(Protocol):
     ) -> TournamentResult:
         """Deterministically determine tournament outcome and winning plan."""
         raise NotImplementedError
+
+
+@runtime_checkable
+class CandidateScorer(Protocol):
+    """Protocol for deterministic candidate scoring."""
+
+    def score(
+        self,
+        evidences: Sequence[CandidateEvidence],
+        twins_ready: dict[str, bool] | None = None,
+        blast_scores: dict[str, float] | None = None,
+    ) -> list[CandidateScore]:
+        """Score candidate evidence deterministically."""
+        raise NotImplementedError

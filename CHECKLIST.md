@@ -223,13 +223,14 @@ validated, normalised, invertible plans against the real cluster.
 
 - [x] A4.1 **[P0]** 1 Hz probe, 20 s warm-up exclusion, 15-sample recovery, 180 s timeout
 - [x] A4.2 **[P0]** Blast-radius computation with per-environment pre-apply baselines
-- [ ] A4.3 **[P0]** Deterministic scorer, weights from config, disqualification rules
+- [x] A4.3 **[P0]** Deterministic scorer, weights from config, disqualification rules
 - [ ] A4.4 **[P1]** Advisory LLM judge (no access to deterministic scores)
 - [ ] A4.5 **[P0]** Arbiter with the 0.15 ambiguity margin; winner derives only from `scores`
 
 **Checkpoint A4**
 
-- [ ] Property tests pass: monotone in recovery time; disqualified never wins; NO_ACTION can win
+- [x] Property tests pass: monotone in recovery time; disqualified never wins; NO_ACTION can win
+
 - [ ] `tournament replay` on the three-candidate fixture → decided, with margin
 - [ ] `tournament replay` on the near-tie fixture → **ambiguous, no winner**
 - [ ] `tournament replay` on the high-drop fixture → that candidate disqualified as `evidence_incomplete`
