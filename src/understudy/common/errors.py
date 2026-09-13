@@ -41,3 +41,11 @@ class OrchestratorError(UnderstudyError):
 
 class StoreError(UnderstudyError):
     """Raised on persistence, query, or constraint failures in the store."""
+
+
+class SignalsError(UnderstudyError):
+    """Raised on failure to fetch telemetry, ingest signals, or communicate with signal sources."""
+
+
+class ObservabilityError(SignalsError):
+    """Raised on failure to query metrics or logs from Prometheus or Loki."""

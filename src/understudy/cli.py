@@ -395,5 +395,136 @@ def alert_inject(
         )
 
 
+signals_app = typer.Typer(
+    name="signals",
+    help="Telemetry, metrics, and incident context commands.",
+    no_args_is_help=True,
+)
+app.add_typer(signals_app, name="signals")
+
+
+@signals_app.command("context")
+def signals_context(
+    service: str = typer.Option(
+        "data-service",
+        "--service",
+        "-s",
+        help="Target microservice name (e.g. data-service).",
+    ),
+    minutes: int = typer.Option(
+        10,
+        "--minutes",
+        "-m",
+        help="Incident context telemetry window in minutes.",
+    ),
+    namespace: str = typer.Option(
+        "ust-prod",
+        "--namespace",
+        "-n",
+        help="Kubernetes namespace to query (default: ust-prod).",
+    ),
+    incident_id: str | None = typer.Option(
+        None,
+        "--incident-id",
+        help="Optional incident ID override.",
+    ),
+    json_output: bool = typer.Option(
+        True,
+        "--json/--no-json",
+        help="Print full IncidentContext JSON.",
+    ),
+    prometheus_url: str | None = typer.Option(
+        None,
+        "--prometheus-url",
+        help="Optional Prometheus base URL override.",
+    ),
+    loki_url: str | None = typer.Option(
+        None,
+        "--loki-url",
+        help="Optional Loki base URL override.",
+    ),
+) -> None:
+    """Fetch real Prometheus metrics and Loki error signatures into an IncidentContext."""
+    import asyncio
+    from datetime import timedelta
+
+    from understudy.common.clock import SystemClock
+    from understudy.common.ids import new_alert_id, new_incident_id
+    from understudy.contracts.incident import (
+        Alert,
+        DependencyGraphSnapshot,
+        IncidentContext,
+    )
+    from understudy.signals.loki import LokiClient
+    from understudy.signals.prometheus import PrometheusClient, PrometheusLokiAdapter
+
+    clock = SystemClock()
+    now = clock.now()
+    window_minutes = max(1, minutes)
+    since = now - timedelta(minutes=window_minutes)
+    inc_id = incident_id or new_incident_id()
+
+    prom_client = PrometheusClient(base_url=prometheus_url, clock=clock)
+    loki_client = LokiClient(base_url=loki_url, clock=clock)
+    adapter = PrometheusLokiAdapter(
+        prometheus_client=prom_client,
+        loki_client=loki_client,
+        clock=clock,
+    )
+
+    alert = Alert(
+        alert_id=new_alert_id(),
+        source="synthetic",
+        title=f"Telemetry context query for {service} in {namespace}",
+        service=service,
+        severity="critical",
+        fired_at=since,
+        raw={"query_minutes": window_minutes, "namespace": namespace},
+    )
+
+    async def _gather() -> IncidentContext:
+        try:
+            metric_window = await adapter.metric_window(
+                service=service,
+                since=since,
+                namespace=namespace,
+            )
+            signatures = await adapter.error_signatures(
+                service=service,
+                since=since,
+                namespace=namespace,
+            )
+            dep_graph = DependencyGraphSnapshot(
+                nodes=[service],
+                edges=[],
+                observed_at=now,
+            )
+            return IncidentContext(
+                incident_id=inc_id,
+                alert=alert,
+                signatures=signatures,
+                metrics_window=metric_window,
+                recent_deploys=[],
+                dependency_graph=dep_graph,
+                inferred_failure_class=None,
+                gathered_at=now,
+            )
+        finally:
+            await adapter.close()
+
+    context = asyncio.run(_gather())
+
+    if json_output:
+        typer.echo(context.model_dump_json(indent=2))
+    else:
+        typer.echo(
+            f"IncidentContext gathered for {service} ({namespace}): "
+            f"requests={context.metrics_window.request_count}, "
+            f"p99={context.metrics_window.p99_latency_ms}ms, "
+            f"errors={context.metrics_window.error_rate}, "
+            f"signatures={len(context.signatures)}"
+        )
+
+
 if __name__ == "__main__":
     app()

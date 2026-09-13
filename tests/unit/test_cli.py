@@ -465,3 +465,131 @@ def test_cli_alert_help() -> None:
     result = runner.invoke(app, ["alert", "--help"])
     assert result.exit_code == 0
     assert "inject" in result.stdout
+
+
+def test_cli_signals_help() -> None:
+    """Verify ust signals --help renders subcommand documentation."""
+    result = runner.invoke(app, ["signals", "--help"])
+    assert result.exit_code == 0
+    assert "context" in result.stdout
+
+
+def test_cli_signals_context_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context outputs valid JSON IncidentContext."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import (
+        ErrorSignature,
+        MetricPoint,
+        MetricSeries,
+        MetricWindow,
+    )
+    from understudy.signals.prometheus import PrometheusLokiAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="data-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[
+                MetricSeries(
+                    metric_name="http_requests_total",
+                    labels={"service": "data-service"},
+                    points=[MetricPoint(timestamp=fixed_now, value=100.0)],
+                )
+            ],
+            p99_latency_ms=12.5,
+            error_rate=0.02,
+            request_count=100,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[ErrorSignature]:
+        return [
+            ErrorSignature(
+                fingerprint="fp123456",
+                message="Mock database error",
+                service="data-service",
+                count=3,
+                first_seen=fixed_now,
+                last_seen=fixed_now,
+            )
+        ]
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(PrometheusLokiAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(PrometheusLokiAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(PrometheusLokiAdapter, "close", _mock_close)
+
+    result = runner.invoke(
+        app,
+        [
+            "signals",
+            "context",
+            "--service",
+            "data-service",
+            "--minutes",
+            "10",
+            "--namespace",
+            "ust-prod",
+            "--incident-id",
+            "inc_test_123",
+        ],
+    )
+    assert result.exit_code == 0
+    assert '"incident_id": "inc_test_123"' in result.stdout
+    assert '"service": "data-service"' in result.stdout
+    assert '"fp123456"' in result.stdout
+
+
+def test_cli_signals_context_no_json(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust signals context --no-json prints human summary."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import MetricWindow
+    from understudy.signals.prometheus import PrometheusLokiAdapter
+
+    fixed_now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+
+    async def _mock_metric_window(*_args: Any, **_kwargs: Any) -> MetricWindow:
+        return MetricWindow(
+            service="auth-service",
+            start_time=fixed_now,
+            end_time=fixed_now,
+            series=[],
+            p99_latency_ms=5.0,
+            error_rate=0.0,
+            request_count=50,
+        )
+
+    async def _mock_error_signatures(*_args: Any, **_kwargs: Any) -> list[Any]:
+        return []
+
+    async def _mock_close(*_args: Any, **_kwargs: Any) -> None:
+        pass
+
+    monkeypatch.setattr(PrometheusLokiAdapter, "metric_window", _mock_metric_window)
+    monkeypatch.setattr(PrometheusLokiAdapter, "error_signatures", _mock_error_signatures)
+    monkeypatch.setattr(PrometheusLokiAdapter, "close", _mock_close)
+
+    result = runner.invoke(
+        app,
+        [
+            "signals",
+            "context",
+            "--service",
+            "auth-service",
+            "--no-json",
+            "--prometheus-url",
+            "http://custom-prom:9090",
+            "--loki-url",
+            "http://custom-loki:3100",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "IncidentContext gathered for auth-service (ust-prod):" in result.stdout
+    assert "requests=50" in result.stdout
+    assert "p99=5.0ms" in result.stdout
