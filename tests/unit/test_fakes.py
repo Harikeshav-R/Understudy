@@ -25,7 +25,7 @@ from understudy.contracts.plan import ActionParams, RemediationPlan
 from understudy.contracts.run import RunRecord
 from understudy.contracts.twin import TwinHandle
 from understudy.eval.fakes import FakeEvalHarness
-from understudy.fleet.fakes import FakeFleetController
+from understudy.fleet.fakes import FakeFleetController, FakeWorkloadReader
 from understudy.graph.fakes import FakeBlastRadiusCalculator, FakeDependencyGraph
 from understudy.kernel.fakes import FakeSafetyKernel
 from understudy.mirror.fakes import FakeMirrorRegistry
@@ -358,6 +358,25 @@ async def test_fake_fleet_controller() -> None:
 
     await fleet.teardown_all("inc_001")
     assert "inc_001" not in fleet._twins
+
+
+@pytest.mark.asyncio
+async def test_fake_workload_reader() -> None:
+    reader = FakeWorkloadReader()
+    snapshot = await reader.read_workloads("ust-prod")
+    assert snapshot.namespace == "ust-prod"
+    assert len(snapshot.workloads) == 5
+    assert "edge-gateway" in snapshot.workloads
+    assert "prod-postgres" in snapshot.workloads
+    assert "app-config" in snapshot.config_maps
+
+    filtered = await reader.read_workloads("ust-prod", exclude_components={"database"})
+    assert len(filtered.workloads) == 4
+    assert "prod-postgres" not in filtered.workloads
+    assert "data-service" in filtered.workloads
+    data_svc = filtered.workloads["data-service"]
+    assert len(data_svc.containers) == 1
+    assert data_svc.containers[0].pinned_image.startswith("localhost:5001/data-service@sha256:")
 
 
 @pytest.mark.asyncio

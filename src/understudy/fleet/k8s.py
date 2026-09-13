@@ -1,0 +1,473 @@
+"""Kubernetes API workload reader and image digest resolver.
+
+Implements build-plan step A2.1:
+Read ust-prod workloads via the Kubernetes API, extracting image digests
+(pinned to digests, not tags), resource specs, env, and ConfigMap references.
+"""
+
+import asyncio
+from typing import Any
+
+from kubernetes import client, config
+from kubernetes.client.exceptions import ApiException
+
+from understudy.common.clock import Clock, resolve_clock
+from understudy.common.config import get_settings
+from understudy.common.errors import FleetError
+from understudy.fleet.api import WorkloadReader
+from understudy.fleet.models import (
+    ClusterWorkloadSnapshot,
+    ContainerSnapshot,
+    EnvVar,
+    ResourceSpec,
+    WorkloadSnapshot,
+)
+
+DEFAULT_K8S_TIMEOUT_SECONDS = 10.0
+
+
+def _parse_image_repo_and_tag(image_spec: str) -> tuple[str, str | None]:
+    """Split an image specification into repository base and tag/digest.
+
+    Correctly handles host:port in registry URLs (e.g. localhost:5001/data-service:good).
+    """
+    if "@" in image_spec:
+        repo, digest = image_spec.split("@", 1)
+        return repo, digest
+
+    if ":" in image_spec:
+        parts = image_spec.rsplit(":", 1)
+        if "/" not in parts[1]:
+            return parts[0], parts[1]
+
+    return image_spec, None
+
+
+def resolve_image_digest(image_spec: str, container_status_image_id: str | None) -> tuple[str, str]:
+    """Resolve an image spec and container status imageID to a pinned image and digest.
+
+    Returns:
+        tuple[str, str]: (pinned_image_reference, raw_sha256_digest)
+        e.g. ('localhost:5001/worker@sha256:2e2519...', 'sha256:2e2519...')
+
+    Raises:
+        FleetError: If no valid digest can be resolved from the container status or spec.
+    """
+    repo, tag_or_digest = _parse_image_repo_and_tag(image_spec)
+
+    # If the deployment spec itself is already pinned with a sha256 digest
+    if tag_or_digest and tag_or_digest.startswith("sha256:"):
+        return f"{repo}@{tag_or_digest}", tag_or_digest
+
+    if not container_status_image_id:
+        raise FleetError(
+            f"Cannot resolve image digest for {image_spec}: container status imageID is missing"
+        )
+
+    clean_id = container_status_image_id.strip()
+    for prefix in ("docker-pullable://", "containerd://", "docker://"):
+        if clean_id.startswith(prefix):
+            clean_id = clean_id[len(prefix) :]
+            break
+
+    if "@" in clean_id:
+        id_repo, digest_part = clean_id.split("@", 1)
+        if not digest_part.startswith("sha256:"):
+            raise FleetError(
+                f"Invalid image digest algorithm for {image_spec} in {container_status_image_id}"
+            )
+        # Prefer the deployment spec's repository name if registry was local/relative
+        target_repo = repo if repo else id_repo
+        return f"{target_repo}@{digest_part}", digest_part
+
+    if clean_id.startswith("sha256:"):
+        return f"{repo}@{clean_id}", clean_id
+
+    # If container status imageID is a 64-char hex string without prefix
+    if len(clean_id) == 64 and all(c in "0123456789abcdefABCDEF" for c in clean_id):
+        digest = f"sha256:{clean_id.lower()}"
+        return f"{repo}@{digest}", digest
+
+    raise FleetError(
+        f"Unable to extract sha256 digest from container status imageID: "
+        f"{container_status_image_id}"
+    )
+
+
+def extract_resource_spec(resources: client.V1ResourceRequirements | None) -> ResourceSpec:
+    """Extract CPU/memory requests and limits from Kubernetes resource requirements."""
+    if resources is None:
+        return ResourceSpec()
+
+    requests = {k: str(v) for k, v in (resources.requests or {}).items()}
+    limits = {k: str(v) for k, v in (resources.limits or {}).items()}
+    return ResourceSpec(requests=requests, limits=limits)
+
+
+def extract_env_vars(env_list: list[client.V1EnvVar] | None) -> list[EnvVar]:
+    """Extract environment variables including literal values and valueFrom sources."""
+    if not env_list:
+        return []
+
+    result: list[EnvVar] = []
+    for item in env_list:
+        value_from: dict[str, Any] | None = None
+        if item.value_from:
+            vf = item.value_from
+            vf_dict: dict[str, Any] = {}
+            if vf.config_map_key_ref:
+                cm = vf.config_map_key_ref
+                vf_dict["configMapKeyRef"] = {
+                    "name": cm.name,
+                    "key": cm.key,
+                    "optional": cm.optional,
+                }
+            if vf.secret_key_ref:
+                sec = vf.secret_key_ref
+                vf_dict["secretKeyRef"] = {
+                    "name": sec.name,
+                    "key": sec.key,
+                    "optional": sec.optional,
+                }
+            if vf.field_ref:
+                fr = vf.field_ref
+                vf_dict["fieldRef"] = {
+                    "fieldPath": fr.field_path,
+                    "apiVersion": fr.api_version,
+                }
+            if vf_dict:
+                value_from = vf_dict
+
+        result.append(EnvVar(name=item.name, value=item.value, value_from=value_from))
+    return result
+
+
+def extract_config_map_refs(pod_spec: client.V1PodSpec) -> list[str]:
+    """Identify all ConfigMap names referenced across container env, envFrom, and volumes."""
+    names: set[str] = set()
+
+    containers = list(pod_spec.containers or [])
+    if pod_spec.init_containers:
+        containers.extend(pod_spec.init_containers)
+
+    for c in containers:
+        for env in c.env or []:
+            if env.value_from and env.value_from.config_map_key_ref:
+                cm_name = env.value_from.config_map_key_ref.name
+                if cm_name:
+                    names.add(cm_name)
+
+        for env_from in c.env_from or []:
+            if env_from.config_map_ref and env_from.config_map_ref.name:
+                names.add(env_from.config_map_ref.name)
+
+    for vol in pod_spec.volumes or []:
+        if vol.config_map and vol.config_map.name:
+            names.add(vol.config_map.name)
+        if vol.projected and vol.projected.sources:
+            for source in vol.projected.sources:
+                if source.config_map and source.config_map.name:
+                    names.add(source.config_map.name)
+
+    return sorted(names)
+
+
+def _extract_probe(probe: client.V1Probe | None) -> dict[str, Any] | None:
+    """Extract probe configuration as a serialized dictionary with None values stripped."""
+    if probe is None:
+        return None
+    data = probe.to_dict()
+    return {k.lstrip("_"): v for k, v in data.items() if v is not None}
+
+
+def _extract_probes(
+    container: client.V1Container,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Extract liveness and readiness probe configurations as serialized dictionaries."""
+    return _extract_probe(container.liveness_probe), _extract_probe(container.readiness_probe)
+
+
+def _extract_ports(container: client.V1Container) -> list[dict[str, Any]]:
+    """Extract container port specifications."""
+    if not container.ports:
+        return []
+    return [
+        {
+            "containerPort": p.container_port,
+            "name": p.name,
+            "protocol": p.protocol,
+        }
+        for p in container.ports
+    ]
+
+
+def _extract_volumes(pod_spec: client.V1PodSpec) -> list[dict[str, Any]]:
+    """Extract pod volume specifications in serializable form."""
+    if not pod_spec.volumes:
+        return []
+
+    volumes: list[dict[str, Any]] = []
+    for vol in pod_spec.volumes:
+        vol_dict: dict[str, Any] = {"name": vol.name}
+        if vol.config_map:
+            vol_dict["configMap"] = {"name": vol.config_map.name}
+        if vol.secret:
+            vol_dict["secret"] = {"secretName": vol.secret.secret_name}
+        if vol.empty_dir:
+            vol_dict["emptyDir"] = {}
+        volumes.append(vol_dict)
+    return volumes
+
+
+def get_k8s_apps_client(context: str | None = None) -> client.AppsV1Api:
+    """Create a Kubernetes AppsV1Api client with local kubeconfig or incluster fallback."""
+    try:
+        config.load_incluster_config()
+    except config.ConfigException:
+        config.load_kube_config(context=context)
+    return client.AppsV1Api()
+
+
+def get_k8s_core_client(context: str | None = None) -> client.CoreV1Api:
+    """Create a Kubernetes CoreV1Api client with local kubeconfig or incluster fallback."""
+    try:
+        config.load_incluster_config()
+    except config.ConfigException:
+        config.load_kube_config(context=context)
+    return client.CoreV1Api()
+
+
+class K8sWorkloadReader(WorkloadReader):
+    """Kubernetes API workload reader and digest resolver."""
+
+    def __init__(
+        self,
+        apps_api: client.AppsV1Api | None = None,
+        core_api: client.CoreV1Api | None = None,
+        timeout_seconds: float = DEFAULT_K8S_TIMEOUT_SECONDS,
+        clock: Clock | None = None,
+        context: str | None = None,
+    ) -> None:
+        self._context = context
+        self._apps_api = apps_api
+        self._core_api = core_api
+        self.timeout_seconds = timeout_seconds
+        self.clock = resolve_clock(clock)
+
+    @property
+    def apps_api(self) -> client.AppsV1Api:
+        """Lazily initialize AppsV1Api if not provided."""
+        if self._apps_api is None:
+            self._apps_api = get_k8s_apps_client(context=self._context)
+        return self._apps_api
+
+    @property
+    def core_api(self) -> client.CoreV1Api:
+        """Lazily initialize CoreV1Api if not provided."""
+        if self._core_api is None:
+            self._core_api = get_k8s_core_client(context=self._context)
+        return self._core_api
+
+    async def read_workloads(
+        self,
+        namespace: str,
+        exclude_components: set[str] | None = None,
+    ) -> ClusterWorkloadSnapshot:
+        """Read all workloads in a namespace, resolving images to digests.
+
+        Args:
+            namespace: Kubernetes namespace to read (e.g. 'ust-prod').
+            exclude_components: Optional set of component names to skip (e.g. {'database'}).
+
+        Returns:
+            ClusterWorkloadSnapshot: Full snapshot of workloads, pinned digests, and config.
+
+        Raises:
+            FleetError: If the Kubernetes API call fails or an image cannot be resolved.
+        """
+        try:
+            deployments_resp, pods_resp = await asyncio.gather(
+                asyncio.to_thread(
+                    self.apps_api.list_namespaced_deployment,
+                    namespace=namespace,
+                    _request_timeout=self.timeout_seconds,
+                ),
+                asyncio.to_thread(
+                    self.core_api.list_namespaced_pod,
+                    namespace=namespace,
+                    _request_timeout=self.timeout_seconds,
+                ),
+            )
+        except ApiException as exc:
+            raise FleetError(
+                f"Failed to query Kubernetes API for namespace '{namespace}': {exc.reason}",
+                details={"status": exc.status, "body": exc.body},
+            ) from exc
+        except Exception as exc:
+            raise FleetError(
+                f"Unexpected error querying Kubernetes API for namespace '{namespace}': {exc}"
+            ) from exc
+
+        deployments: list[client.V1Deployment] = deployments_resp.items or []
+        pods: list[client.V1Pod] = pods_resp.items or []
+
+        workload_snapshots: dict[str, WorkloadSnapshot] = {}
+        all_referenced_cm_names: set[str] = set()
+
+        for dep in deployments:
+            dep_name = dep.metadata.name if dep.metadata else "unknown"
+            labels = dep.metadata.labels or {} if dep.metadata else {}
+            annotations = dep.metadata.annotations or {} if dep.metadata else {}
+            component = labels.get("app.kubernetes.io/component")
+
+            if exclude_components and component in exclude_components:
+                continue
+
+            match_labels = (
+                dep.spec.selector.match_labels or {} if dep.spec and dep.spec.selector else {}
+            )
+
+            # Find matching pods
+            matching_pods = [
+                pod
+                for pod in pods
+                if pod.metadata
+                and pod.metadata.labels
+                and all(pod.metadata.labels.get(k) == v for k, v in match_labels.items())
+            ]
+
+            # Prefer pods in Running phase with ready container statuses
+            running_pods = [
+                p
+                for p in matching_pods
+                if p.status and p.status.phase == "Running" and p.status.container_statuses
+            ]
+            selected_pod = (
+                running_pods[0] if running_pods else (matching_pods[0] if matching_pods else None)
+            )
+
+            if (
+                selected_pod is None
+                or not selected_pod.status
+                or not selected_pod.status.container_statuses
+            ):
+                raise FleetError(
+                    f"No running pod with container statuses found for deployment '{dep_name}'"
+                )
+
+            container_status_by_name = {
+                cs.name: cs for cs in (selected_pod.status.container_statuses or [])
+            }
+
+            container_snapshots: list[ContainerSnapshot] = []
+            pod_spec = dep.spec.template.spec if dep.spec and dep.spec.template else None
+            if not pod_spec or not pod_spec.containers:
+                raise FleetError(f"Deployment '{dep_name}' has no containers in pod template")
+
+            for c in pod_spec.containers:
+                c_status = container_status_by_name.get(c.name)
+                if not c_status:
+                    pod_desc = (
+                        selected_pod.metadata.name
+                        if selected_pod.metadata and selected_pod.metadata.name
+                        else "unknown"
+                    )
+                    raise FleetError(
+                        f"Container '{c.name}' in deployment '{dep_name}' has no matching "
+                        f"container status in pod '{pod_desc}'"
+                    )
+
+                pinned_image, digest = resolve_image_digest(c.image, c_status.image_id)
+                resources = extract_resource_spec(c.resources)
+                env = extract_env_vars(c.env)
+                ports = _extract_ports(c)
+                liveness_probe, readiness_probe = _extract_probes(c)
+
+                container_snapshots.append(
+                    ContainerSnapshot(
+                        name=c.name,
+                        image_tag=c.image,
+                        image_digest=digest,
+                        pinned_image=pinned_image,
+                        resources=resources,
+                        env=env,
+                        ports=ports,
+                        liveness_probe=liveness_probe,
+                        readiness_probe=readiness_probe,
+                    )
+                )
+
+            cm_refs = extract_config_map_refs(pod_spec)
+            all_referenced_cm_names.update(cm_refs)
+            volumes = _extract_volumes(pod_spec)
+            replicas = dep.spec.replicas if dep.spec and dep.spec.replicas is not None else 1
+
+            workload_snapshots[dep_name] = WorkloadSnapshot(
+                name=dep_name,
+                namespace=namespace,
+                component=component,
+                labels=labels,
+                annotations=annotations,
+                replicas=replicas,
+                containers=container_snapshots,
+                config_map_refs=cm_refs,
+                volumes=volumes,
+            )
+
+        # Read live data for all referenced ConfigMaps
+        config_maps_data = await self.read_config_maps(namespace, all_referenced_cm_names)
+
+        return ClusterWorkloadSnapshot(
+            namespace=namespace,
+            workloads=workload_snapshots,
+            config_maps=config_maps_data,
+            captured_at=self.clock.now(),
+        )
+
+    async def read_config_maps(self, namespace: str, names: set[str]) -> dict[str, dict[str, str]]:
+        """Read data of referenced ConfigMaps from the cluster namespace."""
+        if not names:
+            return {}
+
+        results: dict[str, dict[str, str]] = {}
+        for name in sorted(names):
+            try:
+                cm = await asyncio.to_thread(
+                    self.core_api.read_namespaced_config_map,
+                    name=name,
+                    namespace=namespace,
+                    _request_timeout=self.timeout_seconds,
+                )
+                results[name] = dict(cm.data or {})
+            except ApiException as exc:
+                if exc.status == 404:
+                    raise FleetError(
+                        f"Referenced ConfigMap '{name}' not found in namespace '{namespace}'"
+                    ) from exc
+                raise FleetError(
+                    f"Failed reading ConfigMap '{name}' in namespace '{namespace}': {exc.reason}"
+                ) from exc
+            except Exception as exc:
+                raise FleetError(
+                    f"Unexpected error reading ConfigMap '{name}' in namespace '{namespace}': {exc}"
+                ) from exc
+
+        return results
+
+
+async def read_prod_workloads(
+    exclude_components: set[str] | None = None,
+    timeout_seconds: float = DEFAULT_K8S_TIMEOUT_SECONDS,
+    clock: Clock | None = None,
+) -> ClusterWorkloadSnapshot:
+    """Convenience function to read production workloads using application settings."""
+    settings = get_settings()
+    reader = K8sWorkloadReader(
+        timeout_seconds=timeout_seconds,
+        clock=clock,
+        context=settings.cluster.context,
+    )
+    return await reader.read_workloads(
+        namespace=settings.cluster.prod_namespace,
+        exclude_components=exclude_components,
+    )

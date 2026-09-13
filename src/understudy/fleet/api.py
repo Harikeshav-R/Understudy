@@ -3,6 +3,13 @@
 from typing import Protocol, runtime_checkable
 
 from understudy.contracts.twin import TwinHandle
+from understudy.fleet.models import (
+    ClusterWorkloadSnapshot,
+    ContainerSnapshot,
+    EnvVar,
+    ResourceSpec,
+    WorkloadSnapshot,
+)
 
 
 @runtime_checkable
@@ -20,3 +27,27 @@ class FleetController(Protocol):
     async def teardown_all(self, incident_id: str) -> None:
         """Idempotently tear down all twin environments associated with an incident."""
         raise NotImplementedError
+
+
+@runtime_checkable
+class WorkloadReader(Protocol):
+    """Protocol for reading workloads and configuration from a cluster namespace."""
+
+    async def read_workloads(
+        self,
+        namespace: str,
+        exclude_components: set[str] | None = None,
+    ) -> ClusterWorkloadSnapshot:
+        """Read all workloads in a namespace, resolving images to digests."""
+        raise NotImplementedError
+
+
+__all__ = [
+    "ClusterWorkloadSnapshot",
+    "ContainerSnapshot",
+    "EnvVar",
+    "FleetController",
+    "ResourceSpec",
+    "WorkloadReader",
+    "WorkloadSnapshot",
+]
