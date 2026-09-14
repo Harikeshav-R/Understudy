@@ -1,0 +1,8 @@
+# SLO configuration defining replica floors and safety budgets for the safety kernel (K1, K7).
+mutation_budget: 3
+mutation_window_minutes: 15
+min_replicas:
+  edge-gateway: 1
+  auth-service: 1
+  data-service: 1
+  worker: 1
