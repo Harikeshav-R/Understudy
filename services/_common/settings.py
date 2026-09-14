@@ -55,6 +55,7 @@ class LoadgenSettings(BaseModel):
 
     rps: float = 20.0  # env: LOADGEN_RPS
     duration_seconds: float = 30.0  # env: LOADGEN_DURATION
+    target_url: str = "http://localhost:8080"  # env: LOADGEN_TARGET_URL
     seed: int = 42  # env: LOADGEN_SEED
     auth_token: str = "valid-token"  # env: LOADGEN_AUTH_TOKEN
     http_timeout_seconds: float = 10.0  # env: LOADGEN_TIMEOUT
@@ -81,6 +82,19 @@ class FaultsSettings(BaseModel):
     injection_seed: int = 1337  # env: FAULT_INJECTION_SEED
     # env: FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS
     pool_exhaustion_getconn_timeout_seconds: float = 1.0
+
+
+class MirrorGatewaySettings(BaseModel):
+    """Tunables for the mirror-gateway service."""
+
+    model_config = ConfigDict(frozen=True)
+
+    target_prod_url: str = "http://edge-gateway.ust-prod:8080"  # env: TARGET_PROD_URL
+    queue_maxsize: int = 1000  # env: MIRROR_QUEUE_MAXSIZE
+    worker_timeout_seconds: float = 2.0  # env: MIRROR_WORKER_TIMEOUT_SECONDS
+    http_timeout_seconds: float = 5.0  # env: MIRROR_HTTP_TIMEOUT_SECONDS
+    max_connections: int = 200  # env: MIRROR_MAX_CONNECTIONS
+    max_keepalive_connections: int = 50  # env: MIRROR_MAX_KEEPALIVE_CONNECTIONS
 
 
 class MetricsSettings(BaseModel):
@@ -115,6 +129,7 @@ class ServicesSettings(BaseModel):
     loadgen: LoadgenSettings = LoadgenSettings()
     db: DbSettings = DbSettings()
     faults: FaultsSettings = FaultsSettings()
+    mirror_gateway: MirrorGatewaySettings = MirrorGatewaySettings()
     metrics: MetricsSettings = MetricsSettings()
 
 
@@ -130,6 +145,7 @@ _ENV_OVERRIDES: dict[tuple[str, str], tuple[str, type]] = {
     ("worker", "job_list_limit"): ("WORKER_JOB_LIST_LIMIT", int),
     ("loadgen", "rps"): ("LOADGEN_RPS", float),
     ("loadgen", "duration_seconds"): ("LOADGEN_DURATION", float),
+    ("loadgen", "target_url"): ("LOADGEN_TARGET_URL", str),
     ("loadgen", "seed"): ("LOADGEN_SEED", int),
     ("loadgen", "auth_token"): ("LOADGEN_AUTH_TOKEN", str),
     ("loadgen", "http_timeout_seconds"): ("LOADGEN_TIMEOUT", float),
@@ -144,6 +160,12 @@ _ENV_OVERRIDES: dict[tuple[str, str], tuple[str, type]] = {
         "FAULT_POOL_EXHAUSTION_GETCONN_TIMEOUT_SECONDS",
         float,
     ),
+    ("mirror_gateway", "target_prod_url"): ("TARGET_PROD_URL", str),
+    ("mirror_gateway", "queue_maxsize"): ("MIRROR_QUEUE_MAXSIZE", int),
+    ("mirror_gateway", "worker_timeout_seconds"): ("MIRROR_WORKER_TIMEOUT_SECONDS", float),
+    ("mirror_gateway", "http_timeout_seconds"): ("MIRROR_HTTP_TIMEOUT_SECONDS", float),
+    ("mirror_gateway", "max_connections"): ("MIRROR_MAX_CONNECTIONS", int),
+    ("mirror_gateway", "max_keepalive_connections"): ("MIRROR_MAX_KEEPALIVE_CONNECTIONS", int),
 }
 
 

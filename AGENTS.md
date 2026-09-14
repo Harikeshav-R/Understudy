@@ -69,12 +69,12 @@ cannot run the checkpoint (no cluster, no secrets), say so explicitly in the PR 
    and does not update it will be rejected.
 
 Never tick a checkpoint box you did not verify, and never edit a checkpoint's stated
-expectation to match what you observed. A mismatch is information; take it to the human
-(§8, item 5).
+expectation to match what you observed. A mismatch is information; take it to the human (§8, item 5).
 
 ## 4. Branches, commits, PRs
 
 **Branches — Conventional Branch format.**
+
 ```
 <type>/<short-kebab-description>
 feat/fleet-namespace-fork
@@ -84,9 +84,11 @@ test/kernel-k3-negative-cases
 chore/pre-commit-detect-secrets
 refactor/tournament-scorer-pure
 ```
+
 Types: `feat`, `fix`, `docs`, `test`, `chore`, `refactor`, `perf`, `build`, `ci`.
 
 **Commits — Conventional Commits, with a scope that is a package name.**
+
 ```
 feat(fleet): fork twin namespaces at pinned image digests
 fix(mirror): count dropped requests when the twin queue is full
@@ -97,15 +99,19 @@ refactor(tournament)!: make the scorer a pure function
 BREAKING CHANGE: Tournament.score no longer performs I/O; callers must
 pass CandidateEvidence explicitly.
 ```
+
 Rules:
+
 - Subject in the imperative, lower case, no trailing period, ≤ 72 characters.
 - Scope is a package under `src/understudy/` or one of `services`, `deploy`, `docs`, `ci`.
-- Always provide a commit description describing the change. Never commit with only a subject line. The body explains *why*, not what. The diff says what.
+- Always provide a commit description describing the change. Never commit with only a subject line. The body explains
+  *why*, not what. The diff says what.
 - One logical change per commit. If the subject needs an "and", split it.
 - Reference the build-plan step in the body: `Implements build-plan step A2.3.`
 - `!` and a `BREAKING CHANGE:` footer for any contract change.
 
 **PRs.**
+
 - **Never commit to `main`. Never push to `main`. Always open a PR.** No exceptions,
   including for docs and typos.
 - **Never auto-merge or merge a PR.** Agents must never merge pull requests or enable
@@ -113,11 +119,11 @@ Rules:
 - **Merge commits**, not squash, not rebase-merge. History keeps the individual commits.
 - PR title follows Conventional Commits, same as a commit subject.
 - PR body uses `.github/pull_request_template.md`, which requires:
-  - the build-plan step implemented,
-  - the checkpoint command and its actual output (or `checkpoint: unverified` with a reason),
-  - ADRs relied on,
-  - anything mocked, with justification,
-  - docs updated (or "none required" with a reason).
+    - the build-plan step implemented,
+    - the checkpoint command and its actual output (or `checkpoint: unverified` with a reason),
+    - ADRs relied on,
+    - anything mocked, with justification,
+    - docs updated (or "none required" with a reason).
 - CI (`make check`) must be green. Never merge red. Never use `--no-verify`.
 - One PR per build-plan step, unless steps are trivially coupled.
 
@@ -127,12 +133,14 @@ Rules:
 `mypy --strict` must pass with no ignores. Line length 100.
 
 **5.2 Respect the import boundaries.** Enforced by import-linter in CI:
+
 - `contracts` imports nothing internal.
 - `common` imports only `contracts`.
 - Only `orchestrator` may import `langgraph`.
 - Only `store` may import `psycopg` or `sqlalchemy`.
 - Only `fleet`, `actuator` and `graph` may import `kubernetes`.
-- No package may import a sibling's internals — only its `api.py` and `contracts` (and sibling `fakes.py` when constructing test fakes in `fakes.py` per §7.1 and §11).
+- No package may import a sibling's internals — only its `api.py` and `contracts` (and sibling `fakes.py` when
+  constructing test fakes in `fakes.py` per §7.1 and §11).
 
 If your change needs a new edge in that graph, it needs an ADR.
 
@@ -186,6 +194,7 @@ separate the I/O from the logic. The scorer, the kernel encoders, the blast calc
 plan validator and the metric computations are all pure functions for exactly this reason.
 
 **6.3 Test layers.**
+
 - `tests/unit/` — no network, no cluster, no database. Fakes and fixtures only. Must run in
   under 60 seconds total. This is the suite that gates every PR.
 - `tests/integration/` — marked `@pytest.mark.integration`. Needs `make up`. Real Postgres,
@@ -193,6 +202,7 @@ plan validator and the metric computations are all pure functions for exactly th
 - `tests/e2e/` — marked `@pytest.mark.e2e`. Full loop, one scenario, real everything.
 
 **6.4 Tests that must never be deleted or weakened.** These encode the product's claims:
+
 - `test_twin_writes_never_reach_prod`
 - `test_twin_egress_denied`
 - `test_actuator_requires_pass_verdict` (K10)
@@ -201,8 +211,8 @@ plan validator and the metric computations are all pure functions for exactly th
 - `test_winner_derives_only_from_deterministic_scores`
 - `test_kernel_missing_fact_yields_uncertain`
 - every `tests/unit/kernel/test_kNN_*` negative case
-If one of these fails, the fix is in the source, never in the test. If you believe such a
-test is wrong, stop and ask (§8).
+  If one of these fails, the fix is in the source, never in the test. If you believe such a
+  test is wrong, stop and ask (§8).
 
 **6.5 Negative tests for invariants assert the counterexample.** Asserting "it vetoed" is
 not enough; assert *which* invariant and *why*. A veto for the wrong reason is a bug that a
@@ -234,8 +244,7 @@ the reason, the real path, and the issue. `make check` runs a script that fails 
 exists without a row, or a row without a marker.
 
 **7.4 Never mock in a demo path.** `ust demo --live` and `ust run --live` use real
-integrations only. If something cannot be real, the demo says so out loud
-(`docs/06-demo.md` §6.7).
+integrations only. If something cannot be real, the demo says so out loud (`docs/06-demo.md` §6.7).
 
 **7.5 Never fabricate a number.** Do not write a plausible metric value into a fixture, a
 report, a docstring or a doc. Every number in `eval/` and in `docs/08-submission-brief.md`
@@ -259,8 +268,7 @@ improvised around.
 7. The work requires more memory than §2.10's budget allows.
 8. You need to touch `formal/`, warm pools, or anything else marked P2, and P1 is not
    complete (ADR-033).
-9. Ground truth in a scenario appears wrong. Never silently retune it
-   (`docs/05-evaluation.md` §5.1).
+9. Ground truth in a scenario appears wrong. Never silently retune it (`docs/05-evaluation.md` §5.1).
 10. Something in the safety path (`kernel/`, `actuator/production.py`, twin isolation)
     needs a workaround to make a test pass.
 11. You are about to delete or weaken a test, an invariant, or an isolation mechanism.
@@ -310,12 +318,13 @@ Secrets come from `.env` locally (gitignored) or macOS Keychain via `keyring`. N
 YAML, never from a manifest, never from a commit. `.env.example` lists every required key
 and is kept current.
 
-Docker Desktop must be allocated at least 12 GB. `ust doctor` refuses to start otherwise
-(ADR-003).
+Docker Desktop must be allocated at least 12 GB. `ust doctor` refuses to start otherwise (ADR-003).
 
 ## 11. Working alongside another agent or person
 
 This repository is built by two people in parallel, and possibly by several agents at once.
+Stream ownership per phase is recorded in `OWNERSHIP.md`; your session inherits the stream
+of the person running it.
 
 - Stay inside your build-plan step's packages. If you need something outside them, use its
   `api.py` and its fake; do not implement it yourself.

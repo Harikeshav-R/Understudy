@@ -1144,3 +1144,353 @@ def test_cli_plan_twice_second_error(monkeypatch: "pytest.MonkeyPatch") -> None:
     )
     assert result.exit_code == 1
     assert "Second planner run failed: Second run crashed" in (result.stderr or result.stdout)
+
+
+def test_cli_mirror_help() -> None:
+    """Verify ust mirror --help lists register, stats, unregister, compare."""
+    result = runner.invoke(app, ["mirror", "--help"])
+    assert result.exit_code == 0
+    assert "register" in result.stdout
+    assert "stats" in result.stdout
+    assert "unregister" in result.stdout
+    assert "compare" in result.stdout
+
+
+def test_cli_mirror_register_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror register registers synthesized twin handles successfully."""
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    registered_twins: list[str] = []
+
+    async def _mock_register_twin(
+        _self: Any, twin_handle: Any, _base_url: str | None = None
+    ) -> None:
+        registered_twins.append(twin_handle.twin_id)
+
+    monkeypatch.setattr(HttpMirrorRegistry, "register_twin", _mock_register_twin)
+
+    result = runner.invoke(app, ["mirror", "register", "--incident", "inc_test", "--count", "2"])
+    assert result.exit_code == 0
+    assert "registered twin_id=twin_inc_test_0" in result.stdout
+    assert "registered twin_id=twin_inc_test_1" in result.stdout
+    assert len(registered_twins) == 2
+
+
+def test_cli_mirror_register_failure(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror register exits 1 on failure."""
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_register_twin(*_args: Any, **_kwargs: Any) -> None:
+        raise MirrorError("Gateway unavailable")
+
+    monkeypatch.setattr(HttpMirrorRegistry, "register_twin", _mock_register_twin)
+
+    result = runner.invoke(app, ["mirror", "register", "--incident", "inc_fail"])
+    assert result.exit_code == 1
+    assert "Error registering twins with mirror gateway: Gateway unavailable" in (
+        result.stderr or result.stdout
+    )
+
+
+def test_cli_mirror_stats_success(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror stats prints tabular data for matching twins."""
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_get_all_stats(_self: Any) -> dict[str, MirrorStats]:
+        return {
+            "twin_inc_mirror_0": MirrorStats(
+                twin_id="twin_inc_mirror_0", delivered=3000, dropped=10
+            ),
+            "twin_inc_mirror_1": MirrorStats(
+                twin_id="twin_inc_mirror_1", delivered=3000, dropped=0
+            ),
+            "twin_other_0": MirrorStats(twin_id="twin_other_0", delivered=50, dropped=0),
+        }
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_get_all_stats)
+
+    # Filtered by incident
+    result = runner.invoke(app, ["mirror", "stats", "--incident", "inc_mirror"])
+    assert result.exit_code == 0
+    assert "twin_inc_mirror_0" in result.stdout
+    assert "twin_inc_mirror_1" in result.stdout
+    assert "twin_other_0" not in result.stdout
+
+    # All twins
+    result_all = runner.invoke(app, ["mirror", "stats"])
+    assert result_all.exit_code == 0
+    assert "twin_other_0" in result_all.stdout
+
+
+def test_cli_mirror_stats_empty_and_error(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror stats handles empty results and errors."""
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_get_all_empty(_self: Any) -> dict[str, MirrorStats]:
+        return {}
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_get_all_empty)
+
+    result_empty = runner.invoke(app, ["mirror", "stats", "--incident", "inc_none"])
+    assert result_empty.exit_code == 0
+    assert "No mirror stats found for incident=inc_none" in result_empty.stdout
+
+    result_all_empty = runner.invoke(app, ["mirror", "stats"])
+    assert result_all_empty.exit_code == 0
+    assert "No mirror stats found" in result_all_empty.stdout
+
+    async def _mock_get_all_error(_self: Any) -> dict[str, MirrorStats]:
+        raise MirrorError("Network timeout")
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_get_all_error)
+    result_err = runner.invoke(app, ["mirror", "stats"])
+    assert result_err.exit_code == 1
+    assert "Error fetching mirror stats: Network timeout" in (
+        result_err.stderr or result_err.stdout
+    )
+
+
+def test_cli_mirror_unregister(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror unregister handles success and error."""
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    unregistered: list[str] = []
+
+    async def _mock_unreg(_self: Any, twin_id: str, **_kwargs: Any) -> None:
+        if twin_id == "fail_id":
+            raise MirrorError("Failed to unregister")
+        unregistered.append(twin_id)
+
+    monkeypatch.setattr(HttpMirrorRegistry, "unregister_twin", _mock_unreg)
+
+    res_ok = runner.invoke(app, ["mirror", "unregister", "--twin-id", "twin-1"])
+    assert res_ok.exit_code == 0
+    assert "unregistered twin_id=twin-1" in res_ok.stdout
+    assert "twin-1" in unregistered
+
+    res_fail = runner.invoke(app, ["mirror", "unregister", "--twin-id", "fail_id"])
+    assert res_fail.exit_code == 1
+    assert "Error unregistering twin: Failed to unregister" in (res_fail.stderr or res_fail.stdout)
+
+
+def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror compare computes fidelity deltas and handles missing incident."""
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_stats(_self: Any) -> dict[str, MirrorStats]:
+        return {
+            "twin_inc_comp_0": MirrorStats(twin_id="twin_inc_comp_0", delivered=1000, dropped=0),
+            "twin_inc_comp_1": MirrorStats(twin_id="twin_inc_comp_1", delivered=990, dropped=10),
+            "twin_inc_comp_2": MirrorStats(twin_id="twin_inc_comp_2", delivered=800, dropped=200),
+        }
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats)
+
+    res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
+    assert res.exit_code == 0
+    assert "twin_inc_comp_0" in res.stdout
+    assert "OK" in res.stdout
+    assert "DEGRADED" in res.stdout
+
+    # All twins passing fidelity check
+    async def _mock_stats_all_ok(_self: Any) -> dict[str, MirrorStats]:
+        return {
+            "twin_inc_comp_0": MirrorStats(twin_id="twin_inc_comp_0", delivered=1000, dropped=0),
+            "twin_inc_comp_1": MirrorStats(twin_id="twin_inc_comp_1", delivered=995, dropped=5),
+        }
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats_all_ok)
+    res_all_ok = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
+    assert res_all_ok.exit_code == 0
+    assert (
+        "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        in res_all_ok.stdout
+    )
+
+    # Incident with no matching twins
+    res_missing = runner.invoke(app, ["mirror", "compare", "--incident", "nonexistent"])
+    assert res_missing.exit_code == 1
+    assert "No registered twins found for incident=nonexistent" in (
+        res_missing.stderr or res_missing.stdout
+    )
+
+    # Error handling
+    async def _mock_stats_err(_self: Any) -> dict[str, MirrorStats]:
+        raise MirrorError("Connection refused")
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats_err)
+    res_err = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
+    assert res_err.exit_code == 1
+    assert "Error fetching stats for comparison: Connection refused" in (
+        res_err.stderr or res_err.stdout
+    )
+
+
+def test_cli_mirror_compare_with_paths(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust mirror compare displays path breakdown when paths are present."""
+    from understudy.mirror.fidelity import TwinFidelityReport
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _mock_reports(_self: Any, _incident: str) -> list[TwinFidelityReport]:
+        return [
+            TwinFidelityReport(
+                twin_id="twin_inc_1_0",
+                prod_delivered=100,
+                twin_delivered=100,
+                delivered_delta_ratio=0.0,
+                drop_ratio=0.0,
+                path_distribution_match=True,
+                status="OK",
+                prod_paths={"/api/items": 80, "/healthz": 20},
+                twin_paths={"/api/items": 80, "/healthz": 20},
+            )
+        ]
+
+    monkeypatch.setattr(HttpMirrorRegistry, "get_fidelity_reports", _mock_reports)
+    res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_1"])
+    assert res.exit_code == 0
+    assert "twin_inc_1_0" in res.stdout
+    assert "Path: /api/items" in res.stdout
+    assert "prod=80 (80.0%)" in res.stdout
+    assert "twin=80 (80.0%)" in res.stdout
+    assert (
+        "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        in res.stdout
+    )
+
+
+def test_cli_tournament_replay_three_candidates() -> None:
+    """Verify ust tournament replay on three candidates fixture."""
+    res = runner.invoke(
+        app,
+        ["tournament", "replay", "--fixture", "fixtures/evidence_three_candidates.json"],
+    )
+    assert res.exit_code == 0
+    assert "Scoreboard:" in res.stdout
+    assert "plan_rollback" in res.stdout
+    assert "plan_restart" in res.stdout
+    assert "plan_no_action" in res.stdout
+    assert "outcome=decided" in res.stdout
+    assert "winner: plan_rollback" in res.stdout
+    assert "runner-up: plan_restart" in res.stdout
+    assert "margin: 0.1744" in res.stdout
+
+
+def test_cli_tournament_replay_near_tie() -> None:
+    """Verify ust tournament replay on near tie fixture reports ambiguous outcome."""
+    res = runner.invoke(
+        app,
+        ["tournament", "replay", "--fixture", "fixtures/evidence_near_tie.json"],
+    )
+    assert res.exit_code == 0
+    assert "Scoreboard:" in res.stdout
+    assert "outcome=ambiguous, no winner" in res.stdout
+    assert "margin: 0.0378" in res.stdout
+
+    # With margin override smaller than delta
+    res_override = runner.invoke(
+        app,
+        [
+            "tournament",
+            "replay",
+            "--fixture",
+            "fixtures/evidence_near_tie.json",
+            "--margin",
+            "0.02",
+        ],
+    )
+    assert res_override.exit_code == 0
+    assert "outcome=decided" in res_override.stdout
+    assert "winner: plan_rollback" in res_override.stdout
+
+
+def test_cli_tournament_replay_high_drop() -> None:
+    """Verify ust tournament replay on high drop candidate disqualifies with evidence_incomplete."""
+    res = runner.invoke(
+        app,
+        ["tournament", "replay", "--fixture", "fixtures/evidence_high_drop.json"],
+    )
+    assert res.exit_code == 0
+    assert "Scoreboard:" in res.stdout
+    assert 'Candidate plan_unreliable disqualified with reason "evidence_incomplete"' in res.stdout
+    assert "outcome=decided" in res.stdout
+    assert "winner: plan_rollback" in res.stdout
+
+
+def test_cli_tournament_replay_dict_envelope(tmp_path: Path) -> None:
+    """Verify ust tournament replay accepts dictionary with evidence key."""
+    import json
+
+    orig_fixture = Path("fixtures/evidence_three_candidates.json")
+    with orig_fixture.open(encoding="utf-8") as f:
+        data = json.load(f)
+    env_file = tmp_path / "envelope.json"
+    env_file.write_text(json.dumps({"evidence": data}), encoding="utf-8")
+
+    res = runner.invoke(app, ["tournament", "replay", "--fixture", str(env_file)])
+    assert res.exit_code == 0
+    assert "outcome=decided" in res.stdout
+    assert "winner: plan_rollback" in res.stdout
+
+
+def test_cli_tournament_replay_no_viable_candidate(tmp_path: Path) -> None:
+    """Verify ust tournament replay reports no_viable_candidate when all are disqualified."""
+    import json
+
+    orig_fixture = Path("fixtures/evidence_high_drop.json")
+    with orig_fixture.open(encoding="utf-8") as f:
+        data = json.load(f)
+    # Mark all evidence incomplete
+    for item in data:
+        item["evidence_complete"] = False
+    all_disq_file = tmp_path / "all_disq.json"
+    all_disq_file.write_text(json.dumps(data), encoding="utf-8")
+
+    res = runner.invoke(app, ["tournament", "replay", "--fixture", str(all_disq_file)])
+    assert res.exit_code == 0
+    assert "outcome=no_viable_candidate, no winner" in res.stdout
+
+
+def test_cli_tournament_replay_errors(tmp_path: Path) -> None:
+    """Verify error handling in ust tournament replay."""
+    # 1. Missing file
+    res_not_found = runner.invoke(app, ["tournament", "replay", "--fixture", "nonexistent.json"])
+    assert res_not_found.exit_code == 1
+    assert "Error: fixture file not found" in (res_not_found.stderr or res_not_found.stdout)
+
+    # 2. Malformed JSON
+    bad_json = tmp_path / "bad.json"
+    bad_json.write_text("invalid json", encoding="utf-8")
+    res_bad_json = runner.invoke(app, ["tournament", "replay", "--fixture", str(bad_json)])
+    assert res_bad_json.exit_code == 1
+    assert "Error reading JSON from fixture" in (res_bad_json.stderr or res_bad_json.stdout)
+
+    # 3. Invalid structure (not list or dict with evidence)
+    bad_struct = tmp_path / "bad_struct.json"
+    bad_struct.write_text('"a string"', encoding="utf-8")
+    res_bad_struct = runner.invoke(app, ["tournament", "replay", "--fixture", str(bad_struct)])
+    assert res_bad_struct.exit_code == 1
+    assert "Error: expected list of candidate evidences" in (
+        res_bad_struct.stderr or res_bad_struct.stdout
+    )
+
+    # 4. Empty list
+    empty_list = tmp_path / "empty.json"
+    empty_list.write_text("[]", encoding="utf-8")
+    res_empty = runner.invoke(app, ["tournament", "replay", "--fixture", str(empty_list)])
+    assert res_empty.exit_code == 1
+    assert "Error: no candidate evidence found" in (res_empty.stderr or res_empty.stdout)
+
+    # 5. Schema validation error
+    invalid_schema = tmp_path / "invalid_schema.json"
+    invalid_schema.write_text('[{"missing_fields": true}]', encoding="utf-8")
+    res_invalid = runner.invoke(app, ["tournament", "replay", "--fixture", str(invalid_schema)])
+    assert res_invalid.exit_code == 1
+    assert "Error validating CandidateEvidence" in (res_invalid.stderr or res_invalid.stdout)

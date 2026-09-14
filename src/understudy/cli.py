@@ -315,6 +315,234 @@ def fleet_gc(
     )
 
 
+mirror_app = typer.Typer(
+    name="mirror",
+    help="Traffic mirroring gateway management and verification commands.",
+    no_args_is_help=True,
+)
+app.add_typer(mirror_app, name="mirror")
+
+
+@mirror_app.command("register")
+def mirror_register(
+    incident: str = typer.Option(..., "--incident", "-i", help="Incident ID (e.g. inc_mirror)."),
+    count: int = typer.Option(3, "--count", "-c", help="Number of twins to register (default: 3)."),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Register active twin environments with the traffic mirror gateway."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.clock import SystemClock
+    from understudy.common.config import get_settings
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import TwinHandle
+    from understudy.fleet.render import build_twin_namespace
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    settings = get_settings()
+    prefix = settings.cluster.twin_namespace_prefix
+    now = SystemClock().now()
+
+    twins: list[TwinHandle] = [
+        TwinHandle(
+            twin_id=f"twin_{incident}_{idx}",
+            incident_id=incident,
+            candidate_index=idx,
+            namespace=build_twin_namespace(prefix, incident, idx),
+            database=f"twin_{incident}_{idx}",
+            forked_from_snapshot_at=now,
+            ready_at=now,
+            state="ready",
+        )
+        for idx in range(count)
+    ]
+
+    async def _run() -> list[tuple[str, str]]:
+        registry = HttpMirrorRegistry(base_url=gateway_url, settings=settings)
+        registered: list[tuple[str, str]] = []
+        try:
+            for twin in twins:
+                target_url = registry.build_twin_base_url(twin)
+                await registry.register_twin(twin)
+                registered.append((twin.twin_id, target_url))
+            return registered
+        finally:
+            await registry.aclose()
+
+    try:
+        results = asyncio.run(_run())
+        for tid, url in results:
+            typer.echo(f"registered twin_id={tid} base_url={url}")
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error registering twins with mirror gateway: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@mirror_app.command("stats")
+def mirror_stats(
+    incident: str | None = typer.Option(
+        None,
+        "--incident",
+        "-i",
+        help="Filter twin statistics by incident ID (e.g. inc_mirror).",
+    ),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Fetch traffic delivery and drop statistics from the mirror gateway."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.errors import MirrorError
+    from understudy.contracts.twin import MirrorStats
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _run() -> dict[str, MirrorStats]:
+        registry = HttpMirrorRegistry(base_url=gateway_url)
+        try:
+            return await registry.get_all_stats()
+        finally:
+            await registry.aclose()
+
+    try:
+        all_stats = asyncio.run(_run())
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error fetching mirror stats: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    filtered = {tid: s for tid, s in all_stats.items() if incident is None or incident in tid}
+
+    if not filtered:
+        msg = (
+            f"No mirror stats found for incident={incident}"
+            if incident
+            else "No mirror stats found"
+        )
+        typer.echo(msg)
+        return
+
+    typer.echo(f"{'twin_id':<30} {'delivered':>10} {'dropped':>10} {'drop_ratio':>12}")
+    typer.echo("-" * 65)
+    for _, s in sorted(filtered.items()):
+        typer.echo(f"{s.twin_id:<30} {s.delivered:>10} {s.dropped:>10} {s.drop_ratio:>12.4f}")
+
+
+@mirror_app.command("unregister")
+def mirror_unregister(
+    twin_id: str = typer.Option(..., "--twin-id", "-t", help="Twin ID to unregister."),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Unregister a twin from the traffic mirror gateway."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _run() -> None:
+        registry = HttpMirrorRegistry(base_url=gateway_url)
+        try:
+            await registry.unregister_twin(twin_id)
+        finally:
+            await registry.aclose()
+
+    try:
+        asyncio.run(_run())
+        typer.echo(f"unregistered twin_id={twin_id}")
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error unregistering twin: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@mirror_app.command("compare")
+def mirror_compare(
+    incident: str = typer.Option(
+        ...,
+        "--incident",
+        "-i",
+        help="Incident ID to compare (e.g. inc_mirror).",
+    ),
+    gateway_url: str | None = typer.Option(
+        None,
+        "--gateway-url",
+        help="Mirror gateway URL override (defaults to settings).",
+    ),
+) -> None:
+    """Compare mirrored traffic counts and fidelity across twins."""
+    import asyncio
+
+    import httpx
+
+    from understudy.common.errors import MirrorError
+    from understudy.mirror.fidelity import TwinFidelityReport
+    from understudy.mirror.registry import HttpMirrorRegistry
+
+    async def _run() -> list[TwinFidelityReport]:
+        registry = HttpMirrorRegistry(base_url=gateway_url)
+        try:
+            return await registry.get_fidelity_reports(incident)
+        finally:
+            await registry.aclose()
+
+    try:
+        reports = asyncio.run(_run())
+    except (MirrorError, httpx.HTTPError) as exc:
+        typer.echo(f"Error fetching stats for comparison: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if not reports:
+        typer.echo(f"No registered twins found for incident={incident}", err=True)
+        raise typer.Exit(code=1)
+
+    prod_delivered = reports[0].prod_delivered if reports else 0
+    typer.echo(
+        f"Mirror fidelity comparison for incident={incident} (prod delivered: {prod_delivered}):"
+    )
+    typer.echo(
+        f"{'twin_id':<30} {'delivered':>10} {'delta%':>10} {'drop_ratio':>12} {'fidelity':>12}"
+    )
+    typer.echo("-" * 78)
+
+    for r in reports:
+        delta_str = f"{r.delivered_delta_ratio * 100:>9.2f}%"
+        ratio_str = f"{r.drop_ratio:>12.4f}"
+        typer.echo(f"{r.twin_id:<30} {r.twin_delivered:>10} {delta_str} {ratio_str} {r.status:>12}")
+        if r.prod_paths:
+            for path, pcount in sorted(r.prod_paths.items()):
+                tcount = r.twin_paths.get(path, 0)
+                pfract = (pcount / prod_delivered * 100) if prod_delivered > 0 else 0.0
+                tfract = (tcount / r.twin_delivered * 100) if r.twin_delivered > 0 else 0.0
+                typer.echo(
+                    f"  Path: {path:<20} prod={pcount} ({pfract:.1f}%)"
+                    f"  twin={tcount} ({tfract:.1f}%)"
+                )
+
+    all_ok = all(r.status == "OK" for r in reports)
+    if all_ok:
+        typer.echo(
+            "Fidelity check: per-twin request count within 2% of prod, path distribution identical."
+        )
+    else:
+        typer.echo(
+            "Fidelity check: DEGRADED (traffic counts or path distributions diverge from prod)."
+        )
+
+
 store_app = typer.Typer(
     name="store",
     help="Datastore migration and verification commands.",
@@ -1329,6 +1557,129 @@ def playbook_write(
     except Exception as exc:
         typer.echo(f"Playbook write error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+
+
+tournament_app = typer.Typer(
+    name="tournament",
+    help="Candidate rehearsal tournament replay, scoring, and arbitration.",
+)
+app.add_typer(tournament_app, name="tournament")
+
+
+@tournament_app.command("replay")
+def tournament_replay(
+    fixture: Annotated[
+        Path,
+        typer.Option(
+            "--fixture",
+            "-f",
+            help="Path to JSON fixture file containing candidate rehearsal evidence.",
+        ),
+    ],
+    margin: Annotated[
+        float | None,
+        typer.Option(
+            "--margin",
+            "-m",
+            help="Ambiguity margin threshold override (defaults to 0.15).",
+        ),
+    ] = None,
+) -> None:
+    """Replay candidate rehearsal evidence and arbitrate tournament outcome."""
+    import json
+
+    from pydantic import ValidationError
+
+    from understudy.contracts.enums import TournamentOutcome
+    from understudy.contracts.evidence import CandidateEvidence
+    from understudy.tournament.api import ArbiterConfig, arbitrate, score_candidates
+
+    if not fixture.is_file():
+        typer.echo(f"Error: fixture file not found: {fixture}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        with fixture.open(encoding="utf-8") as f:
+            raw_data = json.load(f)
+    except (json.JSONDecodeError, OSError) as exc:
+        typer.echo(f"Error reading JSON from fixture {fixture}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    raw_list: list[Any]
+    if isinstance(raw_data, list):
+        raw_list = raw_data
+    elif (
+        isinstance(raw_data, dict)
+        and "evidence" in raw_data
+        and isinstance(raw_data["evidence"], list)
+    ):
+        raw_list = raw_data["evidence"]
+    else:
+        typer.echo(f"Error: expected list of candidate evidences in {fixture}", err=True)
+        raise typer.Exit(code=1)
+
+    if not raw_list:
+        typer.echo(f"Error: no candidate evidence found in {fixture}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        evidences = [CandidateEvidence.model_validate(item) for item in raw_list]
+    except (ValidationError, ValueError) as exc:
+        typer.echo(f"Error validating CandidateEvidence from {fixture}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    scores = score_candidates(evidences)
+    config = ArbiterConfig.from_settings()
+    if margin is not None:
+        config = ArbiterConfig(ambiguity_margin=float(margin))
+
+    result = arbitrate(scores=scores, evidence=evidences, config=config)
+    scores_by_plan = {s.plan_id: s for s in scores}
+
+    # Print Scoreboard table
+    typer.echo("Scoreboard:")
+    typer.echo(
+        f"{'plan_id':<20} {'recovery':>10} {'blast':>10} {'downstream':>10} "
+        f"{'violations':>10} {'drop_ratio':>10} {'composite':>10} {'status':<35}"
+    )
+    typer.echo("-" * 120)
+    for ev in evidences:
+        sc = scores_by_plan.get(ev.plan_id)
+        comp_str = f"{sc.composite:.4f}" if sc else "N/A"
+        rec_str = f"{sc.components.get('recovery', 0.0):.4f}" if sc else "N/A"
+        blast_str = f"{sc.components.get('blast', 0.0):.4f}" if sc else "N/A"
+        down_str = f"{sc.components.get('downstream', 0.0):.4f}" if sc else "N/A"
+        viol_str = f"{sc.components.get('violations', 0.0):.4f}" if sc else "N/A"
+        drop_str = f"{ev.mirror_stats.drop_ratio:.4f}"
+        if sc and sc.disqualified:
+            status_str = f"disqualified ({sc.disqualification_reason})"
+        else:
+            status_str = "viable"
+
+        typer.echo(
+            f"{ev.plan_id:<20} {rec_str:>10} {blast_str:>10} {down_str:>10} "
+            f"{viol_str:>10} {drop_str:>10} {comp_str:>10} {status_str:<35}"
+        )
+
+    # Report any disqualified candidates explicitly
+    for sc in scores:
+        if sc.disqualified:
+            typer.echo(
+                f'Candidate {sc.plan_id} disqualified with reason "{sc.disqualification_reason}"'
+            )
+
+    # Report Tournament outcome
+    if result.outcome == TournamentOutcome.DECIDED:
+        typer.echo("outcome=decided")
+        typer.echo(f"winner: {result.winner_plan_id}")
+        typer.echo(f"runner-up: {result.runner_up_plan_id}")
+        typer.echo(f"margin: {result.margin:.4f}" if result.margin is not None else "margin: N/A")
+    elif result.outcome == TournamentOutcome.AMBIGUOUS:
+        typer.echo("outcome=ambiguous, no winner")
+        margin_val = f"{result.margin:.4f}" if result.margin is not None else "0.0000"
+        typer.echo(f"margin: {margin_val} (threshold: {config.ambiguity_margin:.2f})")
+    else:
+        typer.echo("outcome=no_viable_candidate, no winner")
 
 
 if __name__ == "__main__":

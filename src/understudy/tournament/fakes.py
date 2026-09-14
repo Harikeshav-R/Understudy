@@ -1,5 +1,8 @@
 """Deterministic fake tournament implementation."""
 
+from collections.abc import Sequence
+from datetime import datetime, timedelta
+
 from understudy.common.clock import Clock, resolve_clock
 from understudy.contracts.enums import TournamentOutcome
 from understudy.contracts.evidence import (
@@ -8,9 +11,13 @@ from understudy.contracts.evidence import (
     ProbeSample,
     TournamentResult,
 )
+from understudy.contracts.incident import MetricWindow
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.twin import MirrorStats, TwinHandle
-from understudy.tournament.api import Tournament
+from understudy.tournament.api import BlastTracker, EnvironmentProbe, LLMJudge, Tournament
+from understudy.tournament.blast import BlastEvaluation, EnvironmentBaseline
+from understudy.tournament.judge import JudgeEvaluation
+from understudy.tournament.probe import ProbeResult
 
 
 class FakeTournament(Tournament):
@@ -113,4 +120,167 @@ class FakeTournament(Tournament):
             runner_up_plan_id=runner_up.plan_id if runner_up else None,
             margin=margin,
             decided_at=now,
+        )
+
+
+class FakeEnvironmentProbe(EnvironmentProbe):
+    """Deterministic fake environment SLO probe."""
+
+    def __init__(
+        self,
+        recovered: bool = True,
+        recovery_seconds: float = 12.0,
+        seed: int = 42,
+        clock: Clock | None = None,
+    ) -> None:
+        self.recovered = recovered
+        self.recovery_seconds = recovery_seconds
+        self.seed = seed
+        self.clock: Clock = resolve_clock(clock)
+
+    async def sample_once(
+        self, namespace: str, target_service: str = "edge-gateway"
+    ) -> ProbeSample:
+        _ = (namespace, target_service)
+        now = self.clock.now()
+        return ProbeSample(
+            at=now,
+            healthy=self.recovered,
+            p99_latency_ms=95.0 if self.recovered else 500.0,
+            error_rate=0.0 if self.recovered else 0.05,
+        )
+
+    async def probe_environment(
+        self,
+        namespace: str,
+        applied_at: datetime,
+        forked_at: datetime | None = None,
+        target_service: str = "edge-gateway",
+    ) -> ProbeResult:
+        _ = (applied_at, forked_at)
+        sample = await self.sample_once(namespace, target_service)
+        return ProbeResult(
+            namespace=namespace,
+            target_service=target_service,
+            probes=[sample],
+            recovered=self.recovered,
+            recovery_seconds=self.recovery_seconds if self.recovered else None,
+            timeout_exceeded=not self.recovered,
+        )
+
+
+class FakeBlastTracker(BlastTracker):
+    """Deterministic fake blast tracker for testing and offline rehearsal."""
+
+    def __init__(
+        self,
+        affected_services: set[str] | None = None,
+        blast_radius: float = 0.0,
+        downstream_error_delta: float = 0.0,
+        clock: Clock | None = None,
+    ) -> None:
+        self.affected_services = affected_services or set()
+        self.blast_radius = blast_radius
+        self.downstream_error_delta = downstream_error_delta
+        self.clock: Clock = resolve_clock(clock)
+
+    async def capture_baseline(
+        self,
+        namespace: str,
+        services: Sequence[str] | None = None,
+        at: datetime | None = None,
+        lookback_seconds: float | None = None,
+    ) -> EnvironmentBaseline:
+        now = at or self.clock.now()
+        lookback = lookback_seconds or 30.0
+        start = now - timedelta(seconds=lookback)
+        svc_names = list(services) if services is not None else ["edge-gateway", "data-service"]
+        windows = {
+            s: MetricWindow(
+                service=s,
+                start_time=start,
+                end_time=now,
+                p99_latency_ms=100.0,
+                error_rate=0.0,
+            )
+            for s in svc_names
+        }
+        return EnvironmentBaseline(
+            namespace=namespace,
+            captured_at=now,
+            window_start=start,
+            window_end=now,
+            baselines=windows,
+        )
+
+    async def evaluate_environment(
+        self,
+        plan: RemediationPlan,
+        namespace: str,
+        baseline: EnvironmentBaseline,
+        applied_at: datetime,
+        until: datetime | None = None,
+        services: Sequence[str] | None = None,
+    ) -> BlastEvaluation:
+        _ = (namespace, applied_at, until, services)
+        target = plan.params.workload
+        return BlastEvaluation(
+            target_service=target,
+            reachable_set=[target],
+            affected_services=sorted(self.affected_services),
+            observed_blast_set=sorted(self.affected_services),
+            blast_radius=self.blast_radius,
+            downstream_error_delta=self.downstream_error_delta,
+            pre_apply_baselines=baseline.baselines,
+            post_apply_windows={},
+        )
+
+
+class FakeLLMJudge(LLMJudge):
+    """Deterministic fake advisory LLM judge for testing and simulation."""
+
+    def __init__(
+        self,
+        ranking: list[str] | None = None,
+        agree_with_first: bool = True,
+        seed: int = 42,
+    ) -> None:
+        self.ranking = ranking
+        self.agree_with_first = agree_with_first
+        self.seed = seed
+
+    async def evaluate(
+        self,
+        evidence: Sequence[CandidateEvidence],
+    ) -> JudgeEvaluation:
+        """Produce deterministic advisory ranking and reasons."""
+        if not evidence:
+            return JudgeEvaluation(model="fake-llm-judge")
+
+        if self.ranking is not None:
+            ranking = list(self.ranking)
+            seen = set(ranking)
+            for ev in evidence:
+                if ev.plan_id not in seen:
+                    ranking.append(ev.plan_id)
+                    seen.add(ev.plan_id)
+        elif self.agree_with_first:
+            sorted_ev = sorted(
+                evidence,
+                key=lambda e: (not e.recovered, e.recovery_seconds or 999.0, e.plan_id),
+            )
+            ranking = [e.plan_id for e in sorted_ev]
+        else:
+            ranking = [e.plan_id for e in reversed(evidence)]
+
+        reasons = {
+            pid: f"Candidate {pid} ranked deterministically by FakeLLMJudge (seed={self.seed})."
+            for pid in ranking
+        }
+
+        return JudgeEvaluation(
+            ranking=ranking,
+            reasons=reasons,
+            rationale=f"Deterministic fake evaluation for {len(ranking)} candidates.",
+            model="fake-llm-judge",
         )

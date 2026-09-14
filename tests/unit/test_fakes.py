@@ -51,7 +51,7 @@ from understudy.store.fakes import (
     FakePlaybookStore,
     FakeRunStore,
 )
-from understudy.tournament.fakes import FakeTournament
+from understudy.tournament.fakes import FakeLLMJudge, FakeTournament
 
 FIXED_NOW = datetime(2026, 9, 9, 12, 0, 0, tzinfo=UTC)
 
@@ -630,6 +630,13 @@ async def test_fake_tournament() -> None:
     _, ambig_result = await ambig_tournament.observe_and_score(twins, plans)
     assert ambig_result.outcome == TournamentOutcome.AMBIGUOUS
     assert ambig_result.winner_plan_id is None
+
+
+@pytest.mark.asyncio
+async def test_fake_llm_judge() -> None:
+    judge = FakeLLMJudge(seed=42)
+    evaluation = await judge.evaluate([])
+    assert evaluation.ranking == []
 
 
 @pytest.mark.asyncio

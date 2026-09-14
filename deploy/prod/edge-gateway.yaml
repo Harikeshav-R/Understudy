@@ -78,7 +78,7 @@ metadata:
     app.kubernetes.io/name: edge-gateway
     app.kubernetes.io/part-of: understudy
 spec:
-  type: LoadBalancer
+  type: ClusterIP
   selector:
     app: edge-gateway
   ports:

@@ -81,3 +81,11 @@ class PlaybookEmbeddingError(PlaybookError):
 
 class PlaybookConfirmationError(PlaybookError):
     """Raised on failure during LLM playbook confirmation."""
+
+
+class MirrorError(UnderstudyError):
+    """Raised on failure to communicate with or perform operations against the mirror gateway."""
+
+
+class TwinNotFoundError(MirrorError):
+    """Raised when a requested twin is not registered with the mirror gateway."""

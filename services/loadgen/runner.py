@@ -25,7 +25,7 @@ class LoadgenConfig:
     duration_seconds: float = field(
         default_factory=lambda: load_services_settings().loadgen.duration_seconds
     )
-    target_url: str = "http://localhost:8080"
+    target_url: str = field(default_factory=lambda: load_services_settings().loadgen.target_url)
     seed: int = field(default_factory=lambda: load_services_settings().loadgen.seed)
     auth_token: str = field(default_factory=lambda: load_services_settings().loadgen.auth_token)
     http_timeout_seconds: float = field(

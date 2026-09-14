@@ -9,6 +9,7 @@ from services._common.faults import (
     setup_fault_middleware,
     setup_fault_routes,
 )
+from services._common.headers import HOP_BY_HOP_HEADERS, strip_hop_by_hop_headers
 from services._common.health import setup_health_routes
 from services._common.logging import get_logger
 from services._common.metrics import setup_metrics
@@ -20,6 +21,7 @@ from services._common.role_guard import (
 )
 
 __all__ = [
+    "HOP_BY_HOP_HEADERS",
     "FaultKind",
     "FaultManager",
     "FaultRequest",
@@ -38,4 +40,5 @@ __all__ = [
     "setup_fault_routes",
     "setup_health_routes",
     "setup_metrics",
+    "strip_hop_by_hop_headers",
 ]

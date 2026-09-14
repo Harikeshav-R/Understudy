@@ -31,6 +31,7 @@ scoring:
   min_probe_samples: 60
   recovery_consecutive_seconds: 15
   recovery_timeout_seconds: 180
+  warm_up_seconds: 20
   downstream_error_ceiling: 0.10
   violation_ceiling: 5
 
