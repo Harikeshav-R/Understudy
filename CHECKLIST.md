@@ -239,7 +239,7 @@ validated, normalised, invertible plans against the real cluster.
 
 ## Phase 4B — Safety kernel (Stream B)
 
-- [ ] B4.1 **[P0]** Invariant Protocol + KernelContext; missing facts raise, never default
+- [x] B4.1 **[P0]** Invariant Protocol + KernelContext; missing facts raise, never default
 - [ ] B4.2 **[P0]** Fact extraction from K8s, GitHub, store, graph, evidence; all timestamped
 - [ ] B4.3a **[P0]** K1 replica floor (+ positive and negative tests)
 - [ ] B4.3b **[P0]** K2 namespace scope (+ tests)
