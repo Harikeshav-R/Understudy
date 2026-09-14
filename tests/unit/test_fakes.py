@@ -390,10 +390,11 @@ async def test_fake_playbook_library(sample_context: IncidentContext) -> None:
 async def test_fake_planner(sample_context: IncidentContext) -> None:
     planner = FakePlanner(seed=42)
     candidates = await planner.generate_candidates(sample_context, count=3)
-    assert len(candidates) == 3
+    assert len(candidates) == 4
     assert candidates[0].action == ActionType.ROLLBACK_DEPLOY
     assert candidates[1].action == ActionType.SCALE_WORKLOAD
-    assert candidates[2].action == ActionType.NO_ACTION
+    assert candidates[2].action == ActionType.RESTART_WORKLOAD
+    assert candidates[3].action == ActionType.NO_ACTION
 
 
 @pytest.mark.asyncio

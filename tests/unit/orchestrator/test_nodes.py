@@ -244,7 +244,7 @@ async def test_plan_candidates_node() -> None:
     state = State(incident_id="inc_123", context=ctx)
     res = await plan_candidates_node(state, deps)
     plans = res["plans"]
-    assert len(plans) == 4  # 3 from FakePlanner + 1 from FakePlaybookLibrary
+    assert len(plans) == 5  # 4 from FakePlanner (3 active + NO_ACTION) + 1 from FakePlaybookLibrary
     for idx, p in enumerate(plans):
         assert p.candidate_index == idx
 
@@ -261,7 +261,7 @@ async def test_plan_candidates_node() -> None:
         }
     )
     res_no_pb = await plan_candidates(state, deps_no_pb)
-    assert len(res_no_pb["plans"]) == 3
+    assert len(res_no_pb["plans"]) == 4
 
     # Case 4: Playbook candidate plan_id already in planner plans
     p0 = _sample_plan("plan_cand_0", 0)
@@ -278,7 +278,7 @@ async def test_plan_candidates_node() -> None:
         }
     )
     res_dup = await plan_candidates(state, deps_dup_pb)
-    assert len(res_dup["plans"]) == 3
+    assert len(res_dup["plans"]) == 4
 
 
 @pytest.mark.asyncio

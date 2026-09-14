@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from understudy.common.errors import PlaybookEmbeddingError
 from understudy.contracts.enums import ActionType, FailureClass
 from understudy.contracts.incident import (
     Alert,
@@ -238,19 +239,33 @@ async def test_write_playbook_with_embedder_success_and_failure() -> None:
     )
     assert pb_id.startswith("pb_")
 
-    # Embedder failure falls back to deterministic embedding
+    # Embedder failure raises exception rather than silently falling back
     ctx2 = _make_context(service="auth-service")
     failing_embedder = OpenRouterEmbeddingClient(
         embed_caller=AsyncMock(side_effect=RuntimeError("Embedding API down"))
     )
-    pb_id2 = await write_playbook(
-        context=ctx2,
-        plan=plan,
-        run_id="run_emb_02",
-        store=store,
-        embedder=failing_embedder,
+    with pytest.raises(RuntimeError, match="Embedding API down"):
+        await write_playbook(
+            context=ctx2,
+            plan=plan,
+            run_id="run_emb_02",
+            store=store,
+            embedder=failing_embedder,
+        )
+
+    # Missing API key / PlaybookEmbeddingError falls back to deterministic signature embedding
+    ctx3 = _make_context(service="worker-service")
+    key_missing_embedder = OpenRouterEmbeddingClient(
+        embed_caller=AsyncMock(side_effect=PlaybookEmbeddingError("API key missing"))
     )
-    assert pb_id2.startswith("pb_")
+    pb_id_fallback = await write_playbook(
+        context=ctx3,
+        plan=plan,
+        run_id="run_emb_03",
+        store=store,
+        embedder=key_missing_embedder,
+    )
+    assert pb_id_fallback.startswith("pb_")
 
 
 @pytest.mark.asyncio

@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from understudy.common.config import ClusterSettings, SecretSettings, Settings, TimeoutSettings
-from understudy.common.errors import PlannerError
+from understudy.common.errors import GraphError, PlannerError
 from understudy.contracts.enums import ActionType, FailureClass
 from understudy.contracts.incident import (
     Alert,
@@ -138,9 +138,9 @@ class DummyDependencyGraph(DependencyGraph):
 
     def reachable_set(self, service: str) -> set[str]:
         if service == "error-service":
-            raise RuntimeError("Graph reachability failure")
+            raise GraphError("Graph reachability failure")
         if service not in self._reachable:
-            raise KeyError(service)
+            raise GraphError(f"Service not found: {service}")
         return self._reachable[service]
 
     def request_share(self, service: str) -> float:
@@ -620,7 +620,7 @@ def test_normalise_plan_rollback_deploy() -> None:
     assert norm is not None
     assert norm.params.target_commit == full_sha
     assert norm.inverse is not None
-    assert norm.inverse.params.target_commit == full_sha
+    assert norm.inverse.params.target_commit == ctx.recent_deploys[1].commit_sha
 
     # 2. Nonexistent target commit -> dropped
     bad_commit_plan = plan.model_copy(
@@ -1298,9 +1298,11 @@ async def test_fake_planner_count_variations() -> None:
     assert cands_2[1].action == ActionType.SCALE_WORKLOAD
     assert cands_2[2].action == ActionType.NO_ACTION
 
-    # count=3: FakePlanner provides plan_0..2 (NO_ACTION already present). No duplicate!
+    # count=3: FakePlanner provides plan_0..2 (3 active plans).
+    # NO_ACTION appended at index 3 -> 4 plans total
     cands_3 = await planner.generate_candidates(ctx, count=3)
-    assert len(cands_3) == 3
+    assert len(cands_3) == 4
     assert cands_3[0].action == ActionType.ROLLBACK_DEPLOY
     assert cands_3[1].action == ActionType.SCALE_WORKLOAD
-    assert cands_3[2].action == ActionType.NO_ACTION
+    assert cands_3[2].action == ActionType.RESTART_WORKLOAD
+    assert cands_3[3].action == ActionType.NO_ACTION

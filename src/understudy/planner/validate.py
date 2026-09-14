@@ -19,7 +19,7 @@ import httpx
 from pydantic import ValidationError
 
 from understudy.common.config import Settings, get_settings
-from understudy.common.errors import PlannerError
+from understudy.common.errors import GraphError, PlannerError
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import ActionType
 from understudy.contracts.incident import (
@@ -144,35 +144,43 @@ def _validate_candidate_schema(
                 details={"candidate_index": candidate_index, "action": candidate.action.value},
             )
 
-    if candidate.action == ActionType.ROLLBACK_DEPLOY:
-        if not candidate.params.target_commit:
-            raise PlannerSchemaValidationError(
-                f"Candidate at index {candidate_index} (rollback_deploy) requires target_commit",
-                details={"candidate_index": candidate_index},
-            )
+    validator = _ACTION_PARAM_VALIDATORS.get(candidate.action)
+    if validator is not None:
+        validator(candidate, candidate_index)
 
-    elif candidate.action == ActionType.SCALE_WORKLOAD:
-        if candidate.params.replica_delta is None or candidate.params.replica_delta == 0:
-            raise PlannerSchemaValidationError(
-                (
-                    f"Candidate at index {candidate_index} (scale_workload) "
-                    "requires non-zero replica_delta"
-                ),
-                details={
-                    "candidate_index": candidate_index,
-                    "replica_delta": candidate.params.replica_delta,
-                },
-            )
 
-    elif candidate.action == ActionType.DISABLE_FLAG and not candidate.params.flag_name:
+def _validate_rollback_deploy_params(candidate: PromptCandidatePlan, candidate_index: int) -> None:
+    if not candidate.params.target_commit:
+        raise PlannerSchemaValidationError(
+            f"Candidate at index {candidate_index} (rollback_deploy) requires target_commit",
+            details={"candidate_index": candidate_index},
+        )
+
+
+def _validate_scale_workload_params(candidate: PromptCandidatePlan, candidate_index: int) -> None:
+    if candidate.params.replica_delta is None or candidate.params.replica_delta == 0:
+        raise PlannerSchemaValidationError(
+            (
+                f"Candidate at index {candidate_index} (scale_workload) "
+                "requires non-zero replica_delta"
+            ),
+            details={
+                "candidate_index": candidate_index,
+                "replica_delta": candidate.params.replica_delta,
+            },
+        )
+
+
+def _validate_disable_flag_params(candidate: PromptCandidatePlan, candidate_index: int) -> None:
+    if not candidate.params.flag_name:
         raise PlannerSchemaValidationError(
             f"Candidate at index {candidate_index} (disable_flag) requires flag_name",
             details={"candidate_index": candidate_index},
         )
 
-    elif candidate.action == ActionType.REVERT_CONFIG and (
-        not candidate.params.config_key or candidate.params.config_value is None
-    ):
+
+def _validate_revert_config_params(candidate: PromptCandidatePlan, candidate_index: int) -> None:
+    if not candidate.params.config_key or candidate.params.config_value is None:
         raise PlannerSchemaValidationError(
             (
                 f"Candidate at index {candidate_index} (revert_config) "
@@ -183,6 +191,14 @@ def _validate_candidate_schema(
                 "config_key": candidate.params.config_key,
             },
         )
+
+
+_ACTION_PARAM_VALIDATORS: dict[ActionType, Callable[[PromptCandidatePlan, int], None]] = {
+    ActionType.ROLLBACK_DEPLOY: _validate_rollback_deploy_params,
+    ActionType.SCALE_WORKLOAD: _validate_scale_workload_params,
+    ActionType.DISABLE_FLAG: _validate_disable_flag_params,
+    ActionType.REVERT_CONFIG: _validate_revert_config_params,
+}
 
 
 def resolve_commit_ref(
@@ -265,7 +281,7 @@ def compute_blast_set_validity(
             return False
         try:
             reachable = graph.reachable_set(target_workload) if target_workload else set()
-        except Exception:
+        except GraphError:
             return False
         allowable = {target_workload} | reachable if target_workload else set()
 
@@ -554,6 +570,7 @@ async def generate_candidates_with_retry(
     count: int = 3,
     max_retries: int = 2,
     cluster_workloads: set[str] | None = None,
+    playbook_candidate: RemediationPlan | None = None,
 ) -> list[RemediationPlan]:
     """Generate candidate plans with retry on schema failure, then normalise.
 
@@ -561,7 +578,11 @@ async def generate_candidates_with_retry(
     feedback. Raises PlannerError if all retries are exhausted.
     Guarantees a NO_ACTION candidate is always appended if absent from surviving plans.
     """
-    messages = render_candidate_generation_prompt(context, count=count)
+    messages = render_candidate_generation_prompt(
+        context,
+        count=count,
+        playbook_candidate=playbook_candidate,
+    )
     last_error: Exception | None = None
 
     for attempt in range(max_retries + 1):
@@ -686,7 +707,10 @@ class LLMPlanner(Planner):
         return content
 
     async def generate_candidates(
-        self, context: IncidentContext, count: int = 3
+        self,
+        context: IncidentContext,
+        count: int = 3,
+        playbook_candidate: RemediationPlan | None = None,
     ) -> list[RemediationPlan]:
         """Generate, validate, retry, and normalise candidate plans."""
         return await generate_candidates_with_retry(
@@ -695,6 +719,7 @@ class LLMPlanner(Planner):
             count=count,
             max_retries=self.max_retries,
             cluster_workloads=self.cluster_workloads,
+            playbook_candidate=playbook_candidate,
         )
 
 

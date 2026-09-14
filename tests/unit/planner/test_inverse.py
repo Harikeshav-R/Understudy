@@ -25,7 +25,6 @@ from understudy.contracts.incident import (
 )
 from understudy.contracts.plan import ActionParams, RemediationPlan, ResourceRef
 from understudy.planner.inverse import (
-    DEFAULT_CONFIG_VALUES,
     invert_plan,
     synthesize_inverse,
 )
@@ -217,7 +216,7 @@ def test_synthesize_inverse_revert_config_resolution_sources() -> None:
     assert inv1 is not None
     assert inv1.params.config_value == "prior_val"
 
-    # 2. Existing attached inverse config_value
+    # 2. Attached inverse is NOT trusted (deterministic safety)
     plan2 = plan1.model_copy(
         update={
             "inverse": plan1.model_copy(
@@ -231,9 +230,8 @@ def test_synthesize_inverse_revert_config_resolution_sources() -> None:
             )
         }
     )
-    inv2 = synthesize_inverse(plan2)
-    assert inv2 is not None
-    assert inv2.params.config_value == "attached_prior"
+    with pytest.raises(PlannerError, match="pre-intervention config_value unknown"):
+        synthesize_inverse(plan2)
 
     # 3. Config lookup map
     lookup = {"app-config": {"CUSTOM_KEY": "lookup_val"}}
@@ -247,7 +245,7 @@ def test_synthesize_inverse_revert_config_resolution_sources() -> None:
     assert inv3b is not None
     assert inv3b.params.config_value == "wildcard_val"
 
-    # 4. Standard default config map fallback (e.g. LOG_LEVEL -> "INFO")
+    # 4. Unknown config key without lookup raises PlannerError
     plan4 = RemediationPlan(
         plan_id="plan_cfg4",
         candidate_index=0,
@@ -259,9 +257,13 @@ def test_synthesize_inverse_revert_config_resolution_sources() -> None:
         rationale="Set debug log level",
         origin="planner",
     )
-    inv4 = synthesize_inverse(plan4)
+    with pytest.raises(PlannerError, match="pre-intervention config_value unknown"):
+        synthesize_inverse(plan4)
+
+    # Resolving with explicit config_lookup succeeds deterministically
+    inv4 = synthesize_inverse(plan4, config_lookup={"app-config": {"LOG_LEVEL": "INFO"}})
     assert inv4 is not None
-    assert inv4.params.config_value == DEFAULT_CONFIG_VALUES["LOG_LEVEL"]
+    assert inv4.params.config_value == "INFO"
     assert "Restore configuration key 'LOG_LEVEL'" in inv4.rationale
 
 
@@ -301,7 +303,7 @@ def test_synthesize_inverse_rollback_deploy() -> None:
     assert inv_override is not None
     assert inv_override.params.target_commit == "custom_head_sha"
 
-    # Existing attached inverse commit
+    # Attached inverse is NOT trusted (deterministic safety)
     plan_with_inv = plan.model_copy(
         update={
             "inverse": plan.model_copy(
@@ -313,9 +315,14 @@ def test_synthesize_inverse_rollback_deploy() -> None:
             )
         }
     )
-    inv_from_attached = synthesize_inverse(plan_with_inv, context=None)
-    assert inv_from_attached is not None
-    assert inv_from_attached.params.target_commit == "existing_inv_sha"
+    with pytest.raises(PlannerError, match="pre-incident commit unknown"):
+        synthesize_inverse(plan_with_inv, context=None)
+
+    inv_from_explicit = synthesize_inverse(
+        plan_with_inv, context=None, current_commit="existing_inv_sha"
+    )
+    assert inv_from_explicit is not None
+    assert inv_from_explicit.params.target_commit == "existing_inv_sha"
 
 
 # ---------------------------------------------------------------------------
@@ -538,7 +545,9 @@ def test_k9_reversibility_target_equality(action: ActionType, params: ActionPara
         origin="planner",
     )
 
-    inv = synthesize_inverse(plan, context=ctx)
+    inv = synthesize_inverse(
+        plan, context=ctx, config_lookup={"data-service": {"LOG_LEVEL": "INFO"}}
+    )
     assert inv is not None
 
     # SMT assertion: plan.action != NO_ACTION ==>
@@ -683,8 +692,8 @@ def test_property_revert_config_inverse_of_inverse() -> None:
         origin="planner",
     )
 
-    # First inverse sets to DEFAULT_CONFIG_VALUES["LOG_LEVEL"] ("INFO")
-    inv = synthesize_inverse(plan)
+    # First inverse sets to "INFO" via config_lookup
+    inv = synthesize_inverse(plan, config_lookup={"app-config": {"LOG_LEVEL": "INFO"}})
     assert inv is not None
     assert inv.params.config_value == "INFO"
 
@@ -789,13 +798,15 @@ def test_synthesize_inverse_config_lookup_wildcard_miss() -> None:
     )
     # Wildcard map present, but does not contain LOG_LEVEL
     lookup = {"": {"OTHER_KEY": "other_val"}}
-    inv = synthesize_inverse(plan, config_lookup=lookup)
-    assert inv is not None
-    assert inv.params.config_value == DEFAULT_CONFIG_VALUES["LOG_LEVEL"]
+    with pytest.raises(PlannerError, match="pre-intervention config_value unknown"):
+        synthesize_inverse(plan, config_lookup=lookup)
 
 
 def test_synthesize_inverse_rollback_all_deploys_match_head() -> None:
-    """If all deploys in history match target commit, attached inverse or raise is used."""
+    """If all deploys in history match target commit, attached inverse is NOT trusted.
+
+    Raises PlannerError unless current_commit given.
+    """
     head_sha = "c0ffee0000000000000000000000000000000000"
     ctx_dup = IncidentContext(
         incident_id="inc_dup",
@@ -824,7 +835,7 @@ def test_synthesize_inverse_rollback_all_deploys_match_head() -> None:
         ),
         gathered_at=FIXED_TIME,
     )
-    # When attached inverse has commit, it resolves from attached inverse
+    # Even if attached inverse has a commit, it is NOT trusted (deterministic safety)
     plan_with_inv = RemediationPlan(
         plan_id="p_dup",
         candidate_index=0,
@@ -846,12 +857,10 @@ def test_synthesize_inverse_rollback_all_deploys_match_head() -> None:
         rationale="r",
         origin="planner",
     )
-    inv1 = synthesize_inverse(plan_with_inv, context=ctx_dup)
-    assert inv1 is not None
-    assert inv1.params.target_commit == "prior_sha"
+    with pytest.raises(PlannerError, match="pre-incident commit unknown"):
+        synthesize_inverse(plan_with_inv, context=ctx_dup)
 
-    # When no attached inverse, it raises PlannerError
-    plan_no_inv = plan_with_inv.model_copy(update={"inverse": None})
-    with pytest.raises(PlannerError) as exc:
-        synthesize_inverse(plan_no_inv, context=ctx_dup)
-    assert "pre-incident commit unknown" in str(exc.value)
+    # When explicit current_commit is supplied, it resolves deterministically
+    inv_explicit = synthesize_inverse(plan_with_inv, context=ctx_dup, current_commit="prior_sha")
+    assert inv_explicit is not None
+    assert inv_explicit.params.target_commit == "prior_sha"

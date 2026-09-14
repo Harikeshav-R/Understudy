@@ -285,69 +285,46 @@ class PostgresPlaybookStore(PlaybookStore):
                 for m in models
             ]
 
-    async def increment_success(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
-        """Increment the successful resolution counter for a playbook."""
+    async def _increment_counter(
+        self,
+        playbook_id: str,
+        is_success: bool,
+        evidence_run_id: str | None = None,
+    ) -> None:
+        """Internal helper to increment success or failure counter and optionally append run_id."""
         now = self._clock.now()
         async with self._db.session() as session:
+            counter_target = PlaybookModel.successes if is_success else PlaybookModel.failures
+            values_dict: dict[Any, Any] = {
+                counter_target: counter_target + 1,
+                PlaybookModel.updated_at: now,
+            }
             if evidence_run_id is not None:
-                stmt = (
-                    update(PlaybookModel)
-                    .where(PlaybookModel.playbook_id == playbook_id)
-                    .values(
-                        successes=PlaybookModel.successes + 1,
-                        evidence_refs=case(
-                            (
-                                literal(evidence_run_id) == any_(PlaybookModel.evidence_refs),
-                                PlaybookModel.evidence_refs,
-                            ),
-                            else_=func.array_append(PlaybookModel.evidence_refs, evidence_run_id),
-                        ),
-                        updated_at=now,
-                    )
+                values_dict[PlaybookModel.evidence_refs] = case(
+                    (
+                        literal(evidence_run_id) == any_(PlaybookModel.evidence_refs),
+                        PlaybookModel.evidence_refs,
+                    ),
+                    else_=func.array_append(PlaybookModel.evidence_refs, evidence_run_id),
                 )
-            else:
-                stmt = (
-                    update(PlaybookModel)
-                    .where(PlaybookModel.playbook_id == playbook_id)
-                    .values(
-                        successes=PlaybookModel.successes + 1,
-                        updated_at=now,
-                    )
-                )
+
+            stmt = (
+                update(PlaybookModel)
+                .where(PlaybookModel.playbook_id == playbook_id)
+                .values(values_dict)
+            )
             await session.execute(stmt)
             await session.commit()
 
+    async def increment_success(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment the success counter for a playbook and append run_id to evidence_refs."""
+        await self._increment_counter(playbook_id, is_success=True, evidence_run_id=evidence_run_id)
+
     async def increment_failure(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
         """Increment the failure counter for a playbook."""
-        now = self._clock.now()
-        async with self._db.session() as session:
-            if evidence_run_id is not None:
-                stmt = (
-                    update(PlaybookModel)
-                    .where(PlaybookModel.playbook_id == playbook_id)
-                    .values(
-                        failures=PlaybookModel.failures + 1,
-                        evidence_refs=case(
-                            (
-                                literal(evidence_run_id) == any_(PlaybookModel.evidence_refs),
-                                PlaybookModel.evidence_refs,
-                            ),
-                            else_=func.array_append(PlaybookModel.evidence_refs, evidence_run_id),
-                        ),
-                        updated_at=now,
-                    )
-                )
-            else:
-                stmt = (
-                    update(PlaybookModel)
-                    .where(PlaybookModel.playbook_id == playbook_id)
-                    .values(
-                        failures=PlaybookModel.failures + 1,
-                        updated_at=now,
-                    )
-                )
-            await session.execute(stmt)
-            await session.commit()
+        await self._increment_counter(
+            playbook_id, is_success=False, evidence_run_id=evidence_run_id
+        )
 
 
 class PostgresEvalStore(EvalStore):

@@ -947,17 +947,42 @@ def test_cli_graph_show_prometheus_error(monkeypatch: "pytest.MonkeyPatch") -> N
 # --- ust plan CLI tests ---
 
 
-def test_cli_plan_success_fake() -> None:
+def test_cli_plan_success_fake(monkeypatch: "pytest.MonkeyPatch") -> None:
     """Verify ust plan produces plans with NO_ACTION in fake mode."""
+    import understudy.graph.k8s
+
+    monkeypatch.setattr(
+        understudy.graph.k8s,
+        "get_cluster_workloads",
+        lambda **_kw: {"data-service", "edge-gateway"},
+    )
     result = runner.invoke(
         app,
         ["plan", "--context", "fixtures/context_bad_deploy.json", "--count", "3", "--fake"],
     )
     assert result.exit_code == 0
-    assert "Generated 3 candidate plan(s)" in result.stdout
+    assert "Generated 4 candidate plan(s)" in result.stdout
     assert "rollback_deploy" in result.stdout
     assert "scale_workload" in result.stdout
+    assert "restart_workload" in result.stdout
     assert "no_action" in result.stdout
+
+
+def test_cli_plan_live_workloads_empty(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust plan falls back to context graph nodes when live workloads set is empty."""
+    import understudy.graph.k8s
+
+    monkeypatch.setattr(
+        understudy.graph.k8s,
+        "get_cluster_workloads",
+        lambda **_kw: set(),
+    )
+    result = runner.invoke(
+        app,
+        ["plan", "--context", "fixtures/context_bad_deploy.json", "--count", "3", "--fake"],
+    )
+    assert result.exit_code == 0
+    assert "Generated 4 candidate plan(s)" in result.stdout
 
 
 def test_cli_plan_json_output() -> None:
@@ -977,13 +1002,15 @@ def test_cli_plan_json_output() -> None:
         ],
     )
     assert result.exit_code == 0
-    plans = json.loads(result.stdout)
+    json_start = result.stdout.find("[\n")
+    assert json_start != -1
+    plans = json.loads(result.stdout[json_start:])
     assert isinstance(plans, list)
-    assert len(plans) == 3
-    assert plans[2]["action"] == "no_action"
-    assert plans[2]["inverse"] is None
-    assert plans[2]["target_resources"] == []
-    assert plans[2]["declared_blast_set"] == []
+    assert len(plans) == 4
+    assert plans[3]["action"] == "no_action"
+    assert plans[3]["inverse"] is None
+    assert plans[3]["target_resources"] == []
+    assert plans[3]["declared_blast_set"] == []
 
 
 def test_cli_plan_twice_stability() -> None:
@@ -1003,8 +1030,8 @@ def test_cli_plan_twice_stability() -> None:
         ],
     )
     assert result.exit_code == 0
-    assert "Planner run 1 (3 plans)" in result.stdout
-    assert "Planner run 2 (3 plans)" in result.stdout
+    assert "Planner run 1 (4 plans)" in result.stdout
+    assert "Planner run 2 (4 plans)" in result.stdout
     assert "Action-type stability: 1.00" in result.stdout
 
 

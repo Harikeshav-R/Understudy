@@ -17,8 +17,12 @@ async def plan_candidates(state: State, deps: Deps) -> dict[str, Any]:
         raise OrchestratorError("Cannot plan candidates without incident context")
 
     logger = get_logger(incident_id=state.incident_id)
-    planner_plans = await deps.planner.generate_candidates(state.context, count=3)
     playbook_candidate = await deps.playbook_library.retrieve_candidate(state.context)
+    planner_plans = await deps.planner.generate_candidates(
+        state.context,
+        count=3,
+        playbook_candidate=playbook_candidate,
+    )
 
     all_plans: list[RemediationPlan] = list(planner_plans)
     if playbook_candidate is not None:

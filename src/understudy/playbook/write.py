@@ -5,6 +5,7 @@ appending the run_id to evidence_refs and incrementing the successes counter.
 """
 
 from understudy.common.clock import Clock, SystemClock
+from understudy.common.errors import PlaybookEmbeddingError
 from understudy.common.ids import new_plan_id, new_playbook_id
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import FailureClass
@@ -38,7 +39,19 @@ async def write_playbook(
     logger = get_logger(incident_id=context.incident_id)
     sig_text = build_signature_text(context)
 
-    # 1. If plan already specifies a known playbook_id that exists in the store:
+    # 1. Look up by exact signature text first (keyed by signature per B3.6)
+    existing = await store.get_playbook_by_signature(sig_text)
+    if existing is not None:
+        target_id = existing.playbook_id
+        await store.increment_success(target_id, evidence_run_id=run_id)
+        logger.info(
+            "playbook_updated_existing",
+            playbook_id=target_id,
+            run_id=run_id,
+        )
+        return target_id
+
+    # 2. If plan already specifies a known playbook_id that exists in the store:
     if plan.playbook_id:
         stored_plan = await store.get_playbook(plan.playbook_id)
         if stored_plan is not None:
@@ -51,24 +64,16 @@ async def write_playbook(
             )
             return existing_id
 
-    # 2. Look up by exact signature text
-    existing = await store.get_playbook_by_signature(sig_text)
-    if existing is not None:
-        target_id = existing.playbook_id
-        await store.increment_success(target_id, evidence_run_id=run_id)
-        logger.info(
-            "playbook_updated_existing",
-            playbook_id=target_id,
-            run_id=run_id,
-        )
-        return target_id
-
     # 3. No existing playbook for signature: synthesize a new one
     new_id = new_playbook_id()
     if embedder is not None:
         try:
             embedding = await embedder.embed(sig_text)
-        except Exception:
+        except PlaybookEmbeddingError:
+            logger.warning(
+                "playbook_embedding_fallback_deterministic",
+                signature_text=sig_text,
+            )
             embedding = deterministic_signature_embedding(sig_text)
     else:
         embedding = deterministic_signature_embedding(sig_text)

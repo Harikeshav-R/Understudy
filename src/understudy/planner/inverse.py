@@ -14,22 +14,12 @@ Implements build-plan step B3.4:
 - Guarantees the algebraic property: the inverse of an inverse is the original plan.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from understudy.common.errors import PlannerError
 from understudy.contracts.enums import ActionType
 from understudy.contracts.incident import IncidentContext
 from understudy.contracts.plan import ActionParams, RemediationPlan, ResourceRef
-
-# Known default configuration values from deploy/prod/configmap.yaml
-DEFAULT_CONFIG_VALUES: dict[str, str] = {
-    "ENVIRONMENT": "production",
-    "LOG_LEVEL": "INFO",
-    "FAULT_INJECTION_SEED": "1337",
-    "enable_recommendations": "true",
-    "enable_fast_cache": "true",
-    "enable_v2_catalogue": "false",
-}
 
 
 def synthesize_inverse(
@@ -83,134 +73,21 @@ def synthesize_inverse(
     inverse_blast_set: list[str] = list(plan.declared_blast_set)
     inv_plan_id = f"{plan.plan_id}_inv"
 
-    inverse_action: ActionType
-    inverse_params: ActionParams
-    inverse_rationale: str
-
-    if plan.action == ActionType.SCALE_WORKLOAD:
-        replica_delta = plan.params.replica_delta
-        if replica_delta is None or replica_delta == 0:
-            raise PlannerError(
-                f"Cannot synthesize inverse for scale_workload on '{workload}': "
-                "replica_delta must be non-zero",
-                details={
-                    "plan_id": plan.plan_id,
-                    "action": plan.action.value,
-                    "replica_delta": replica_delta,
-                },
-            )
-        inverse_action = ActionType.SCALE_WORKLOAD
-        inverse_delta = -replica_delta
-        inverse_params = ActionParams(workload=workload, replica_delta=inverse_delta)
-        inverse_rationale = (
-            f"Scale {workload} back by {inverse_delta:+d} replicas "
-            f"(reversing delta of {replica_delta:+d})"
-        )
-
-    elif plan.action == ActionType.RESTART_WORKLOAD:
-        inverse_action = ActionType.RESTART_WORKLOAD
-        inverse_params = ActionParams(workload=workload)
-        inverse_rationale = (
-            f"Trigger rolling restart of {workload} to restore pre-intervention pod instances"
-        )
-
-    elif plan.action == ActionType.DISABLE_FLAG:
-        flag_name = plan.params.flag_name
-        if not flag_name:
-            raise PlannerError(
-                f"Cannot synthesize inverse for disable_flag on '{workload}': flag_name required",
-                details={"plan_id": plan.plan_id, "action": plan.action.value},
-            )
-        inverse_action = ActionType.DISABLE_FLAG
-        inverse_params = ActionParams(workload=workload, flag_name=flag_name)
-        # Symmetrically toggle rationale based on existing rationale
-        if plan.rationale.lower().startswith("re-enable"):
-            inverse_rationale = f"Disable feature flag '{flag_name}' for {workload}"
-        else:
-            inverse_rationale = f"Re-enable feature flag '{flag_name}' for {workload}"
-
-    elif plan.action == ActionType.REVERT_CONFIG:
-        config_key = plan.params.config_key
-        config_value = plan.params.config_value
-        if not config_key or config_value is None:
-            raise PlannerError(
-                f"Cannot synthesize inverse for revert_config on '{workload}': "
-                "config_key and config_value required",
-                details={
-                    "plan_id": plan.plan_id,
-                    "action": plan.action.value,
-                    "config_key": config_key,
-                    "config_value": config_value,
-                },
-            )
-
-        resolved_prior_val = _resolve_prior_config_value(
-            workload=workload,
-            config_key=config_key,
-            current_config_value=current_config_value,
-            plan=plan,
-            config_lookup=config_lookup,
-        )
-        if resolved_prior_val is None:
-            raise PlannerError(
-                f"Cannot synthesize inverse for revert_config on '{workload}' ({config_key}): "
-                "pre-intervention config_value unknown",
-                details={
-                    "plan_id": plan.plan_id,
-                    "action": plan.action.value,
-                    "config_key": config_key,
-                },
-            )
-
-        inverse_action = ActionType.REVERT_CONFIG
-        inverse_params = ActionParams(
-            workload=workload,
-            config_key=config_key,
-            config_value=resolved_prior_val,
-        )
-        inverse_rationale = (
-            f"Restore configuration key '{config_key}' for {workload} to prior value "
-            f"'{resolved_prior_val}'"
-        )
-
-    elif plan.action == ActionType.ROLLBACK_DEPLOY:
-        target_commit = plan.params.target_commit
-        if not target_commit:
-            raise PlannerError(
-                f"Cannot synthesize inverse for rollback_deploy on '{workload}': "
-                "target_commit required",
-                details={"plan_id": plan.plan_id, "action": plan.action.value},
-            )
-
-        resolved_commit = _resolve_pre_incident_commit(
-            workload=workload,
-            target_commit=target_commit,
-            current_commit=current_commit,
-            context=context,
-            plan=plan,
-        )
-        if resolved_commit is None:
-            raise PlannerError(
-                f"Cannot synthesize inverse for rollback_deploy on '{workload}': "
-                "pre-incident commit unknown",
-                details={
-                    "plan_id": plan.plan_id,
-                    "action": plan.action.value,
-                    "target_commit": target_commit,
-                },
-            )
-
-        inverse_action = ActionType.ROLLBACK_DEPLOY
-        inverse_params = ActionParams(workload=workload, target_commit=resolved_commit)
-        inverse_rationale = (
-            f"Roll forward {workload} Deployment to pre-incident commit {resolved_commit[:7]}"
-        )
-
-    else:
+    builder = _INVERSE_BUILDERS.get(plan.action)
+    if builder is None:
         raise PlannerError(
             f"Unsupported action type for deterministic inverse synthesis: {plan.action}",
             details={"action": str(plan.action)},
         )
+
+    inverse_action, inverse_params, inverse_rationale = builder(
+        plan,
+        workload,
+        context,
+        current_commit,
+        current_config_value,
+        config_lookup,
+    )
 
     inverse_plan = RemediationPlan(
         plan_id=inv_plan_id,
@@ -264,32 +141,19 @@ def _resolve_prior_config_value(
     workload: str,
     config_key: str,
     current_config_value: str | None,
-    plan: RemediationPlan,
     config_lookup: Mapping[str, Mapping[str, str]] | None,
 ) -> str | None:
-    """Resolve the pre-intervention configuration value for REVERT_CONFIG."""
+    """Resolve the pre-intervention configuration value for REVERT_CONFIG deterministically."""
     # 1. Explicit caller argument
     if current_config_value is not None:
         return current_config_value
 
-    # 2. Existing attached inverse (if already known from prior synthesis/validation)
-    if (
-        plan.inverse is not None
-        and plan.inverse.action == ActionType.REVERT_CONFIG
-        and plan.inverse.params.config_value is not None
-    ):
-        return plan.inverse.params.config_value
-
-    # 3. Dynamic config lookup map
+    # 2. Dynamic config lookup map
     if config_lookup is not None:
         if workload in config_lookup and config_key in config_lookup[workload]:
             return config_lookup[workload][config_key]
         if "" in config_lookup and config_key in config_lookup[""]:
             return config_lookup[""][config_key]
-
-    # 4. Standard default config map values
-    if config_key in DEFAULT_CONFIG_VALUES:
-        return DEFAULT_CONFIG_VALUES[config_key]
 
     return None
 
@@ -299,9 +163,11 @@ def _resolve_pre_incident_commit(
     target_commit: str,
     current_commit: str | None,
     context: IncidentContext | None,
-    plan: RemediationPlan,
 ) -> str | None:
-    """Resolve the pre-incident commit SHA to roll forward to for ROLLBACK_DEPLOY."""
+    """Resolve the pre-incident commit SHA to roll forward to for ROLLBACK_DEPLOY.
+
+    Deterministically resolves pre-incident commit without trusting attached inverse.
+    """
     # 1. Explicit caller argument
     if current_commit is not None:
         return current_commit
@@ -319,14 +185,6 @@ def _resolve_pre_incident_commit(
         ):
             return head_commit
 
-        # If target_commit IS head_commit, check attached inverse first if present
-        if (
-            plan.inverse is not None
-            and plan.inverse.action == ActionType.ROLLBACK_DEPLOY
-            and plan.inverse.params.target_commit
-        ):
-            return plan.inverse.params.target_commit
-
         # Otherwise, this plan is rolling forward (inverting a rollback).
         # Find the first deploy distinct from head_commit to roll back to.
         for d in deploys[1:]:
@@ -338,12 +196,194 @@ def _resolve_pre_incident_commit(
             ):
                 return d.commit_sha
 
-    # 3. Existing attached inverse target commit
-    if (
-        plan.inverse is not None
-        and plan.inverse.action == ActionType.ROLLBACK_DEPLOY
-        and plan.inverse.params.target_commit
-    ):
-        return plan.inverse.params.target_commit
-
     return None
+
+
+def _build_inverse_scale_workload(
+    plan: RemediationPlan,
+    workload: str,
+    _context: IncidentContext | None,
+    _current_commit: str | None,
+    _current_config_value: str | None,
+    _config_lookup: Mapping[str, Mapping[str, str]] | None,
+) -> tuple[ActionType, ActionParams, str]:
+    replica_delta = plan.params.replica_delta
+    if replica_delta is None or replica_delta == 0:
+        raise PlannerError(
+            f"Cannot synthesize inverse for scale_workload on '{workload}': "
+            "replica_delta must be non-zero",
+            details={
+                "plan_id": plan.plan_id,
+                "action": plan.action.value,
+                "replica_delta": replica_delta,
+            },
+        )
+    inverse_delta = -replica_delta
+    rationale = (
+        f"Scale {workload} back by {inverse_delta:+d} replicas "
+        f"(reversing delta of {replica_delta:+d})"
+    )
+    return (
+        ActionType.SCALE_WORKLOAD,
+        ActionParams(workload=workload, replica_delta=inverse_delta),
+        rationale,
+    )
+
+
+def _build_inverse_restart_workload(
+    _plan: RemediationPlan,
+    workload: str,
+    _context: IncidentContext | None,
+    _current_commit: str | None,
+    _current_config_value: str | None,
+    _config_lookup: Mapping[str, Mapping[str, str]] | None,
+) -> tuple[ActionType, ActionParams, str]:
+    return (
+        ActionType.RESTART_WORKLOAD,
+        ActionParams(workload=workload),
+        f"Trigger rolling restart of {workload} to restore pre-intervention pod instances",
+    )
+
+
+def _build_inverse_disable_flag(
+    plan: RemediationPlan,
+    workload: str,
+    _context: IncidentContext | None,
+    _current_commit: str | None,
+    _current_config_value: str | None,
+    _config_lookup: Mapping[str, Mapping[str, str]] | None,
+) -> tuple[ActionType, ActionParams, str]:
+    flag_name = plan.params.flag_name
+    if not flag_name:
+        raise PlannerError(
+            f"Cannot synthesize inverse for disable_flag on '{workload}': flag_name required",
+            details={"plan_id": plan.plan_id, "action": plan.action.value},
+        )
+    if plan.rationale.lower().startswith("re-enable"):
+        inverse_rationale = f"Disable feature flag '{flag_name}' for {workload}"
+    else:
+        inverse_rationale = f"Re-enable feature flag '{flag_name}' for {workload}"
+    return (
+        ActionType.DISABLE_FLAG,
+        ActionParams(workload=workload, flag_name=flag_name),
+        inverse_rationale,
+    )
+
+
+def _build_inverse_revert_config(
+    plan: RemediationPlan,
+    workload: str,
+    _context: IncidentContext | None,
+    _current_commit: str | None,
+    current_config_value: str | None,
+    config_lookup: Mapping[str, Mapping[str, str]] | None,
+) -> tuple[ActionType, ActionParams, str]:
+    config_key = plan.params.config_key
+    config_value = plan.params.config_value
+    if not config_key or config_value is None:
+        raise PlannerError(
+            f"Cannot synthesize inverse for revert_config on '{workload}': "
+            "config_key and config_value required",
+            details={
+                "plan_id": plan.plan_id,
+                "action": plan.action.value,
+                "config_key": config_key,
+                "config_value": config_value,
+            },
+        )
+
+    resolved_prior_val = _resolve_prior_config_value(
+        workload=workload,
+        config_key=config_key,
+        current_config_value=current_config_value,
+        config_lookup=config_lookup,
+    )
+    if resolved_prior_val is None:
+        raise PlannerError(
+            f"Cannot synthesize inverse for revert_config on '{workload}' ({config_key}): "
+            "pre-intervention config_value unknown",
+            details={
+                "plan_id": plan.plan_id,
+                "action": plan.action.value,
+                "config_key": config_key,
+            },
+        )
+
+    rationale = (
+        f"Restore configuration key '{config_key}' for {workload} "
+        f"to prior value '{resolved_prior_val}'"
+    )
+    return (
+        ActionType.REVERT_CONFIG,
+        ActionParams(
+            workload=workload,
+            config_key=config_key,
+            config_value=resolved_prior_val,
+        ),
+        rationale,
+    )
+
+
+def _build_inverse_rollback_deploy(
+    plan: RemediationPlan,
+    workload: str,
+    context: IncidentContext | None,
+    current_commit: str | None,
+    _current_config_value: str | None,
+    _config_lookup: Mapping[str, Mapping[str, str]] | None,
+) -> tuple[ActionType, ActionParams, str]:
+    target_commit = plan.params.target_commit
+    if not target_commit:
+        raise PlannerError(
+            f"Cannot synthesize inverse for rollback_deploy on '{workload}': "
+            "target_commit required",
+            details={"plan_id": plan.plan_id, "action": plan.action.value},
+        )
+
+    resolved_commit = _resolve_pre_incident_commit(
+        workload=workload,
+        target_commit=target_commit,
+        current_commit=current_commit,
+        context=context,
+    )
+    if resolved_commit is None:
+        raise PlannerError(
+            f"Cannot synthesize inverse for rollback_deploy on '{workload}': "
+            "pre-incident commit unknown",
+            details={
+                "plan_id": plan.plan_id,
+                "action": plan.action.value,
+                "target_commit": target_commit,
+            },
+        )
+
+    return (
+        ActionType.ROLLBACK_DEPLOY,
+        ActionParams(workload=workload, target_commit=resolved_commit),
+        f"Roll forward {workload} Deployment to pre-incident commit {resolved_commit[:7]}",
+    )
+
+
+_INVERSE_BUILDERS: dict[
+    ActionType,
+    Callable[
+        [
+            RemediationPlan,
+            str,
+            IncidentContext | None,
+            str | None,
+            str | None,
+            Mapping[str, Mapping[str, str]] | None,
+        ],
+        tuple[ActionType, ActionParams, str],
+    ],
+] = {
+    ActionType.SCALE_WORKLOAD: _build_inverse_scale_workload,
+    ActionType.RESTART_WORKLOAD: _build_inverse_restart_workload,
+    ActionType.DISABLE_FLAG: _build_inverse_disable_flag,
+    ActionType.REVERT_CONFIG: _build_inverse_revert_config,
+    ActionType.ROLLBACK_DEPLOY: _build_inverse_rollback_deploy,
+}
+
+
+__all__ = ["invert_plan", "synthesize_inverse"]

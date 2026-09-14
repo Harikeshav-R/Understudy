@@ -15,9 +15,13 @@ class FakePlanner(Planner):
         self.seed = seed
 
     async def generate_candidates(
-        self, context: IncidentContext, count: int = 3
+        self,
+        context: IncidentContext,
+        count: int = 3,
+        playbook_candidate: RemediationPlan | None = None,
     ) -> list[RemediationPlan]:
         """Generate deterministic candidate plans."""
+        del playbook_candidate
         service = context.alert.service or "data-service"
 
         # Candidate 0: Rollback deploy
@@ -57,19 +61,38 @@ class FakePlanner(Planner):
             update={"inverse": synthesize_inverse(plan_1_base, context=context)}
         )
 
-        # Candidate 2: No action
-        plan_2 = RemediationPlan(
+        # Candidate 2: Restart workload
+        plan_2_base = RemediationPlan(
             plan_id="plan_cand_2",
             candidate_index=2,
-            action=ActionType.NO_ACTION,
+            action=ActionType.RESTART_WORKLOAD,
             params=ActionParams(workload=service),
-            target_resources=[],
-            declared_blast_set=[],
+            target_resources=[ResourceRef(namespace="ust-twin", kind="Deployment", name=service)],
+            declared_blast_set=[service],
             inverse=None,
-            rationale="Maintain current state without automated mutation",
+            rationale="Trigger rolling restart of workload pods to resolve transient issues",
             origin="planner",
         )
+        plan_2 = plan_2_base.model_copy(
+            update={"inverse": synthesize_inverse(plan_2_base, context=context)}
+        )
 
-        all_candidates = [plan_0, plan_1, plan_2]
+        # Candidate 3: Disable flag
+        plan_3_base = RemediationPlan(
+            plan_id="plan_cand_3",
+            candidate_index=3,
+            action=ActionType.DISABLE_FLAG,
+            params=ActionParams(workload=service, flag_name="enable_fast_cache"),
+            target_resources=[ResourceRef(namespace="ust-twin", kind="Deployment", name=service)],
+            declared_blast_set=[service],
+            inverse=None,
+            rationale="Disable feature flag 'enable_fast_cache' to mitigate regression",
+            origin="planner",
+        )
+        plan_3 = plan_3_base.model_copy(
+            update={"inverse": synthesize_inverse(plan_3_base, context=context)}
+        )
+
+        all_candidates = [plan_0, plan_1, plan_2, plan_3]
         selected = all_candidates[:count]
         return ensure_no_action_candidate(selected, context=context)

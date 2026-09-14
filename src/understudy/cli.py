@@ -848,34 +848,38 @@ def plan_cmd(
         raise typer.Exit(code=1) from exc
 
     cluster_workloads: set[str] = set(context.dependency_graph.nodes)
+    try:
+        from understudy.common.errors import GraphError
+        from understudy.graph.k8s import get_cluster_workloads
 
-    planner: Planner
-    if fake:
-        planner = FakePlanner(seed=seed if seed is not None else 42)
-    else:
-        planner = LLMPlanner(cluster_workloads=cluster_workloads)
+        live_workloads = get_cluster_workloads()
+        if live_workloads:
+            cluster_workloads = live_workloads
+    except GraphError:
+        # Fall back cleanly to dependency graph nodes when live cluster is unavailable
+        pass
 
-    async def _run_planner() -> list[Any]:
-        return await planner.generate_candidates(context, count=count)
+    def _execute_planner(planner_seed: int | None) -> list[Any]:
+        p: Planner
+        if fake:
+            p = FakePlanner(seed=planner_seed if planner_seed is not None else 42)
+        else:
+            p = LLMPlanner(cluster_workloads=cluster_workloads)
+
+        async def _run() -> list[Any]:
+            return await p.generate_candidates(context, count=count)
+
+        return asyncio.run(_run())
 
     try:
-        plans = asyncio.run(_run_planner())
+        plans = _execute_planner(seed)
     except Exception as exc:
         typer.echo(f"Planner error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
 
     if twice:
-        planner2: Planner
-        if fake:
-            planner2 = FakePlanner(seed=seed if seed is not None else 42)
-        else:
-            planner2 = LLMPlanner(cluster_workloads=cluster_workloads)
-
-        async def _run_planner2() -> list[Any]:
-            return await planner2.generate_candidates(context, count=count)
-
         try:
-            plans2 = asyncio.run(_run_planner2())
+            plans2 = _execute_planner(seed)
         except Exception as exc:
             typer.echo(f"Second planner run failed: {exc}", err=True)
             raise typer.Exit(code=1) from exc

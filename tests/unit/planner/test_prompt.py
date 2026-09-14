@@ -521,7 +521,8 @@ async def test_planner_protocol_and_fake() -> None:
 
     ctx = _sample_context()
     plans = await fake.generate_candidates(ctx, count=3)
-    assert len(plans) == 3
+    assert len(plans) == 4
     assert plans[0].action == ActionType.ROLLBACK_DEPLOY
     assert plans[1].action == ActionType.SCALE_WORKLOAD
-    assert plans[2].action == ActionType.NO_ACTION
+    assert plans[2].action == ActionType.RESTART_WORKLOAD
+    assert plans[3].action == ActionType.NO_ACTION
