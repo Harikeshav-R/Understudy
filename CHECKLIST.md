@@ -201,9 +201,9 @@ terminal paths. Neither stream blocked the other.
 - [x] B3.6 **[P1]** Playbook write-back with evidence refs and success counters
 
 **Checkpoint B3**
-- [ ] `ust plan` returns N+1 plans; every one validates; every one has an inverse except NO_ACTION
+- [x] `ust plan` returns N+1 plans; every one validates; every one has an inverse except NO_ACTION
 - [ ] Every target workload and commit resolves against the live cluster and repo
-- [ ] Planner action-type stability across two seeded calls recorded (number goes in the brief)
+- [x] Planner action-type stability across two seeded calls recorded (number goes in the brief)
 - [x] **[P1]** `ust playbook match` returns a match with cosine > 0.8 and a confirmation reason
 
 **Phase 3 gate:** traffic really fans out with measured fidelity; the planner produces
