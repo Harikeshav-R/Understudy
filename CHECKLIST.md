@@ -200,19 +200,19 @@ terminal paths. Neither stream blocked the other.
 
 ## Phase 3B — Planner and playbooks (Stream B)
 
-- [ ] B3.1 **[P0]** Candidate-generation prompt over the closed action enum
-- [ ] B3.2 **[P0]** Parse, validate, retry ≤ 2, then normalise against the live cluster; drop, never repair
-- [ ] B3.3 **[P0]** `NO_ACTION` always appended if absent
-- [ ] B3.4 **[P0]** Deterministic inverse synthesis per action type (never LLM-generated)
-- [ ] B3.5 **[P1]** Playbook signature, embeddings, pgvector retrieval, LLM confirmation
-- [ ] B3.6 **[P1]** Playbook write-back with evidence refs and success counters
+- [x] B3.1 **[P0]** Candidate-generation prompt over the closed action enum
+- [x] B3.2 **[P0]** Parse, validate, retry ≤ 2, then normalise against the live cluster; drop, never repair
+- [x] B3.3 **[P0]** `NO_ACTION` always appended if absent
+- [x] B3.4 **[P0]** Deterministic inverse synthesis per action type (never LLM-generated)
+- [x] B3.5 **[P1]** Playbook signature, embeddings, pgvector retrieval, LLM confirmation
+- [x] B3.6 **[P1]** Playbook write-back with evidence refs and success counters
 
 **Checkpoint B3**
 
-- [ ] `ust plan` returns N+1 plans; every one validates; every one has an inverse except NO_ACTION
+- [x] `ust plan` returns N+1 plans; every one validates; every one has an inverse except NO_ACTION
 - [ ] Every target workload and commit resolves against the live cluster and repo
-- [ ] Planner action-type stability across two seeded calls recorded (number goes in the brief)
-- [ ] **[P1]** `ust playbook match` returns a match with cosine > 0.8 and a confirmation reason
+- [x] Planner action-type stability across two seeded calls recorded (number goes in the brief)
+- [x] **[P1]** `ust playbook match` returns a match with cosine > 0.8 and a confirmation reason
 
 **Phase 3 gate:** traffic really fans out with measured fidelity; the planner produces
 validated, normalised, invertible plans against the real cluster.

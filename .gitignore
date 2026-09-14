@@ -226,3 +226,5 @@ config/services.local.yaml
 kubeconfig
 *.kubeconfig
 .secrets
+.agents/
+skills-lock.json

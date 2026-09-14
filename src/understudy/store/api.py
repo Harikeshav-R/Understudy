@@ -1,10 +1,26 @@
-"""Store component protocol interfaces."""
-
 from typing import Any, Protocol, runtime_checkable
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
+
+
+class PlaybookSearchResult(BaseModel):
+    """Retrieved playbook candidate with vector similarity and operational metadata."""
+
+    model_config = ConfigDict(frozen=True)
+
+    playbook_id: str
+    failure_class: str
+    signature_text: str
+    similarity: float
+    plan: RemediationPlan
+    evidence_refs: list[str] = Field(default_factory=list)
+    successes: int = 0
+    failures: int = 0
+    origin: str = "incident"
 
 
 @runtime_checkable
@@ -58,6 +74,8 @@ class PlaybookStore(Protocol):
         plan: RemediationPlan,
         evidence_refs: list[str],
         origin: str,
+        successes: int = 0,
+        failures: int = 0,
     ) -> None:
         """Save a new or updated playbook template."""
         raise NotImplementedError
@@ -66,18 +84,32 @@ class PlaybookStore(Protocol):
         """Retrieve a playbook plan template by identifier."""
         raise NotImplementedError
 
+    async def get_playbook_by_signature(self, signature_text: str) -> PlaybookSearchResult | None:
+        """Retrieve playbook record matching the exact signature text if present."""
+        raise NotImplementedError
+
     async def search_playbooks(
         self, embedding: list[float], limit: int = 5
     ) -> list[RemediationPlan]:
         """Find candidate playbooks nearest to the given embedding."""
         raise NotImplementedError
 
-    async def increment_success(self, playbook_id: str) -> None:
-        """Increment the successful resolution counter for a playbook."""
+    async def search_playbooks_with_scores(
+        self, embedding: list[float], limit: int = 3
+    ) -> list[PlaybookSearchResult]:
+        """Find candidate playbooks nearest to the given embedding with similarity scores."""
         raise NotImplementedError
 
-    async def increment_failure(self, playbook_id: str) -> None:
-        """Increment the failure counter for a playbook."""
+    async def list_playbooks(self) -> list[PlaybookSearchResult]:
+        """List all stored playbooks with operational metadata."""
+        raise NotImplementedError
+
+    async def increment_success(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment the successful resolution counter and optionally append evidence run ID."""
+        raise NotImplementedError
+
+    async def increment_failure(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment the failure counter and optionally append evidence run ID."""
         raise NotImplementedError
 
 
@@ -186,6 +218,7 @@ class CheckpointStore(Protocol):
 __all__ = [
     "CheckpointStore",
     "EvalStore",
+    "PlaybookSearchResult",
     "PlaybookStore",
     "RunStore",
 ]

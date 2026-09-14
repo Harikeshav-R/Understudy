@@ -8,7 +8,7 @@ Conforms to protocols defined in understudy.store.api:
 
 from typing import Any
 
-from sqlalchemy import select, text, update
+from sqlalchemy import any_, case, func, literal, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -17,7 +17,7 @@ from understudy.common.errors import StoreError
 from understudy.contracts.enums import FailureClass
 from understudy.contracts.plan import RemediationPlan
 from understudy.contracts.run import RunRecord
-from understudy.store.api import EvalStore, PlaybookStore, RunStore
+from understudy.store.api import EvalStore, PlaybookSearchResult, PlaybookStore, RunStore
 from understudy.store.database import StoreDatabase
 from understudy.store.models import PlaybookModel, RunModel, ScenarioResultModel
 
@@ -147,6 +147,8 @@ class PostgresPlaybookStore(PlaybookStore):
         plan: RemediationPlan,
         evidence_refs: list[str],
         origin: str,
+        successes: int = 0,
+        failures: int = 0,
     ) -> None:
         """Save a new or updated playbook template."""
         now = self._clock.now()
@@ -163,8 +165,8 @@ class PostgresPlaybookStore(PlaybookStore):
                 plan=plan_json,
                 evidence_refs=list(evidence_refs),
                 origin=origin,
-                successes=0,
-                failures=0,
+                successes=successes,
+                failures=failures,
                 created_at=now,
                 updated_at=now,
             )
@@ -196,6 +198,26 @@ class PostgresPlaybookStore(PlaybookStore):
                 return None
             return RemediationPlan.model_validate(model.plan)
 
+    async def get_playbook_by_signature(self, signature_text: str) -> PlaybookSearchResult | None:
+        """Retrieve playbook record matching the exact signature text if present."""
+        async with self._db.session() as session:
+            stmt = select(PlaybookModel).where(PlaybookModel.signature_text == signature_text)
+            res = await session.execute(stmt)
+            model = res.scalar_one_or_none()
+            if model is None:
+                return None
+            return PlaybookSearchResult(
+                playbook_id=model.playbook_id,
+                failure_class=model.failure_class,
+                signature_text=model.signature_text,
+                similarity=1.0,
+                plan=RemediationPlan.model_validate(model.plan),
+                evidence_refs=list(model.evidence_refs),
+                successes=model.successes,
+                failures=model.failures,
+                origin=model.origin,
+            )
+
     async def search_playbooks(
         self, embedding: list[float], limit: int = 5
     ) -> list[RemediationPlan]:
@@ -210,35 +232,99 @@ class PostgresPlaybookStore(PlaybookStore):
             models = res.scalars().all()
             return [RemediationPlan.model_validate(m.plan) for m in models]
 
-    async def increment_success(self, playbook_id: str) -> None:
-        """Increment the successful resolution counter for a playbook."""
+    async def search_playbooks_with_scores(
+        self, embedding: list[float], limit: int = 3
+    ) -> list[PlaybookSearchResult]:
+        """Find candidate playbooks nearest to the given embedding with similarity scores."""
+        async with self._db.session() as session:
+            similarity_expr = (1.0 - PlaybookModel.embedding.cosine_distance(embedding)).label(
+                "similarity"
+            )
+            stmt = (
+                select(PlaybookModel, similarity_expr)
+                .order_by(PlaybookModel.embedding.cosine_distance(embedding))
+                .limit(limit)
+            )
+            res = await session.execute(stmt)
+            rows = res.all()
+            results: list[PlaybookSearchResult] = []
+            for model, sim in rows:
+                results.append(
+                    PlaybookSearchResult(
+                        playbook_id=model.playbook_id,
+                        failure_class=model.failure_class,
+                        signature_text=model.signature_text,
+                        similarity=float(sim),
+                        plan=RemediationPlan.model_validate(model.plan),
+                        evidence_refs=list(model.evidence_refs),
+                        successes=model.successes,
+                        failures=model.failures,
+                        origin=model.origin,
+                    )
+                )
+            return results
+
+    async def list_playbooks(self) -> list[PlaybookSearchResult]:
+        """List all stored playbooks with operational metadata."""
+        async with self._db.session() as session:
+            stmt = select(PlaybookModel).order_by(PlaybookModel.created_at.desc())
+            res = await session.execute(stmt)
+            models = res.scalars().all()
+            return [
+                PlaybookSearchResult(
+                    playbook_id=m.playbook_id,
+                    failure_class=m.failure_class,
+                    signature_text=m.signature_text,
+                    similarity=1.0,
+                    plan=RemediationPlan.model_validate(m.plan),
+                    evidence_refs=list(m.evidence_refs),
+                    successes=m.successes,
+                    failures=m.failures,
+                    origin=m.origin,
+                )
+                for m in models
+            ]
+
+    async def _increment_counter(
+        self,
+        playbook_id: str,
+        is_success: bool,
+        evidence_run_id: str | None = None,
+    ) -> None:
+        """Internal helper to increment success or failure counter and optionally append run_id."""
         now = self._clock.now()
         async with self._db.session() as session:
+            counter_target = PlaybookModel.successes if is_success else PlaybookModel.failures
+            values_dict: dict[Any, Any] = {
+                counter_target: counter_target + 1,
+                PlaybookModel.updated_at: now,
+            }
+            if evidence_run_id is not None:
+                values_dict[PlaybookModel.evidence_refs] = case(
+                    (
+                        literal(evidence_run_id) == any_(PlaybookModel.evidence_refs),
+                        PlaybookModel.evidence_refs,
+                    ),
+                    else_=func.array_append(PlaybookModel.evidence_refs, evidence_run_id),
+                )
+
             stmt = (
                 update(PlaybookModel)
                 .where(PlaybookModel.playbook_id == playbook_id)
-                .values(
-                    successes=PlaybookModel.successes + 1,
-                    updated_at=now,
-                )
+                .values(values_dict)
             )
             await session.execute(stmt)
             await session.commit()
 
-    async def increment_failure(self, playbook_id: str) -> None:
+    async def increment_success(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
+        """Increment the success counter for a playbook and append run_id to evidence_refs."""
+        await self._increment_counter(playbook_id, is_success=True, evidence_run_id=evidence_run_id)
+
+    async def increment_failure(self, playbook_id: str, evidence_run_id: str | None = None) -> None:
         """Increment the failure counter for a playbook."""
-        now = self._clock.now()
-        async with self._db.session() as session:
-            stmt = (
-                update(PlaybookModel)
-                .where(PlaybookModel.playbook_id == playbook_id)
-                .values(
-                    failures=PlaybookModel.failures + 1,
-                    updated_at=now,
-                )
-            )
-            await session.execute(stmt)
-            await session.commit()
+        await self._increment_counter(
+            playbook_id, is_success=False, evidence_run_id=evidence_run_id
+        )
 
 
 class PostgresEvalStore(EvalStore):

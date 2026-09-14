@@ -244,7 +244,7 @@ async def test_plan_candidates_node() -> None:
     state = State(incident_id="inc_123", context=ctx)
     res = await plan_candidates_node(state, deps)
     plans = res["plans"]
-    assert len(plans) == 4  # 3 from FakePlanner + 1 from FakePlaybookLibrary
+    assert len(plans) == 5  # 4 from FakePlanner (3 active + NO_ACTION) + 1 from FakePlaybookLibrary
     for idx, p in enumerate(plans):
         assert p.candidate_index == idx
 
@@ -261,7 +261,7 @@ async def test_plan_candidates_node() -> None:
         }
     )
     res_no_pb = await plan_candidates(state, deps_no_pb)
-    assert len(res_no_pb["plans"]) == 3
+    assert len(res_no_pb["plans"]) == 4
 
     # Case 4: Playbook candidate plan_id already in planner plans
     p0 = _sample_plan("plan_cand_0", 0)
@@ -278,7 +278,7 @@ async def test_plan_candidates_node() -> None:
         }
     )
     res_dup = await plan_candidates(state, deps_dup_pb)
-    assert len(res_dup["plans"]) == 3
+    assert len(res_dup["plans"]) == 4
 
 
 @pytest.mark.asyncio
@@ -693,13 +693,13 @@ async def test_record_run_node() -> None:
     assert res_pb["outcome"] == RunOutcome.EXECUTED
     assert res_pb["finished_at"] is not None
 
-    # Verify playbook library recorded outcome
+    # Verify playbook library recorded written playbooks on resolved run
     fake_pb = deps.playbook_library
     assert isinstance(fake_pb, FakePlaybookLibrary)
-    assert len(fake_pb.recorded_outcomes) == 1
-    assert fake_pb.recorded_outcomes[0]["success"] is True
+    assert len(fake_pb.written_playbooks) == 1
+    assert fake_pb.written_playbooks[0]["run_id"] == state_pb.to_run_record().run_id
 
-    # Case 2: Plan originated from planner (not playbook)
+    # Case 2: Plan originated from planner (not playbook) and was resolved
     state_planner = State(
         incident_id="inc_123",
         context=ctx,
@@ -709,7 +709,21 @@ async def test_record_run_node() -> None:
     )
     res_pl = await record_run(state_planner, deps)
     assert res_pl["outcome"] == RunOutcome.EXECUTED
-    assert len(fake_pb.recorded_outcomes) == 1  # No new playbook outcome
+    assert len(fake_pb.written_playbooks) == 2
+
+    # Case 3: Plan originated from playbook and was not resolved on prod
+    state_failed = State(
+        incident_id="inc_123",
+        context=ctx,
+        plans=[p_pb, p_planner],
+        prod_applied_plan_id="plan_pb",
+        prod_outcome="not_resolved",
+    )
+    res_failed = await record_run(state_failed, deps)
+    assert res_failed["outcome"] == RunOutcome.EXECUTED
+    assert len(fake_pb.recorded_outcomes) == 1
+    assert fake_pb.recorded_outcomes[0]["success"] is False
+    assert fake_pb.recorded_outcomes[0]["playbook_id"] == "pb_001"
 
 
 @pytest.mark.asyncio

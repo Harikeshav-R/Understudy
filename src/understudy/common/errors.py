@@ -67,6 +67,22 @@ class GraphDiscrepancyError(GraphError):
     """Raised when observed traffic contradicts declared dependency graph topology."""
 
 
+class PlannerError(UnderstudyError):
+    """Raised on failure to generate, parse, or validate remediation plans."""
+
+
+class PlaybookError(UnderstudyError):
+    """Raised on playbook retrieval, embedding, confirmation, or storage failures."""
+
+
+class PlaybookEmbeddingError(PlaybookError):
+    """Raised on failure to generate vector embeddings."""
+
+
+class PlaybookConfirmationError(PlaybookError):
+    """Raised on failure during LLM playbook confirmation."""
+
+
 class MirrorError(UnderstudyError):
     """Raised on failure to communicate with or perform operations against the mirror gateway."""
 

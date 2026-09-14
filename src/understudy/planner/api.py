@@ -11,7 +11,10 @@ class Planner(Protocol):
     """Generates and normalizes candidate remediation plans."""
 
     async def generate_candidates(
-        self, context: IncidentContext, count: int = 3
+        self,
+        context: IncidentContext,
+        count: int = 3,
+        playbook_candidate: RemediationPlan | None = None,
     ) -> list[RemediationPlan]:
         """Generate N candidate remediation plans for the active incident context."""
         raise NotImplementedError

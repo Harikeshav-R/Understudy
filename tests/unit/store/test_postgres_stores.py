@@ -360,13 +360,49 @@ async def test_postgres_playbook_store_search_and_counters(sample_plan: Remediat
     res = await store.search_playbooks([0.1] * 1024, limit=3)
     assert res == [sample_plan]
 
-    # increment_success
-    await store.increment_success("pb_001")
-    assert db.session_mock.commit.await_count >= 1
+    # search_playbooks_with_scores
+    mock_model.playbook_id = "pb_001"
+    mock_model.failure_class = "bad_deploy"
+    mock_model.signature_text = "sig text"
+    mock_model.evidence_refs = ["run_1"]
+    mock_model.successes = 1
+    mock_model.failures = 0
+    mock_model.origin = "seed"
+    mock_result.all.return_value = [(mock_model, 0.95)]
+    db.session_mock.execute.return_value = mock_result
 
-    # increment_failure
-    await store.increment_failure("pb_001")
+    scored_res = await store.search_playbooks_with_scores([0.1] * 1024, limit=3)
+    assert len(scored_res) == 1
+    assert scored_res[0].playbook_id == "pb_001"
+    assert scored_res[0].similarity == 0.95
+    assert scored_res[0].plan == sample_plan
+
+    # list_playbooks
+    mock_result.scalars.return_value.all.return_value = [mock_model]
+    listed_res = await store.list_playbooks()
+    assert len(listed_res) == 1
+    assert listed_res[0].playbook_id == "pb_001"
+
+    # get_playbook_by_signature - found
+    mock_result.scalar_one_or_none.return_value = mock_model
+    sig_res = await store.get_playbook_by_signature("sig text")
+    assert sig_res is not None
+    assert sig_res.playbook_id == "pb_001"
+
+    # get_playbook_by_signature - not found
+    mock_result.scalar_one_or_none.return_value = None
+    sig_none = await store.get_playbook_by_signature("unknown")
+    assert sig_none is None
+
+    # increment_success without and with evidence_run_id
+    await store.increment_success("pb_001")
+    await store.increment_success("pb_001", evidence_run_id="run_100")
     assert db.session_mock.commit.await_count >= 2
+
+    # increment_failure without and with evidence_run_id
+    await store.increment_failure("pb_001")
+    await store.increment_failure("pb_001", evidence_run_id="run_fail")
+    assert db.session_mock.commit.await_count >= 4
 
 
 def test_postgres_playbook_store_default_init() -> None:

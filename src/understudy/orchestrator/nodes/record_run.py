@@ -21,17 +21,23 @@ async def record_run(state: State, deps: Deps) -> dict[str, Any]:
         (p for p in state.plans if p.plan_id == state.prod_applied_plan_id),
         None,
     )
-    if (
-        applied_plan is not None
-        and applied_plan.origin == "playbook"
-        and applied_plan.playbook_id is not None
-    ):
-        success = state.prod_outcome == "resolved"
-        await deps.playbook_library.record_outcome(
-            playbook_id=applied_plan.playbook_id,
-            success=success,
-            evidence_run_id=record.run_id,
-        )
+    if applied_plan is not None:
+        if state.prod_outcome == "resolved" and state.context is not None:
+            await deps.playbook_library.record_resolved_run(
+                context=state.context,
+                plan=applied_plan,
+                run_id=record.run_id,
+            )
+        elif (
+            applied_plan.origin == "playbook"
+            and applied_plan.playbook_id is not None
+            and state.prod_outcome != "resolved"
+        ):
+            await deps.playbook_library.record_outcome(
+                playbook_id=applied_plan.playbook_id,
+                success=False,
+                evidence_run_id=record.run_id,
+            )
 
     logger.info("run_recorded", run_id=record.run_id, outcome=record.outcome.value)
 

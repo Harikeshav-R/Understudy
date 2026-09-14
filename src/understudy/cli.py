@@ -8,6 +8,7 @@ import typer
 from understudy.common.logging import get_logger
 
 if TYPE_CHECKING:
+    from understudy.planner.api import Planner
     from understudy.signals.api import ObservabilityAdapter
 
 logger = get_logger(__name__)
@@ -1006,6 +1007,556 @@ def signals_deploys(
             if d.image_digests:
                 for svc, digest in sorted(d.image_digests.items()):
                     typer.echo(f"    {svc}: {digest}")
+
+
+@app.command("plan")
+def plan_cmd(
+    context_file: Annotated[
+        Path,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON fixture.",
+        ),
+    ],
+    count: Annotated[
+        int,
+        typer.Option(
+            "--count",
+            "-n",
+            help="Number of active candidate plans to generate.",
+        ),
+    ] = 3,
+    seed: Annotated[
+        int | None,
+        typer.Option(
+            "--seed",
+            help="Optional random seed for deterministic planner / variance evaluation.",
+        ),
+    ] = None,
+    twice: Annotated[
+        bool,
+        typer.Option(
+            "--twice",
+            help="Run planner twice to evaluate action-type stability across calls.",
+        ),
+    ] = False,
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use FakePlanner instead of live LLMPlanner.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output full RemediationPlan JSON array.",
+        ),
+    ] = False,
+) -> None:
+    """Generate candidate remediation plans, guaranteeing NO_ACTION on the ballot."""
+    import asyncio
+    import json
+
+    from understudy.contracts.incident import IncidentContext
+    from understudy.planner.fakes import FakePlanner
+    from understudy.planner.validate import LLMPlanner
+
+    if not context_file.exists():
+        typer.echo(f"Context file not found: {context_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        raw_text = context_file.read_text(encoding="utf-8")
+        context = IncidentContext.model_validate_json(raw_text)
+    except Exception as exc:
+        typer.echo(f"Failed to parse IncidentContext from {context_file}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    cluster_workloads: set[str] = set(context.dependency_graph.nodes)
+    try:
+        from understudy.common.errors import GraphError
+        from understudy.graph.k8s import get_cluster_workloads
+
+        live_workloads = get_cluster_workloads()
+        if live_workloads:
+            cluster_workloads = live_workloads
+    except GraphError:
+        # Fall back cleanly to dependency graph nodes when live cluster is unavailable
+        pass
+
+    def _execute_planner(planner_seed: int | None) -> list[Any]:
+        p: Planner
+        if fake:
+            p = FakePlanner(seed=planner_seed if planner_seed is not None else 42)
+        else:
+            p = LLMPlanner(cluster_workloads=cluster_workloads)
+
+        async def _run() -> list[Any]:
+            return await p.generate_candidates(context, count=count)
+
+        return asyncio.run(_run())
+
+    try:
+        plans = _execute_planner(seed)
+    except Exception as exc:
+        typer.echo(f"Planner error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if twice:
+        try:
+            plans2 = _execute_planner(seed)
+        except Exception as exc:
+            typer.echo(f"Second planner run failed: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+        actions1 = [p.action.value for p in plans]
+        actions2 = [p.action.value for p in plans2]
+        matching = sum(1 for a, b in zip(actions1, actions2, strict=False) if a == b)
+        total = max(len(actions1), len(actions2), 1)
+        stability = matching / total
+
+        typer.echo(f"Planner run 1 ({len(plans)} plans): {actions1}")
+        typer.echo(f"Planner run 2 ({len(plans2)} plans): {actions2}")
+        typer.echo(f"Action-type stability: {stability:.2f} ({matching}/{total} matching)")
+        return
+
+    if json_output:
+        raw_plans = [p.model_dump(mode="json") for p in plans]
+        typer.echo(json.dumps(raw_plans, indent=2))
+    else:
+        typer.echo(f"Generated {len(plans)} candidate plan(s) for {context.incident_id}:")
+        for plan in plans:
+            inv_str = f"inverse={plan.inverse.action.value}" if plan.inverse else "inverse=none"
+            typer.echo(
+                f"  [{plan.candidate_index}] {plan.plan_id}: {plan.action.value} "
+                f"workload={plan.params.workload} ({inv_str}) - {plan.rationale}"
+            )
+
+
+playbook_app = typer.Typer(
+    name="playbook",
+    help="Incident playbook library, matching, and seeding.",
+    no_args_is_help=True,
+)
+app.add_typer(playbook_app, name="playbook")
+
+
+@playbook_app.command("seed")
+def playbook_seed(
+    from_file: Annotated[
+        Path,
+        typer.Option(
+            "--from",
+            "-f",
+            help="Path to JSON file containing seed playbooks.",
+        ),
+    ],
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use in-memory fake store and deterministic embeddings.",
+        ),
+    ] = False,
+) -> None:
+    """Seed historical or synthetic playbooks into the playbook store."""
+    import asyncio
+    import json
+
+    from understudy.contracts.enums import FailureClass
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.playbook.signature import deterministic_signature_embedding
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    if not from_file.exists():
+        typer.echo(f"Seed file not found: {from_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        raw = json.loads(from_file.read_text(encoding="utf-8"))
+        if not isinstance(raw, list):
+            raw = [raw]
+    except Exception as exc:
+        typer.echo(f"Failed to parse seed playbooks JSON: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    store = FakePlaybookStore() if fake else PostgresPlaybookStore()
+
+    async def _seed_all() -> int:
+        count = 0
+        for item in raw:
+            pb_id = str(item["playbook_id"])
+            fc_raw = item["failure_class"]
+            fc = FailureClass(fc_raw) if fc_raw in FailureClass._value2member_map_ else fc_raw
+            sig_text = str(item["signature_text"])
+            plan = RemediationPlan.model_validate(item["plan"])
+            evidence_refs = list(item.get("evidence_refs", []))
+            origin = str(item.get("origin", "seed"))
+            emb = item.get("embedding")
+            if not emb or not isinstance(emb, list):
+                emb = deterministic_signature_embedding(sig_text)
+
+            await store.save_playbook(
+                playbook_id=pb_id,
+                failure_class=fc,
+                signature_text=sig_text,
+                embedding=emb,
+                plan=plan,
+                evidence_refs=evidence_refs,
+                origin=origin,
+            )
+            count += 1
+        return count
+
+    try:
+        seeded_count = asyncio.run(_seed_all())
+        typer.echo(f"Seeded {seeded_count} playbook(s) from {from_file}")
+    except Exception as exc:
+        typer.echo(f"Failed to seed playbooks into store: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
+@playbook_app.command("match")
+def playbook_match(
+    context_file: Annotated[
+        Path,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON fixture.",
+        ),
+    ],
+    top_k: Annotated[
+        int,
+        typer.Option(
+            "--top-k",
+            "-k",
+            help="Number of nearest candidates to retrieve from store.",
+        ),
+    ] = 3,
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use FakePlaybookLibrary or deterministic matching.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output raw PlaybookMatchResult JSON.",
+        ),
+    ] = False,
+) -> None:
+    """Find and confirm matching candidate playbook for the active incident context."""
+    import asyncio
+    import json
+
+    from understudy.contracts.enums import FailureClass
+    from understudy.contracts.incident import IncidentContext
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.playbook.confirmation import PlaybookConfirmer
+    from understudy.playbook.embeddings import OpenRouterEmbeddingClient
+    from understudy.playbook.retriever import PlaybookMatchResult, PlaybookRetriever
+    from understudy.playbook.signature import deterministic_signature_embedding
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    if not context_file.exists():
+        typer.echo(f"Context file not found: {context_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        raw_text = context_file.read_text(encoding="utf-8")
+        context = IncidentContext.model_validate_json(raw_text)
+    except Exception as exc:
+        typer.echo(f"Failed to parse IncidentContext: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _match() -> PlaybookMatchResult:
+        store: FakePlaybookStore | PostgresPlaybookStore
+        if fake:
+            store = FakePlaybookStore()
+            seed_path = Path("fixtures/playbooks_seed.json")
+            if seed_path.exists():
+                seed_data = json.loads(seed_path.read_text(encoding="utf-8"))
+                for s in seed_data:
+                    fc_raw = s["failure_class"]
+                    fc = (
+                        FailureClass(fc_raw)
+                        if fc_raw in FailureClass._value2member_map_
+                        else fc_raw
+                    )
+                    await store.save_playbook(
+                        playbook_id=s["playbook_id"],
+                        failure_class=fc,
+                        signature_text=s["signature_text"],
+                        embedding=s.get("embedding")
+                        or deterministic_signature_embedding(s["signature_text"]),
+                        plan=RemediationPlan.model_validate(s["plan"]),
+                        evidence_refs=s.get("evidence_refs", []),
+                        origin=s.get("origin", "seed"),
+                    )
+
+            async def _fake_embed(text: str) -> list[float]:
+                return deterministic_signature_embedding(text)
+
+            async def _fake_confirm(messages: list[dict[str, str]]) -> str:
+                _ = messages
+                return json.dumps(
+                    {
+                        "retained_playbook_id": "pb_bad_deploy_data_service",
+                        "confidence": 0.95,
+                        "reason": (
+                            "Matches N+1 query regression on data-service; "
+                            "rollback to deadbeef is safe and verified."
+                        ),
+                    }
+                )
+
+            embedder = OpenRouterEmbeddingClient(embed_caller=_fake_embed)
+            confirmer = PlaybookConfirmer(llm_caller=_fake_confirm)
+            retriever = PlaybookRetriever(
+                store=store,
+                embedder=embedder,
+                confirmer=confirmer,
+            )
+        else:
+            store = PostgresPlaybookStore()
+            retriever = PlaybookRetriever(store=store)
+
+        return await retriever.match_playbook(context, top_k=top_k)
+
+    from understudy.common.logging import configure_logging
+
+    try:
+        if json_output:
+            configure_logging(log_level="WARNING")
+        result = asyncio.run(_match())
+    except Exception as exc:
+        typer.echo(f"Playbook match error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    finally:
+        if json_output:
+            configure_logging(log_level="INFO")
+
+    if json_output:
+        typer.echo(result.model_dump_json(indent=2))
+        return
+
+    if result.matched and result.plan is not None:
+        typer.echo(
+            f"Matched playbook '{result.playbook_id}' "
+            f"(cosine: {result.similarity:.2f} > 0.8):\n"
+            f"  Action: {result.plan.action.value}\n"
+            f"  Workload: {result.plan.params.workload}\n"
+            f"  Confirmation Reason: {result.confirmation_reason}\n"
+            f"  Plan ID: {result.plan.plan_id}"
+        )
+    else:
+        typer.echo(
+            f"No playbook match confirmed: {result.confirmation_reason} "
+            f"(top similarity: {result.similarity:.2f})"
+        )
+
+
+@playbook_app.command("list")
+def playbook_list(
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="List playbooks from fake store.",
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output JSON array.",
+        ),
+    ] = False,
+) -> None:
+    """List all registered playbooks in the library with success/failure counters."""
+    import asyncio
+    import json
+
+    from understudy.store.api import PlaybookSearchResult
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    async def _list() -> list[PlaybookSearchResult]:
+        store: FakePlaybookStore | PostgresPlaybookStore
+        if fake:
+            store = FakePlaybookStore()
+            seed_path = Path("fixtures/playbooks_seed.json")
+            if seed_path.exists():
+                from understudy.contracts.enums import FailureClass
+                from understudy.contracts.plan import RemediationPlan
+                from understudy.playbook.signature import deterministic_signature_embedding
+
+                seed_data = json.loads(seed_path.read_text(encoding="utf-8"))
+                for s in seed_data:
+                    fc_raw = s["failure_class"]
+                    fc = (
+                        FailureClass(fc_raw)
+                        if fc_raw in FailureClass._value2member_map_
+                        else fc_raw
+                    )
+                    await store.save_playbook(
+                        playbook_id=s["playbook_id"],
+                        failure_class=fc,
+                        signature_text=s["signature_text"],
+                        embedding=s.get("embedding")
+                        or deterministic_signature_embedding(s["signature_text"]),
+                        plan=RemediationPlan.model_validate(s["plan"]),
+                        evidence_refs=s.get("evidence_refs", []),
+                        origin=s.get("origin", "seed"),
+                    )
+        else:
+            store = PostgresPlaybookStore()
+
+        return await store.list_playbooks()
+
+    try:
+        playbooks = asyncio.run(_list())
+    except Exception as exc:
+        typer.echo(f"Failed to list playbooks: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    if json_output:
+        raw_list = [p.model_dump(mode="json") for p in playbooks]
+        typer.echo(json.dumps(raw_list, indent=2))
+        return
+
+    typer.echo(f"Stored Playbooks ({len(playbooks)}):")
+    for pb in playbooks:
+        typer.echo(
+            f"  {pb.playbook_id} | class={pb.failure_class} | "
+            f"action={pb.plan.action.value} | successes={pb.successes} | failures={pb.failures}"
+        )
+
+
+@playbook_app.command("write")
+def playbook_write(
+    context_file: Annotated[
+        Path,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON fixture.",
+        ),
+    ],
+    plan_file: Annotated[
+        Path,
+        typer.Option(
+            "--plan",
+            "-p",
+            help="Path to RemediationPlan JSON fixture.",
+        ),
+    ],
+    run_id: Annotated[
+        str,
+        typer.Option(
+            "--run-id",
+            "-r",
+            help="Run identifier of the successful resolution.",
+        ),
+    ],
+    origin: Annotated[
+        str,
+        typer.Option(
+            "--origin",
+            help="Origin of the resolution ('incident' or 'shadow').",
+        ),
+    ] = "incident",
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Use in-memory fake store.",
+        ),
+    ] = False,
+) -> None:
+    """Upsert a playbook on successful run resolution, keyed by incident signature."""
+    import asyncio
+    import json
+
+    from understudy.contracts.incident import IncidentContext
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.playbook.write import write_playbook
+    from understudy.store.fakes import FakePlaybookStore
+    from understudy.store.postgres import PostgresPlaybookStore
+
+    if not context_file.exists():
+        typer.echo(f"Context file not found: {context_file}", err=True)
+        raise typer.Exit(code=1)
+
+    if not plan_file.exists():
+        typer.echo(f"Plan file not found: {plan_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        context = IncidentContext.model_validate_json(context_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        typer.echo(f"Failed to parse IncidentContext: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        plan = RemediationPlan.model_validate_json(plan_file.read_text(encoding="utf-8"))
+    except Exception as exc:
+        typer.echo(f"Failed to parse RemediationPlan: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    async def _write() -> str:
+        store: FakePlaybookStore | PostgresPlaybookStore
+        if fake:
+            store = FakePlaybookStore()
+            seed_path = Path("fixtures/playbooks_seed.json")
+            if seed_path.exists():
+                from understudy.contracts.enums import FailureClass
+                from understudy.playbook.signature import deterministic_signature_embedding
+
+                seed_data = json.loads(seed_path.read_text(encoding="utf-8"))
+                for s in seed_data:
+                    fc_raw = s["failure_class"]
+                    fc = (
+                        FailureClass(fc_raw)
+                        if fc_raw in FailureClass._value2member_map_
+                        else fc_raw
+                    )
+                    await store.save_playbook(
+                        playbook_id=s["playbook_id"],
+                        failure_class=fc,
+                        signature_text=s["signature_text"],
+                        embedding=s.get("embedding")
+                        or deterministic_signature_embedding(s["signature_text"]),
+                        plan=RemediationPlan.model_validate(s["plan"]),
+                        evidence_refs=s.get("evidence_refs", []),
+                        origin=s.get("origin", "seed"),
+                    )
+        else:
+            store = PostgresPlaybookStore()
+
+        return await write_playbook(
+            context=context,
+            plan=plan,
+            run_id=run_id,
+            store=store,
+            origin=origin,
+        )
+
+    try:
+        pb_id = asyncio.run(_write())
+        typer.echo(f"Playbook write-back completed: {pb_id}")
+    except Exception as exc:
+        typer.echo(f"Playbook write error: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
 
 
 tournament_app = typer.Typer(

@@ -77,3 +77,24 @@ def test_verify_cluster_workloads_api_exception() -> None:
 
         with pytest.raises(GraphError, match="Failed to list deployments"):
             verify_cluster_workloads({"svc-a"})
+
+
+def test_get_cluster_workloads_direct() -> None:
+    """Direct test of get_cluster_workloads returning set of deployment names."""
+    from understudy.graph.k8s import get_cluster_workloads
+
+    mock_meta = Mock()
+    mock_meta.name = "my-service"
+    mock_item = Mock(metadata=mock_meta)
+    mock_deployments = Mock(items=[mock_item])
+
+    with (
+        patch("understudy.graph.k8s.config.load_kube_config"),
+        patch("understudy.graph.k8s.client.AppsV1Api") as mock_apps_cls,
+    ):
+        mock_apps = Mock()
+        mock_apps.list_namespaced_deployment.return_value = mock_deployments
+        mock_apps_cls.return_value = mock_apps
+
+        workloads = get_cluster_workloads(namespace="ust-prod")
+        assert workloads == {"my-service"}

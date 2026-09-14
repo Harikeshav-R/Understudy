@@ -153,11 +153,54 @@ async def test_fake_playbook_store() -> None:
     search_res = await store.search_playbooks([0.1, 0.2], limit=1)
     assert len(search_res) == 1
 
-    await store.increment_success("pb_1")
-    await store.increment_failure("pb_1")
+    # search_playbooks_with_scores
+    scored_res = await store.search_playbooks_with_scores([0.1, 0.2], limit=1)
+    assert len(scored_res) == 1
+    assert scored_res[0].playbook_id == "pb_1"
+    assert scored_res[0].similarity > 0.99
+
+    # Zero vector handling in cosine similarity
+    zero_scored = await store.search_playbooks_with_scores([0.0, 0.0], limit=1)
+    assert len(zero_scored) == 1
+    assert zero_scored[0].similarity == 0.0
+
+    # list_playbooks
+    listed = await store.list_playbooks()
+    assert len(listed) == 1
+    assert listed[0].playbook_id == "pb_1"
+
+    # get_playbook_by_signature
+    by_sig = await store.get_playbook_by_signature("sig text")
+    assert by_sig is not None
+    assert by_sig.playbook_id == "pb_1"
+    assert await store.get_playbook_by_signature("unknown") is None
+
+    # increment with evidence_run_id
+    await store.increment_success("pb_1", evidence_run_id="run_2")
+    await store.increment_success("pb_1", evidence_run_id="run_2")  # duplicate
+    assert (await store.list_playbooks())[0].successes == 2
+    assert (await store.list_playbooks())[0].evidence_refs == ["run_1", "run_2"]
+
+    await store.increment_failure("pb_1", evidence_run_id="run_fail")
+    await store.increment_failure("pb_1", evidence_run_id="run_fail")  # duplicate
+    assert (await store.list_playbooks())[0].failures == 2
+    assert "run_fail" in (await store.list_playbooks())[0].evidence_refs
+
     # Coverage for non-existent key
-    await store.increment_success("pb_nonexistent")
-    await store.increment_failure("pb_nonexistent")
+    await store.increment_success("pb_nonexistent", evidence_run_id="run_x")
+    await store.increment_failure("pb_nonexistent", evidence_run_id="run_x")
+
+    # Update existing playbook preserves counters
+    await store.save_playbook(
+        playbook_id="pb_1",
+        failure_class=FailureClass.CONFIG_DRIFT,
+        signature_text="sig text",
+        embedding=[0.1, 0.2],
+        plan=plan,
+        evidence_refs=["run_1", "run_2"],
+        origin="incident",
+    )
+    assert (await store.list_playbooks())[0].successes == 2
 
 
 @pytest.mark.asyncio
@@ -347,10 +390,11 @@ async def test_fake_playbook_library(sample_context: IncidentContext) -> None:
 async def test_fake_planner(sample_context: IncidentContext) -> None:
     planner = FakePlanner(seed=42)
     candidates = await planner.generate_candidates(sample_context, count=3)
-    assert len(candidates) == 3
+    assert len(candidates) == 4
     assert candidates[0].action == ActionType.ROLLBACK_DEPLOY
     assert candidates[1].action == ActionType.SCALE_WORKLOAD
-    assert candidates[2].action == ActionType.NO_ACTION
+    assert candidates[2].action == ActionType.RESTART_WORKLOAD
+    assert candidates[3].action == ActionType.NO_ACTION
 
 
 @pytest.mark.asyncio

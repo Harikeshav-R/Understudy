@@ -17,3 +17,13 @@ class PlaybookLibrary(Protocol):
     async def record_outcome(self, playbook_id: str, success: bool, evidence_run_id: str) -> None:
         """Record the rehearsal or actuation outcome for a matched playbook."""
         raise NotImplementedError
+
+    async def record_resolved_run(
+        self,
+        context: IncidentContext,
+        plan: RemediationPlan,
+        run_id: str,
+        origin: str = "incident",
+    ) -> str:
+        """Upsert a playbook on successful run resolution, keyed by incident signature."""
+        raise NotImplementedError

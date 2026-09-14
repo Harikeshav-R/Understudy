@@ -11,12 +11,11 @@ from understudy.common.logging import get_logger
 logger = get_logger(__name__)
 
 
-def verify_cluster_workloads(
-    declared_services: set[str],
+def get_cluster_workloads(
     namespace: str = "ust-prod",
     context: str = "k3d-ust",
-) -> bool:
-    """Verify that all declared dependency graph services exist as Deployments in Kubernetes."""
+) -> set[str]:
+    """Retrieve the set of active Deployment workload names in the Kubernetes namespace."""
     try:
         config.load_kube_config(context=context)
     except Exception as exc:
@@ -34,9 +33,16 @@ def verify_cluster_workloads(
             details={"namespace": namespace, "status": exc.status},
         ) from exc
 
-    active_deployment_names = {
-        d.metadata.name for d in deployments.items if d.metadata and d.metadata.name
-    }
+    return {d.metadata.name for d in deployments.items if d.metadata and d.metadata.name}
+
+
+def verify_cluster_workloads(
+    declared_services: set[str],
+    namespace: str = "ust-prod",
+    context: str = "k3d-ust",
+) -> bool:
+    """Verify that all declared dependency graph services exist as Deployments in Kubernetes."""
+    active_deployment_names = get_cluster_workloads(namespace=namespace, context=context)
     missing = declared_services - active_deployment_names
 
     if missing:
