@@ -1,0 +1,95 @@
+"""Invariant K3: Migration boundary formal proof verification.
+
+Implements build-plan step B4.3c:
+A ROLLBACK_DEPLOY may not target a commit that predates the most recent schema
+migration, and may not itself be a commit containing a migration.
+"""
+
+from collections.abc import Sequence
+
+import z3
+
+from understudy.contracts.enums import ActionType, InvariantTier
+from understudy.kernel.dsl import Invariant, KernelContext
+
+
+class K3MigrationBoundary(Invariant):
+    """Safety invariant proving that rollback plans do not violate migration boundaries."""
+
+    id: str = "K3"
+    name: str = "Migration boundary"
+    tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
+    statement: str = (
+        "A ROLLBACK_DEPLOY may not target a commit that predates the most recent "
+        "schema migration, and may not itself be a commit containing a migration."
+    )
+    doc_statement: str | None = (
+        "A `ROLLBACK_DEPLOY` may not target a commit that predates the most recent\n"
+        "schema migration, and may not itself be a commit containing a migration."
+    )
+    required_facts: Sequence[str] = (
+        "last_migration_commit_time",
+        "rollback_target_commit_time",
+        "target_contains_migration",
+    )
+    smt_shape: str | None = (
+        "```\n"
+        "plan.action = ROLLBACK_DEPLOY ⟹\n"
+        "    rollback_target_commit_time ≥ last_migration_commit_time\n"
+        "  ∧ ¬target_contains_migration\n"
+        "```"
+    )
+    why_it_exists: str | None = (
+        "Rolling application code back across a migration leaves code that does\n"
+        "not understand the live schema. It is the classic incident-response own-goal, "
+        "it will score\n"
+        "beautifully in a twin whose data happens not to exercise the changed column, "
+        "and no metric\n"
+        "would catch it. This invariant is the clearest single demonstration of why the kernel\n"
+        "exists, and the demo's veto beat (`docs/06-demo.md` §6.4) uses it."
+    )
+
+    def build(self, ctx: KernelContext) -> z3.BoolRef:
+        """Build SMT formula asserting rollback target respects migration boundaries.
+
+        SMT shape (docs/03-invariants.md §3.4):
+        plan.action = ROLLBACK_DEPLOY ⟹
+            rollback_target_commit_time ≥ last_migration_commit_time
+          ∧ ¬target_contains_migration
+
+        1. If plan.action is not ROLLBACK_DEPLOY, the implication is vacuously true,
+           returning z3.BoolVal(True) without requiring rollback-specific facts.
+        2. If plan.action is ROLLBACK_DEPLOY:
+           - Retrieves 'last_migration_commit_time' (timestamp as Real)
+           - Retrieves 'rollback_target_commit_time' (timestamp as Real)
+           - Retrieves 'target_contains_migration' (Bool)
+           Any missing fact raises MissingFact immediately (Rule 5.6 zero defaults).
+        3. Returns z3.And(
+               rollback_target_commit_time >= last_migration_commit_time,
+               z3.Not(target_contains_migration),
+           )
+        """
+        if ctx.plan.action != ActionType.ROLLBACK_DEPLOY:
+            return z3.BoolVal(True)
+
+        last_migration = ctx.datetime("last_migration_commit_time")
+
+        target_commit = ctx.plan.params.target_commit
+        if target_commit and ctx.has_fact(f"rollback_target_commit_time[{target_commit}]"):
+            target_commit_time = ctx.datetime(f"rollback_target_commit_time[{target_commit}]")
+        else:
+            target_commit_time = ctx.datetime("rollback_target_commit_time")
+
+        if target_commit and ctx.has_fact(f"target_contains_migration[{target_commit}]"):
+            target_has_migration = ctx.bool(f"target_contains_migration[{target_commit}]")
+        else:
+            target_has_migration = ctx.bool("target_contains_migration")
+
+        return z3.And(
+            target_commit_time >= last_migration,
+            z3.Not(target_has_migration),
+        )
+
+
+__all__ = ["K3MigrationBoundary"]

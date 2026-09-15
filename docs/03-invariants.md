@@ -59,7 +59,7 @@ component are how safety components lie.
 | `declared_blast_set` | plan | set[str] | K4 |
 | `observed_blast_set` | tournament evidence | set[str] | K4 |
 | `in_flight_plan_targets` | store (active runs) | set[ResourceRef] | K5 |
-| `plan_targets` | plan | set[ResourceRef] | K5 |
+| `plan_targets` | plan | set[ResourceRef] | K5, K9 |
 | `twin_egress_policy_present` | K8s API | bool | K6 |
 | `prod_mutations_in_window` | store | int | K7 |
 | `mutation_budget` | config | int | K7 |

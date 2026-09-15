@@ -27,6 +27,24 @@ class KernelError(UnderstudyError):
     """Raised on invariant evaluation or solver failures in safety kernel."""
 
 
+class MissingFact(KernelError):
+    """Raised when a required fact is missing in the safety kernel context."""
+
+    def __init__(self, fact_name: str | list[str], message: str | None = None) -> None:
+        if isinstance(fact_name, list):
+            self.missing_facts = list(fact_name)
+            name_str = ", ".join(fact_name)
+        else:
+            self.missing_facts = [fact_name]
+            name_str = fact_name
+        self.fact_name = self.missing_facts[0] if self.missing_facts else ""
+        msg = message or f"Missing required fact: {name_str}"
+        super().__init__(
+            msg,
+            details={"fact_name": self.fact_name, "missing_facts": self.missing_facts},
+        )
+
+
 class ActuationError(UnderstudyError):
     """Raised on failure to actuate or revert a plan in production or twin."""
 

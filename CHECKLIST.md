@@ -239,27 +239,27 @@ validated, normalised, invertible plans against the real cluster.
 
 ## Phase 4B — Safety kernel (Stream B)
 
-- [ ] B4.1 **[P0]** Invariant Protocol + KernelContext; missing facts raise, never default
-- [ ] B4.2 **[P0]** Fact extraction from K8s, GitHub, store, graph, evidence; all timestamped
-- [ ] B4.3a **[P0]** K1 replica floor (+ positive and negative tests)
-- [ ] B4.3b **[P0]** K2 namespace scope (+ tests)
-- [ ] B4.3c **[P0]** K3 migration boundary (+ tests) ← the demo's veto depends on this
-- [ ] B4.3d **[P0]** K9 reversibility (+ tests)
-- [ ] B4.3e **[P1]** K4 blast containment (+ tests)
-- [ ] B4.3f **[P1]** K5 single writer (+ tests, atomic claim under transaction)
-- [ ] B4.3g **[P1]** K7 mutation budget (+ tests)
-- [ ] B4.3h **[P1]** K8 evidence sufficiency and freshness (+ tests)
-- [ ] B4.4 **[P0]** `verify()`: assert negation per invariant, 5 s timeout, three-valued verdict
-- [ ] B4.5 **[P0]** `ust kernel catalogue --markdown` + the CI test that docs and code agree
-- [ ] B4.6 **[P0]** Veto rendered into actionable prose
+- [x] B4.1 **[P0]** Invariant Protocol + KernelContext; missing facts raise, never default
+- [x] B4.2 **[P0]** Fact extraction from K8s, GitHub, store, graph, evidence; all timestamped
+- [x] B4.3a **[P0]** K1 replica floor (+ positive and negative tests)
+- [x] B4.3b **[P0]** K2 namespace scope (+ tests)
+- [x] B4.3c **[P0]** K3 migration boundary (+ tests) ← the demo's veto depends on this
+- [x] B4.3d **[P0]** K9 reversibility (+ tests)
+- [x] B4.3e **[P1]** K4 blast containment (+ tests)
+- [x] B4.3f **[P1]** K5 single writer (+ tests, atomic claim under transaction)
+- [x] B4.3g **[P1]** K7 mutation budget (+ tests)
+- [x] B4.3h **[P1]** K8 evidence sufficiency and freshness (+ tests)
+- [x] B4.4 **[P0]** `verify()`: assert negation per invariant, 5 s timeout, three-valued verdict
+- [x] B4.5 **[P0]** `ust kernel catalogue --markdown` + the CI test that docs and code agree
+- [x] B4.6 **[P0]** Veto rendered into actionable prose
 
 **Checkpoint B4**
 
-- [ ] Safe rollback plan → `verdict=pass`, solver_ms < 500
-- [ ] Rollback across a migration → `verdict=veto invariant=K3`, reason names both commits
-- [ ] Scale-to-zero plan → `verdict=veto invariant=K1`
-- [ ] Facts missing the migration timestamp → `verdict=uncertain`, missing fact named
-- [ ] Catalogue output diffs clean against `docs/03-invariants.md` §3.4
+- [x] Safe rollback plan → `verdict=pass`, solver_ms < 500
+- [x] Rollback across a migration → `verdict=veto invariant=K3`, reason names both commits
+- [x] Scale-to-zero plan → `verdict=veto invariant=K1`
+- [x] Facts missing the migration timestamp → `verdict=uncertain`, missing fact named
+- [x] Catalogue output diffs clean against `docs/03-invariants.md` §3.4
 
 **Phase 4 gate:** the tournament decides from evidence and refuses to decide when it
 should not; the kernel proves, vetoes, abstains, and explains each.

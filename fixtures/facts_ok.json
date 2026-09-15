@@ -1,0 +1,226 @@
+{
+  "facts": [
+    {
+      "name": "authorized_namespace",
+      "value": "ust-prod",
+      "source": "config",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "mutation_budget",
+      "value": 3,
+      "source": "config",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "min_replicas[data-service]",
+      "value": 1,
+      "source": "config",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "min_replicas[auth-service]",
+      "value": 1,
+      "source": "config",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "min_replicas[edge-gateway]",
+      "value": 1,
+      "source": "config",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "min_replicas[worker]",
+      "value": 1,
+      "source": "config",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "twin_egress_policy_present",
+      "value": true,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "replicas[data-service]",
+      "value": 2,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "healthy_replicas[data-service]",
+      "value": 2,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "replicas[auth-service]",
+      "value": 2,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "healthy_replicas[auth-service]",
+      "value": 2,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "replicas[edge-gateway]",
+      "value": 2,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "healthy_replicas[edge-gateway]",
+      "value": 2,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "replicas[worker]",
+      "value": 1,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "healthy_replicas[worker]",
+      "value": 1,
+      "source": "k8s",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "last_migration_commit",
+      "value": "af9de754",
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "last_migration_commit_time",
+      "value": "2026-09-13T10:00:00Z",
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "rollback_target_commit_time",
+      "value": "2026-09-13T11:00:00Z",
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "target_contains_migration",
+      "value": false,
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "rollback_target_commit_time[c0ffee_across_migration]",
+      "value": "2026-09-13T09:00:00Z",
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "target_contains_migration[c0ffee_across_migration]",
+      "value": false,
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "dependents[data-service]",
+      "value": [
+        "auth-service",
+        "edge-gateway",
+        "worker"
+      ],
+      "source": "graph",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "in_flight_plan_targets",
+      "value": [],
+      "source": "store",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "prod_mutations_in_window",
+      "value": 0,
+      "source": "store",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "observed_blast_set",
+      "value": [
+        "data-service"
+      ],
+      "source": "tournament",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "evidence_age_seconds",
+      "value": 45.0,
+      "source": "tournament",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "max_drop_ratio",
+      "value": 0.01,
+      "source": "tournament",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "probe_sample_count",
+      "value": 80,
+      "source": "tournament",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "plan_target_namespaces",
+      "value": [
+        "ust-prod"
+      ],
+      "source": "plan",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "plan_targets",
+      "value": [
+        {
+          "kind": "Deployment",
+          "name": "data-service",
+          "namespace": "ust-prod"
+        }
+      ],
+      "source": "plan",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "declared_blast_set",
+      "value": [
+        "auth-service",
+        "data-service",
+        "edge-gateway"
+      ],
+      "source": "plan",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "plan_has_inverse",
+      "value": true,
+      "source": "plan",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "inverse_targets",
+      "value": [
+        {
+          "kind": "Deployment",
+          "name": "data-service",
+          "namespace": "ust-prod"
+        }
+      ],
+      "source": "plan",
+      "observed_at": "2026-09-14T12:00:00Z"
+    }
+  ]
+}

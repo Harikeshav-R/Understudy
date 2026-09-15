@@ -1,9 +1,46 @@
-"""Deterministic fake safety kernel implementation."""
+"""Deterministic fake safety kernel and K8s fact source implementations."""
+
+from collections.abc import Mapping
 
 from understudy.contracts.enums import InvariantTier, KernelVerdictType
 from understudy.contracts.kernel import Fact, InvariantResult, KernelVerdict
 from understudy.contracts.plan import RemediationPlan
-from understudy.kernel.api import SafetyKernel
+from understudy.kernel.api import K8sFactSource, SafetyKernel
+
+
+class FakeK8sFactSource(K8sFactSource):
+    """Deterministic in-memory K8s fact source for testing and local runs."""
+
+    def __init__(
+        self,
+        replicas: Mapping[str, int] | None = None,
+        healthy_replicas: Mapping[str, int] | None = None,
+        egress_policy_present: bool = True,
+    ) -> None:
+        self.replicas: dict[str, int] = (
+            dict(replicas)
+            if replicas is not None
+            else {
+                "data-service": 2,
+                "auth-service": 2,
+                "edge-gateway": 2,
+                "worker": 1,
+            }
+        )
+        self.healthy_replicas: dict[str, int] = (
+            dict(healthy_replicas) if healthy_replicas is not None else dict(self.replicas)
+        )
+        self.egress_policy_present = egress_policy_present
+
+    async def get_workload_replicas(self, namespace: str, service: str) -> tuple[int, int] | None:
+        _ = namespace
+        if service not in self.replicas:
+            return None
+        return self.replicas[service], self.healthy_replicas.get(service, self.replicas[service])
+
+    async def check_egress_policy_present(self, namespace: str) -> bool:
+        _ = namespace
+        return self.egress_policy_present
 
 
 class FakeSafetyKernel(SafetyKernel):
@@ -60,3 +97,9 @@ class FakeSafetyKernel(SafetyKernel):
             solver_ms=15.0,
             human_reason=human_reason,
         )
+
+
+__all__ = [
+    "FakeK8sFactSource",
+    "FakeSafetyKernel",
+]

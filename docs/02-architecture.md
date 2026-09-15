@@ -319,7 +319,7 @@ class TournamentResult(BaseModel):
 class Fact(BaseModel):
     name: str
     value: Any
-    source: Literal["k8s", "github", "tournament", "config", "graph"]
+    source: Literal["k8s", "github", "tournament", "config", "graph", "store", "plan"]
     observed_at: datetime
 
 class InvariantResult(BaseModel):

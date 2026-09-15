@@ -193,6 +193,7 @@ mypy_path = "src:."
 module = [
     "kubernetes",
     "kubernetes.*",
+    "z3",
 ]
 ignore_missing_imports = true
 
