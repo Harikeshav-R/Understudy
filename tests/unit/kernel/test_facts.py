@@ -23,13 +23,13 @@ from understudy.contracts.kernel import Fact
 from understudy.contracts.plan import ActionParams, RemediationPlan, ResourceRef
 from understudy.contracts.run import RunRecord
 from understudy.contracts.twin import MirrorStats
-from understudy.fleet.fakes import FakeWorkloadReader
-from understudy.fleet.models import (
+from understudy.fleet.api import (
     ClusterWorkloadSnapshot,
     ContainerSnapshot,
     ResourceSpec,
     WorkloadSnapshot,
 )
+from understudy.fleet.fakes import FakeWorkloadReader
 from understudy.graph.fakes import FakeDependencyGraph
 from understudy.kernel.api import SafetyKernel
 from understudy.kernel.dsl import KernelContext
@@ -394,7 +394,7 @@ def test_extract_plan_facts() -> None:
     fact_map_na = {f.name: f.value for f in facts_no_action}
     assert fact_map_na["plan_has_inverse"] is True
     assert fact_map_na["inverse_targets"] == set()
-    assert fact_map_na["plan_target_namespaces"] == {"ust-prod"}
+    assert fact_map_na["plan_target_namespaces"] == set()
 
 
 @pytest.mark.asyncio
@@ -851,6 +851,12 @@ def test_fact_serialization_roundtrip(tmp_path: Path) -> None:
     bad_item_input: Any = ["not a dict"]
     with pytest.raises(TypeError, match="Expected mapping for fact item"):
         facts_from_dict(cast("list[dict[str, Any]]", bad_item_input))
+
+    missing_observed_at: Any = [
+        {"name": "authorized_namespace", "value": "ust-prod", "source": "config"}
+    ]
+    with pytest.raises(KeyError, match="missing required 'observed_at' timestamp"):
+        facts_from_dict(cast("list[dict[str, Any]]", missing_observed_at))
 
 
 def test_fixture_facts_ok_loading_and_kernel_context() -> None:

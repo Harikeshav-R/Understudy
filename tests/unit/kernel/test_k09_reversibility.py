@@ -26,7 +26,7 @@ Verifies:
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import z3
@@ -40,9 +40,12 @@ from understudy.kernel.facts import load_facts_json
 from understudy.kernel.invariants.k09_reversibility import K9Reversibility
 
 
-def _make_resource(name: str = "data-service", kind: str = "Deployment") -> ResourceRef:
+def _make_resource(
+    name: str = "data-service",
+    kind: Literal["Deployment", "ConfigMap", "Secret"] = "Deployment",
+) -> ResourceRef:
     """Helper to create a ResourceRef in ust-prod."""
-    return ResourceRef(kind=kind, name=name, namespace="ust-prod")  # type: ignore[arg-type]
+    return ResourceRef(kind=kind, name=name, namespace="ust-prod")
 
 
 def _make_plan(

@@ -10,7 +10,7 @@ their absence and raises MissingFact.
 
 import json
 from collections.abc import Mapping, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -88,7 +88,7 @@ def load_slo_config(path: Path | str | None = None) -> dict[str, Any]:
         with slo_path.open(encoding="utf-8") as f:
             data = yaml.safe_load(f)
             return data if isinstance(data, dict) else {}
-    except Exception as exc:
+    except (yaml.YAMLError, OSError) as exc:
         logger.warning("slo_config_load_failed", path=str(slo_path), error=str(exc))
         return {}
 
@@ -264,7 +264,7 @@ class FactExtractor:
 
     def extract_plan_facts(self, plan: RemediationPlan, now: datetime) -> list[Fact]:
         """Extract declared plan diff properties (targets, namespaces, blast set, inverse)."""
-        target_namespaces = {r.namespace for r in plan.target_resources} or {"ust-prod"}
+        target_namespaces = {r.namespace for r in plan.target_resources if r.namespace}
         plan_targets = set(plan.target_resources)
         declared_blast = set(plan.declared_blast_set)
         has_inverse = plan.inverse is not None or plan.action == ActionType.NO_ACTION
@@ -384,7 +384,7 @@ class FactExtractor:
 
         if self._dependency_graph is not None:
             for svc in sorted(services_to_query):
-                deps = self._dependency_graph.dependents(svc)
+                deps = self._dependency_graph.reachable_set(svc)
                 dependents_map[svc] = deps
                 facts.append(
                     Fact(
@@ -395,8 +395,19 @@ class FactExtractor:
                     )
                 )
         elif graph_snapshot is not None and hasattr(graph_snapshot, "edges"):
+            adjacency: dict[str, set[str]] = {}
+            for e in graph_snapshot.edges:
+                adjacency.setdefault(e.target, set()).add(e.source)
+
             for svc in sorted(services_to_query):
-                deps = {e.source for e in graph_snapshot.edges if e.target == svc}
+                visited: set[str] = set()
+                queue = list(adjacency.get(svc, set()))
+                while queue:
+                    curr = queue.pop(0)
+                    if curr not in visited:
+                        visited.add(curr)
+                        queue.extend(adjacency.get(curr, set()))
+                deps = visited
                 dependents_map[svc] = deps
                 facts.append(
                     Fact(
@@ -644,7 +655,9 @@ def facts_from_dict(data: Sequence[dict[str, Any]] | dict[str, Any]) -> list[Fac
         value = _deserialize_fact_value(name, raw_val)
         source = item["source"]
         observed_str = item.get("observed_at")
-        observed_at = datetime.fromisoformat(observed_str) if observed_str else datetime.now(UTC)
+        if not observed_str:
+            raise KeyError(f"Fact '{name}' missing required 'observed_at' timestamp")
+        observed_at = datetime.fromisoformat(observed_str)
         facts.append(
             Fact(
                 name=name,

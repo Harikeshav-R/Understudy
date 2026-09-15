@@ -41,9 +41,11 @@ class K10ActuationAuthorisation(Invariant):
     smt_shape: str | None = None
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:
-        """K10 is a runtime invariant asserted during actuation execution."""
+        """K10 is a runtime invariant asserted during actuation execution, not proved in SMT."""
         _ = ctx
-        return z3.BoolVal(True)
+        raise NotImplementedError(
+            "Runtime invariants are evaluated at actuation/execution time, not proved in SMT."
+        )
 
 
 __all__ = ["K10ActuationAuthorisation"]

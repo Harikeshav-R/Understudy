@@ -1,20 +1,18 @@
 """Unit tests for Safety Kernel catalogue generation and runtime invariants."""
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 import z3
 
-from understudy.common.errors import MissingFact
 from understudy.contracts.enums import ActionType, InvariantTier
-from understudy.contracts.kernel import Fact
 from understudy.contracts.plan import ActionParams, RemediationPlan, ResourceRef
 from understudy.kernel.catalogue import (
     CATALOGUE_INVARIANTS,
     generate_catalogue_markdown,
     get_catalogue_invariants,
+    get_invariant_counts,
     render_entry_markdown,
     update_docs_catalogue,
     verify_catalogue_matches_docs,
@@ -74,27 +72,16 @@ def test_k06_runtime_invariant_conformance_and_build() -> None:
     assert inv.tier == InvariantTier.RUNTIME
     assert inv.required_facts == ("twin_egress_policy_present",)
 
-    # 1. With fact present
+    # Runtime invariants are not proved in SMT; build() raises NotImplementedError
     plan = _dummy_plan()
-    fact_present = Fact(
-        name="twin_egress_policy_present",
-        value=True,
-        source="k8s",
-        observed_at=datetime(2026, 9, 14, 12, 0, 0, tzinfo=UTC),
-    )
-    ctx_ok = KernelContext(plan, [fact_present])
-    formula = inv.build(ctx_ok)
-    assert isinstance(formula, z3.BoolRef)
-
-    # 2. With fact missing -> raises MissingFact (Rule 5.6)
-    ctx_missing = KernelContext(plan, [])
-    with pytest.raises(MissingFact) as exc_info:
-        inv.build(ctx_missing)
-    assert "twin_egress_policy_present" in exc_info.value.missing_facts
+    ctx = KernelContext(plan, [])
+    with pytest.raises(NotImplementedError) as exc_info:
+        inv.build(ctx)
+    assert "Runtime invariants are evaluated at actuation/execution time" in str(exc_info.value)
 
 
 def test_k10_runtime_invariant_conformance_and_build() -> None:
-    """Verify K10ActuationAuthorisation conforms to Invariant protocol and builds formula."""
+    """Verify K10ActuationAuthorisation conforms to Invariant protocol and raises on build."""
     inv = K10ActuationAuthorisation()
     assert isinstance(inv, Invariant)
     assert inv.id == "K10"
@@ -103,8 +90,9 @@ def test_k10_runtime_invariant_conformance_and_build() -> None:
 
     plan = _dummy_plan()
     ctx = KernelContext(plan, [])
-    formula = inv.build(ctx)
-    assert z3.is_true(formula)
+    with pytest.raises(NotImplementedError) as exc_info:
+        inv.build(ctx)
+    assert "Runtime invariants are evaluated at actuation/execution time" in str(exc_info.value)
 
 
 def test_render_entry_markdown_fallbacks_and_custom_variants() -> None:
@@ -181,3 +169,39 @@ def test_verify_catalogue_matches_docs_diff_output(tmp_path: Path) -> None:
     assert matches is False
     assert "-### K1 — Divergent Floor" in diff
     assert "+### K1 — Replica floor" in diff
+
+
+def test_verify_catalogue_matches_docs_true() -> None:
+    """Verify verify_catalogue_matches_docs returns True on matching docs/03-invariants.md."""
+    doc_path = Path("docs/03-invariants.md")
+    matches, diff = verify_catalogue_matches_docs(doc_path)
+    assert matches is True
+    assert diff == ""
+
+
+def test_update_docs_catalogue_write_and_noop(tmp_path: Path) -> None:
+    """Verify update_docs_catalogue modifies file when divergent,
+    and no-ops when already matched.
+    """
+    doc_path = Path("docs/03-invariants.md")
+    content = doc_path.read_text(encoding="utf-8")
+    altered = content.replace("Replica floor", "Divergent Floor")
+    test_file = tmp_path / "03-invariants.md"
+    test_file.write_text(altered, encoding="utf-8")
+
+    # 1. First call writes updated text and returns True
+    updated = update_docs_catalogue(test_file)
+    assert updated is True
+    assert "### K1 — Replica floor" in test_file.read_text(encoding="utf-8")
+
+    # 2. Second call finds matching content and returns False without writing
+    noop = update_docs_catalogue(test_file)
+    assert noop is False
+
+
+def test_get_invariant_counts() -> None:
+    """Verify get_invariant_counts returns correct counts by tier."""
+    counts = get_invariant_counts()
+    assert counts["PROOF"] == 8
+    assert counts["RUNTIME"] == 2
+    assert counts["TOTAL"] == 10

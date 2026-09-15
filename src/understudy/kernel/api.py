@@ -4,6 +4,21 @@ from typing import Protocol, runtime_checkable
 
 from understudy.contracts.kernel import Fact, KernelVerdict
 from understudy.contracts.plan import RemediationPlan
+from understudy.kernel.catalogue import (
+    CATALOGUE_INVARIANTS,
+    generate_catalogue_markdown,
+    get_catalogue_invariants,
+    get_invariant_counts,
+    render_entry_markdown,
+    update_docs_catalogue,
+    verify_catalogue_matches_docs,
+)
+from understudy.kernel.explain import (
+    VetoExplanation,
+    explain_veto,
+    format_actionable_prose,
+    render_veto_reason,
+)
 from understudy.kernel.facts import (
     FactExtractor,
     K8sFactSource,
@@ -11,6 +26,11 @@ from understudy.kernel.facts import (
     extract_facts,
     load_facts_json,
     save_facts_json,
+)
+from understudy.kernel.verify import (
+    PROOF_INVARIANTS,
+    Z3SafetyKernel,
+    verify,
 )
 
 
@@ -22,28 +42,6 @@ class SafetyKernel(Protocol):
         """Evaluate safety invariants for a proposed plan against current system facts."""
         raise NotImplementedError
 
-
-# Re-exports for consumers adhering to sibling import boundaries (AGENTS.md §5.2)
-from understudy.kernel.catalogue import (  # noqa: E402
-    CATALOGUE_INVARIANTS,
-    generate_catalogue_markdown,
-    get_catalogue_invariants,
-    get_invariant_counts,
-    render_entry_markdown,
-    update_docs_catalogue,
-    verify_catalogue_matches_docs,
-)
-from understudy.kernel.explain import (  # noqa: E402
-    VetoExplanation,
-    explain_veto,
-    format_actionable_prose,
-    render_veto_reason,
-)
-from understudy.kernel.verify import (  # noqa: E402
-    PROOF_INVARIANTS,
-    Z3SafetyKernel,
-    verify,
-)
 
 __all__ = [
     "CATALOGUE_INVARIANTS",

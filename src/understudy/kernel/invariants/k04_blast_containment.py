@@ -105,10 +105,32 @@ class K4BlastContainment(Invariant):
                     target_services.add(str(t["name"]).strip())
 
         reachable_set: set[str] = set()
+        visited: set[str] = set()
+        queue: list[str] = []
+
+        # Target services must have required facts; MissingFact raised if absent
         for svc in sorted(target_services):
-            deps = ctx.get_set(f"dependents[{svc}]")
             reachable_set.add(svc)
-            reachable_set.update(str(d).strip() for d in deps)
+            deps = ctx.get_set(f"dependents[{svc}]")
+            for d in deps:
+                dep_str = str(d).strip()
+                reachable_set.add(dep_str)
+                queue.append(dep_str)
+
+        # Transitive closure across any additional reachable dependency facts present
+        while queue:
+            curr = queue.pop(0)
+            if curr in visited:
+                continue
+            visited.add(curr)
+            reachable_set.add(curr)
+            fact_key = f"dependents[{curr}]"
+            if ctx.has_fact(fact_key):
+                for dep in ctx.get_set(fact_key):
+                    dep_str = str(dep).strip()
+                    reachable_set.add(dep_str)
+                    if dep_str not in visited:
+                        queue.append(dep_str)
 
         conditions: list[z3.BoolRef] = []
 

@@ -28,7 +28,7 @@ Verifies:
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import z3
@@ -42,9 +42,12 @@ from understudy.kernel.facts import load_facts_json
 from understudy.kernel.invariants.k04_blast_containment import K4BlastContainment
 
 
-def _make_resource(name: str = "data-service", kind: str = "Deployment") -> ResourceRef:
+def _make_resource(
+    name: str = "data-service",
+    kind: Literal["Deployment", "ConfigMap", "Secret"] = "Deployment",
+) -> ResourceRef:
     """Helper to create a ResourceRef in ust-prod."""
-    return ResourceRef(kind=kind, name=name, namespace="ust-prod")  # type: ignore[arg-type]
+    return ResourceRef(kind=kind, name=name, namespace="ust-prod")
 
 
 def _make_plan(
@@ -647,3 +650,98 @@ def test_k4_empty_facts_raises_missing_fact() -> None:
 
     with pytest.raises(MissingFact):
         k4.build(ctx)
+
+
+def test_k4_multi_hop_transitive_closure() -> None:
+    """Assert K4 reachable_set computes full transitive closure across chained dependents facts."""
+    now = datetime(2026, 9, 14, 12, 0, 0, tzinfo=UTC)
+    plan = _make_plan(
+        workload="data-service",
+        declared_blast_set=["data-service", "auth-service", "edge-gateway"],
+    )
+    # data-service -> auth-service -> edge-gateway (multi-hop chain)
+    facts = [
+        Fact(
+            name="declared_blast_set",
+            value=["data-service", "auth-service", "edge-gateway"],
+            source="plan",
+            observed_at=now,
+        ),
+        Fact(
+            name="observed_blast_set",
+            value=["data-service", "edge-gateway"],
+            source="tournament",
+            observed_at=now,
+        ),
+        Fact(
+            name="dependents[data-service]", value=["auth-service"], source="graph", observed_at=now
+        ),
+        Fact(
+            name="dependents[auth-service]", value=["edge-gateway"], source="graph", observed_at=now
+        ),
+        Fact(name="dependents[edge-gateway]", value=[], source="graph", observed_at=now),
+    ]
+    ctx = KernelContext(plan, facts)
+    k4 = K4BlastContainment()
+    formula = k4.build(ctx)
+
+    solver = z3.Solver()
+    solver.add(z3.Not(formula))
+    assert solver.check() == z3.unsat
+
+
+def test_k4_transitive_closure_diamond_and_cycle() -> None:
+    """Assert K4 handles diamond dependencies and cycles without infinite loops
+    or duplicate visits.
+    """
+    now = datetime(2026, 9, 14, 12, 0, 0, tzinfo=UTC)
+    plan = _make_plan(
+        workload="data-service",
+        declared_blast_set=["data-service", "auth-service", "worker", "edge-gateway"],
+    )
+    # Diamond: data-service -> auth-service & worker; both -> edge-gateway -> data-service (cycle)
+    facts = [
+        Fact(
+            name="declared_blast_set",
+            value=["data-service", "auth-service", "worker", "edge-gateway"],
+            source="plan",
+            observed_at=now,
+        ),
+        Fact(
+            name="observed_blast_set",
+            value=["data-service", "edge-gateway"],
+            source="tournament",
+            observed_at=now,
+        ),
+        Fact(
+            name="dependents[data-service]",
+            value=["auth-service", "worker"],
+            source="graph",
+            observed_at=now,
+        ),
+        Fact(
+            name="dependents[auth-service]",
+            value=["edge-gateway"],
+            source="graph",
+            observed_at=now,
+        ),
+        Fact(
+            name="dependents[worker]",
+            value=["edge-gateway"],
+            source="graph",
+            observed_at=now,
+        ),
+        Fact(
+            name="dependents[edge-gateway]",
+            value=["data-service"],
+            source="graph",
+            observed_at=now,
+        ),
+    ]
+    ctx = KernelContext(plan, facts)
+    k4 = K4BlastContainment()
+    formula = k4.build(ctx)
+
+    solver = z3.Solver()
+    solver.add(z3.Not(formula))
+    assert solver.check() == z3.unsat

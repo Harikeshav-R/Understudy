@@ -94,9 +94,14 @@ class K1ReplicaFloor(Invariant):
                 plan.params.workload == svc
                 or any(t.kind == "Deployment" and t.name == svc for t in plan.target_resources)
             ):
-                # Kubernetes rolling restart transient: maxUnavailable = 1
+                # Kubernetes rolling restart transient: maxUnavailable
+                max_unavail = (
+                    ctx.get_int(f"max_unavailable[{svc}]")
+                    if ctx.has_fact(f"max_unavailable[{svc}]")
+                    else 1
+                )
                 delta_replicas = 0
-                delta_healthy = -1
+                delta_healthy = -max_unavail
 
             post_replicas = reps + z3.IntVal(delta_replicas)
             post_healthy = healthy_reps + z3.IntVal(delta_healthy)

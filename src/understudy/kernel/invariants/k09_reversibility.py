@@ -77,11 +77,13 @@ class K9Reversibility(Invariant):
         raw_inv_targets = ctx.get_set("inverse_targets")
 
         plan_targets: set[str] = {_canonical_target(t) for t in raw_plan_targets}
+        # Defense-in-depth: include any targets declared on ctx.plan.target_resources
         for resource in ctx.plan.target_resources:
             plan_targets.add(_canonical_target(resource))
 
         inv_targets: set[str] = {_canonical_target(t) for t in raw_inv_targets}
-        if ctx.plan.inverse is not None:
+        # Defense-in-depth: include any targets declared on ctx.plan.inverse.target_resources
+        if ctx.plan.inverse:
             for resource in ctx.plan.inverse.target_resources:
                 inv_targets.add(_canonical_target(resource))
 

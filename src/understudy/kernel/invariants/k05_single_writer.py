@@ -93,6 +93,7 @@ class K5SingleWriter(Invariant):
         )
 
         plan_targets: set[str] = {_canonical_target(t) for t in plan_list}
+        # Defense-in-depth: include any targets declared on ctx.plan.target_resources
         for resource in ctx.plan.target_resources:
             plan_targets.add(_canonical_target(resource))
 

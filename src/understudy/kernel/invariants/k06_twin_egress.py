@@ -39,12 +39,11 @@ class K6TwinEgressContainment(Invariant):
     smt_shape: str | None = None
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:
-        """Build assertion checking twin egress policy fact presence.
-
-        Returns a Z3 boolean constraint asserting twin_egress_policy_present is True.
-        Missing fact raises MissingFact immediately (Rule 5.6 zero-default discipline).
-        """
-        return ctx.bool("twin_egress_policy_present")
+        """K6 is a runtime invariant evaluated at fork/execution time, not proved in SMT."""
+        _ = ctx
+        raise NotImplementedError(
+            "Runtime invariants are evaluated at actuation/execution time, not proved in SMT."
+        )
 
 
 __all__ = ["K6TwinEgressContainment"]

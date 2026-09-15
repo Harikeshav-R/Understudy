@@ -1690,6 +1690,42 @@ kernel_app = typer.Typer(
 app.add_typer(kernel_app, name="kernel")
 
 
+def _load_kernel_plan_and_facts(
+    plan_file: Path,
+    facts_file: Path,
+) -> tuple[Any, list[Any]]:
+    """Validate and load plan and facts JSON files with typed exception handling."""
+    import json
+
+    from pydantic import ValidationError
+
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.kernel.api import load_facts_json
+
+    if not plan_file.is_file():
+        typer.echo(f"Error: plan file not found: {plan_file}", err=True)
+        raise typer.Exit(code=1)
+
+    if not facts_file.is_file():
+        typer.echo(f"Error: facts file not found: {facts_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        plan_content = plan_file.read_text(encoding="utf-8")
+        plan = RemediationPlan.model_validate_json(plan_content)
+    except (ValidationError, OSError) as exc:
+        typer.echo(f"Error reading plan from {plan_file}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        facts = load_facts_json(facts_file)
+    except (json.JSONDecodeError, OSError, ValidationError, KeyError, TypeError) as exc:
+        typer.echo(f"Error reading facts from {facts_file}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    return plan, facts
+
+
 @kernel_app.command("verify")
 def kernel_verify(
     plan_file: Annotated[
@@ -1735,34 +1771,11 @@ def kernel_verify(
     """Evaluate formal PROOF safety invariants for a proposed plan against current system facts."""
     import json
 
-    from pydantic import ValidationError
-
     from understudy.contracts.enums import KernelVerdictType
-    from understudy.contracts.plan import RemediationPlan
-    from understudy.kernel.api import PROOF_INVARIANTS, explain_veto, load_facts_json, verify
+    from understudy.kernel.api import PROOF_INVARIANTS, explain_veto, verify
     from understudy.kernel.dsl import KernelContext
 
-    if not plan_file.is_file():
-        typer.echo(f"Error: plan file not found: {plan_file}", err=True)
-        raise typer.Exit(code=1)
-
-    if not facts_file.is_file():
-        typer.echo(f"Error: facts file not found: {facts_file}", err=True)
-        raise typer.Exit(code=1)
-
-    try:
-        plan_content = plan_file.read_text(encoding="utf-8")
-        plan = RemediationPlan.model_validate_json(plan_content)
-    except (ValidationError, OSError) as exc:
-        typer.echo(f"Error reading plan from {plan_file}: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    try:
-        facts = load_facts_json(facts_file)
-    except Exception as exc:
-        typer.echo(f"Error reading facts from {facts_file}: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
+    plan, facts = _load_kernel_plan_and_facts(plan_file, facts_file)
     verdict = verify(plan, facts, timeout_seconds=timeout)
 
     if json_output:
@@ -1827,34 +1840,11 @@ def kernel_explain(
     ] = False,
 ) -> None:
     """Render a formal safety kernel veto into actionable prose for incident responders."""
-    from pydantic import ValidationError
-
     from understudy.contracts.enums import KernelVerdictType
-    from understudy.contracts.plan import RemediationPlan
-    from understudy.kernel.api import PROOF_INVARIANTS, explain_veto, load_facts_json, verify
+    from understudy.kernel.api import PROOF_INVARIANTS, explain_veto, verify
     from understudy.kernel.dsl import KernelContext
 
-    if not plan_file.is_file():
-        typer.echo(f"Error: plan file not found: {plan_file}", err=True)
-        raise typer.Exit(code=1)
-
-    if not facts_file.is_file():
-        typer.echo(f"Error: facts file not found: {facts_file}", err=True)
-        raise typer.Exit(code=1)
-
-    try:
-        plan_content = plan_file.read_text(encoding="utf-8")
-        plan = RemediationPlan.model_validate_json(plan_content)
-    except (ValidationError, OSError) as exc:
-        typer.echo(f"Error reading plan from {plan_file}: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
-    try:
-        facts = load_facts_json(facts_file)
-    except Exception as exc:
-        typer.echo(f"Error reading facts from {facts_file}: {exc}", err=True)
-        raise typer.Exit(code=1) from exc
-
+    plan, facts = _load_kernel_plan_and_facts(plan_file, facts_file)
     verdict = verify(plan, facts, timeout_seconds=timeout)
 
     if verdict.verdict == KernelVerdictType.PASS:

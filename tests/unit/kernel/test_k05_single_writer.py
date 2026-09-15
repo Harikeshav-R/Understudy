@@ -34,11 +34,9 @@ Verifies:
   - Release of targets upon run completion enabling subsequent plans to pass K5.
 """
 
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from typing import Any, Literal
 
 import pytest
 import z3
@@ -58,7 +56,6 @@ from understudy.kernel.dsl import Invariant, KernelContext
 from understudy.kernel.facts import FactExtractor, load_facts_json
 from understudy.kernel.invariants.k05_single_writer import K5SingleWriter, _canonical_target
 from understudy.store.fakes import FakeRunStore
-from understudy.store.postgres import _RUN_CLAIM_ADVISORY_LOCK_KEY, PostgresRunStore
 
 
 def _make_context(incident_id: str = "inc_001") -> IncidentContext:
@@ -86,11 +83,11 @@ def _make_context(incident_id: str = "inc_001") -> IncidentContext:
 
 def _make_resource(
     name: str = "data-service",
-    kind: str = "Deployment",
+    kind: Literal["Deployment", "ConfigMap", "Secret"] = "Deployment",
     namespace: str = "ust-prod",
 ) -> ResourceRef:
     """Helper to create a ResourceRef."""
-    return ResourceRef(kind=kind, name=name, namespace=namespace)  # type: ignore[arg-type]
+    return ResourceRef(kind=kind, name=name, namespace=namespace)
 
 
 def _make_plan(
@@ -757,48 +754,3 @@ async def test_k5_atomic_claim_under_transaction_flow() -> None:
     solver3 = z3.Solver()
     solver3.add(z3.Not(k5.build(ctx3)))
     assert solver3.check() == z3.unsat
-
-
-@pytest.mark.asyncio
-async def test_postgres_run_store_advisory_xact_lock_key() -> None:
-    """Assert PostgresRunStore.claim_run uses pg_advisory_xact_lock with K5 key."""
-
-    class _MockDatabase:
-        def __init__(self) -> None:
-            self.session_mock = AsyncMock()
-            self.session_mock.add = MagicMock()
-            self.session_mock.commit = AsyncMock()
-            self.session_mock.execute = AsyncMock()
-
-        @asynccontextmanager
-        async def session(self) -> Any:
-            yield self.session_mock
-
-    mock_db = _MockDatabase()
-    mock_result = MagicMock()
-    mock_result.scalar_one_or_none.return_value = None
-    mock_db.session_mock.execute.return_value = mock_result
-
-    store = PostgresRunStore(db=mock_db)  # type: ignore[arg-type]
-    now = datetime(2026, 9, 14, 12, 0, 0, tzinfo=UTC)
-    record = RunRecord(
-        run_id="run_lock_test",
-        incident_id="inc_lock_test",
-        scenario_id="scen_lock_test",
-        started_at=now,
-        finished_at=None,
-        outcome=RunOutcome.EXECUTED,
-        context=_make_context("inc_lock_test"),
-    )
-
-    await store.claim_run(record)
-
-    # Assert pg_advisory_xact_lock was called with _RUN_CLAIM_ADVISORY_LOCK_KEY (72176)
-    calls = mock_db.session_mock.execute.call_args_list
-    assert len(calls) >= 2
-    lock_call = calls[0]
-    sql_text = str(lock_call[0][0])
-    params = lock_call[0][1]
-    assert "pg_advisory_xact_lock" in sql_text
-    assert params["key"] == _RUN_CLAIM_ADVISORY_LOCK_KEY
-    assert _RUN_CLAIM_ADVISORY_LOCK_KEY == 72176

@@ -898,3 +898,35 @@ def test_verify_uncertain_duplicate_missing_fact_across_invariants() -> None:
     verdict = verify(_make_plan(), facts)
     assert verdict.verdict == KernelVerdictType.UNCERTAIN
     assert "plan_targets" in verdict.missing_facts
+
+
+def test_verify_uncertain_precedence_over_veto_with_missing_facts() -> None:
+    """Missing fact ensures UNCERTAIN verdict even if a subsequent invariant finds sat."""
+    # Plan targeting unauthorized namespace (violates K2),
+    # but omit K1 required fact 'healthy_replicas'
+    plan = _make_plan(
+        workload="data-service",
+        target_resources=[
+            ResourceRef(kind="Deployment", name="data-service", namespace="rogue-namespace")
+        ],
+    )
+    facts = [
+        f
+        for f in load_facts_json(Path("fixtures/facts_ok.json"))
+        if not f.name.startswith("healthy_replicas") and f.name != "plan_target_namespaces"
+    ]
+    facts.append(
+        Fact(
+            name="plan_target_namespaces",
+            value=["rogue-namespace"],
+            source="store",
+            observed_at=datetime(2026, 9, 14, 12, 0, 0, tzinfo=UTC),
+        )
+    )
+    verdict = verify(plan, facts)
+    assert verdict.verdict == KernelVerdictType.UNCERTAIN
+    assert any("healthy_replicas" in m for m in verdict.missing_facts)
+    assert "UNCERTAIN: Missing required fact(s)" in verdict.human_reason
+    k2_res = next((r for r in verdict.results if r.invariant_id == "K2"), None)
+    assert k2_res is not None
+    assert k2_res.satisfied is False

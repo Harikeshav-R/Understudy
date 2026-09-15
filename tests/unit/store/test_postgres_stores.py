@@ -259,6 +259,30 @@ async def test_postgres_run_store_claim_run_success(sample_run_record: RunRecord
 
 
 @pytest.mark.asyncio
+async def test_postgres_run_store_advisory_xact_lock_key(sample_run_record: RunRecord) -> None:
+    """Assert PostgresRunStore.claim_run uses pg_advisory_xact_lock with K5 key."""
+    from understudy.store.postgres import _RUN_CLAIM_ADVISORY_LOCK_KEY
+
+    db = MockDatabase()
+    store = PostgresRunStore(db=db)  # type: ignore[arg-type] # mock database protocol in unit test
+
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = None
+    db.session_mock.execute.return_value = mock_result
+
+    await store.claim_run(sample_run_record)
+
+    calls = db.session_mock.execute.call_args_list
+    assert len(calls) >= 2
+    lock_call = calls[0]
+    sql_text = str(lock_call[0][0])
+    params = lock_call[0][1]
+    assert "pg_advisory_xact_lock" in sql_text
+    assert params["key"] == _RUN_CLAIM_ADVISORY_LOCK_KEY
+    assert _RUN_CLAIM_ADVISORY_LOCK_KEY == 72176
+
+
+@pytest.mark.asyncio
 async def test_postgres_run_store_claim_run_conflict(sample_run_record: RunRecord) -> None:
     db = MockDatabase()
     store = PostgresRunStore(db=db)  # type: ignore[arg-type]

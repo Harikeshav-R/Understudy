@@ -65,7 +65,6 @@ def verify(
     *,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     invariants: Sequence[Invariant] | None = None,
-    clock: Clock | None = None,
     incident_id: str | None = None,
 ) -> KernelVerdict:
     """Evaluate formal PROOF safety invariants for a proposed plan against system facts.
@@ -81,13 +80,11 @@ def verify(
         facts: List of observed immutable system facts.
         timeout_seconds: Maximum time allowed for verification (default 5.0 s).
         invariants: Optional sequence of Invariants to check (defaults to PROOF_INVARIANTS).
-        clock: Optional Clock instance for incident timestamps.
         incident_id: Optional incident ID override.
 
     Returns:
         KernelVerdict containing PASS, VETO, or UNCERTAIN, plus per-invariant results and solver_ms.
     """
-    _ = clock
     start_time = time.perf_counter()
     inc_id = incident_id or "inc_kernel_verify"
     timeout_ms = int(timeout_seconds * 1000)
@@ -108,12 +105,13 @@ def verify(
         remaining_ms = int(timeout_ms - (elapsed_sec * 1000))
         if remaining_ms <= 0:
             solver_ms = (time.perf_counter() - start_time) * 1000.0
+            all_missing = sorted(dict.fromkeys(missing_facts + ctx.missing_facts))
             return KernelVerdict(
                 incident_id=inc_id,
                 plan_id=plan.plan_id,
                 verdict=KernelVerdictType.UNCERTAIN,
                 results=results,
-                missing_facts=missing_facts,
+                missing_facts=all_missing,
                 solver_ms=solver_ms,
                 human_reason="UNCERTAIN: Safety kernel solver timed out (5s ceiling exceeded).",
             )
@@ -159,7 +157,7 @@ def verify(
             )
             solver.pop()
         elif check_res == z3.sat:
-            # Negation is satisfiable -> counterexample exists -> VETO!
+            # Negation is satisfiable -> counterexample exists -> VETO candidate
             model = solver.model()
             veto_reason, unsat_core = render_veto_reason(inv, plan, ctx, model)
             results.append(
@@ -173,16 +171,18 @@ def verify(
             )
             solver.pop()
 
-            solver_ms = (time.perf_counter() - start_time) * 1000.0
-            return KernelVerdict(
-                incident_id=inc_id,
-                plan_id=plan.plan_id,
-                verdict=KernelVerdictType.VETO,
-                results=results,
-                missing_facts=[],
-                solver_ms=solver_ms,
-                human_reason=veto_reason,
-            )
+            all_missing = sorted(dict.fromkeys(missing_facts + ctx.missing_facts))
+            if not all_missing:
+                veto_ms = (time.perf_counter() - start_time) * 1000.0
+                return KernelVerdict(
+                    incident_id=inc_id,
+                    plan_id=plan.plan_id,
+                    verdict=KernelVerdictType.VETO,
+                    results=results,
+                    missing_facts=[],
+                    solver_ms=veto_ms,
+                    human_reason=veto_reason,
+                )
         else:
             # unknown (timeout or undecidable)
             unknown_reason = solver.reason_unknown()
@@ -195,17 +195,21 @@ def verify(
                     reason=f"Solver returned unknown: {unknown_reason}",
                 )
             )
-            solver.pop()
-
             solver_ms = (time.perf_counter() - start_time) * 1000.0
+            all_missing = sorted(dict.fromkeys(missing_facts + ctx.missing_facts))
+            reason = (
+                f"UNCERTAIN: Missing required fact(s) for verification: {', '.join(all_missing)}"
+                if all_missing
+                else f"UNCERTAIN: Safety kernel solver returned unknown: {unknown_reason}"
+            )
             return KernelVerdict(
                 incident_id=inc_id,
                 plan_id=plan.plan_id,
                 verdict=KernelVerdictType.UNCERTAIN,
                 results=results,
-                missing_facts=[],
+                missing_facts=all_missing,
                 solver_ms=solver_ms,
-                human_reason=f"UNCERTAIN: Safety kernel solver returned unknown: {unknown_reason}",
+                human_reason=reason,
             )
 
     solver_ms = (time.perf_counter() - start_time) * 1000.0
@@ -256,7 +260,6 @@ class Z3SafetyKernel:
             facts=facts,
             timeout_seconds=self.timeout_seconds,
             invariants=self._invariants,
-            clock=self.clock,
         )
 
 
