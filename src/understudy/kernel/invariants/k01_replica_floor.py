@@ -17,15 +17,33 @@ class K1ReplicaFloor(Invariant):
     """Safety invariant proving that candidate plans maintain replica minimums."""
 
     id: str = "K1"
+    name: str = "Replica floor"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
     statement: str = (
-        "No plan may leave any service with fewer healthy replicas than its "
+        "No plan may leave any service with fewer healthy replicas than its\n"
         "configured minimum, accounting for the plan's own effect."
     )
     required_facts: Sequence[str] = (
         "replicas[svc]",
         "min_replicas[svc]",
         "healthy_replicas[svc]",
+    )
+    smt_shape: str | None = (
+        "```\n"
+        "∀ svc ∈ services:\n"
+        "    post_replicas[svc] = replicas[svc] + delta(plan, svc)\n"
+        "    assert post_replicas[svc] ≥ min_replicas[svc]\n"
+        "```\n"
+        "where `delta` is non-zero only for `SCALE_WORKLOAD` on the target, and for\n"
+        "`RESTART_WORKLOAD` is modelled as a transient reduction of `maxUnavailable` from the\n"
+        "Deployment's rolling-update strategy — that transient is what makes restart unsafe "
+        "during a\n"
+        "partial outage, and modelling it is the point."
+    )
+    why_it_exists: str | None = (
+        'The obvious "scale down to stop the error storm" candidate is exactly\n'
+        "the kind of empirically-attractive, operationally-fatal fix a tournament will rank highly."
     )
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:

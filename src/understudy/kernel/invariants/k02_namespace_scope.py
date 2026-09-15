@@ -18,15 +18,23 @@ class K2NamespaceScope(Invariant):
     """Safety invariant proving that candidate plans only mutate authorized namespaces."""
 
     id: str = "K2"
+    name: str = "Namespace scope"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
     statement: str = (
-        "Every resource a plan mutates lies in the single authorized namespace for its "
-        "execution context. A plan destined for production touches only `ust-prod`; "
-        "a plan destined for a twin touches only that twin's namespace."
+        "Every resource a plan mutates lies in the single authorized namespace for\n"
+        "its execution context. A plan destined for production touches only `ust-prod`; a plan\n"
+        "destined for a twin touches only that twin's namespace."
     )
     required_facts: Sequence[str] = (
         "plan_target_namespaces",
         "authorized_namespace",
+    )
+    smt_shape: str | None = "`∀ r ∈ plan_targets: namespace(r) = authorized_namespace`"
+    why_it_exists: str | None = (
+        "This is the machine-checked half of ADR-002. The RBAC boundary would\n"
+        "also stop it, but a plan that *tries* should be vetoed before it is attempted, and the\n"
+        "attempt itself is diagnostic."
     )
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:

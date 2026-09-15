@@ -24,6 +24,15 @@ class SafetyKernel(Protocol):
 
 
 # Re-exports for consumers adhering to sibling import boundaries (AGENTS.md §5.2)
+from understudy.kernel.catalogue import (  # noqa: E402
+    CATALOGUE_INVARIANTS,
+    generate_catalogue_markdown,
+    get_catalogue_invariants,
+    get_invariant_counts,
+    render_entry_markdown,
+    update_docs_catalogue,
+    verify_catalogue_matches_docs,
+)
 from understudy.kernel.verify import (  # noqa: E402
     PROOF_INVARIANTS,
     Z3SafetyKernel,
@@ -32,6 +41,7 @@ from understudy.kernel.verify import (  # noqa: E402
 )
 
 __all__ = [
+    "CATALOGUE_INVARIANTS",
     "PROOF_INVARIANTS",
     "FactExtractor",
     "K8sFactSource",
@@ -39,8 +49,14 @@ __all__ = [
     "WorkloadReaderFactAdapter",
     "Z3SafetyKernel",
     "extract_facts",
+    "generate_catalogue_markdown",
+    "get_catalogue_invariants",
+    "get_invariant_counts",
     "load_facts_json",
+    "render_entry_markdown",
     "render_veto_reason",
     "save_facts_json",
+    "update_docs_catalogue",
     "verify",
+    "verify_catalogue_matches_docs",
 ]

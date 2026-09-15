@@ -36,14 +36,25 @@ class K5SingleWriter(Invariant):
     """
 
     id: str = "K5"
+    name: str = "Single writer"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
     statement: str = (
-        "No two plans may hold overlapping target resources concurrently, across "
+        "No two plans may hold overlapping target resources concurrently, across\n"
         "incident handling and shadow mode."
     )
     required_facts: Sequence[str] = (
         "plan_targets",
         "in_flight_plan_targets",
+    )
+    smt_shape: str | None = "`plan_targets ∩ in_flight_plan_targets = ∅`"
+    why_it_exists: str | None = (
+        "Shadow mode runs continuously (ADR-020). Without this, a speculative\n"
+        "injection and a real remediation can collide on the same Deployment. The fact is "
+        "read from\n"
+        "the store under a transaction that also inserts the claim, so the check and the "
+        "claim are\n"
+        "atomic."
     )
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:

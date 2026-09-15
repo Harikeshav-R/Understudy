@@ -1777,5 +1777,54 @@ def kernel_verify(
         typer.echo(verdict.human_reason)
 
 
+@kernel_app.command("catalogue")
+def kernel_catalogue(
+    markdown: Annotated[
+        bool,
+        typer.Option(
+            "--markdown",
+            "-m",
+            help="Generate and print Markdown representation of §3.4 invariant catalogue.",
+        ),
+    ] = False,
+    write: Annotated[
+        bool,
+        typer.Option(
+            "--write",
+            "-w",
+            help="Regenerate §3.4 in docs/03-invariants.md in-place.",
+        ),
+    ] = False,
+    docs_path: Annotated[
+        Path,
+        typer.Option(
+            "--docs-path",
+            help="Path to invariants documentation file.",
+        ),
+    ] = Path("docs/03-invariants.md"),
+) -> None:
+    """Generate or update the formal invariant catalogue (§3.4)."""
+    import sys
+
+    from understudy.kernel.api import generate_catalogue_markdown, update_docs_catalogue
+
+    _ = markdown
+    content = generate_catalogue_markdown()
+
+    if write:
+        if not docs_path.is_file():
+            typer.echo(f"Error: documentation file not found: {docs_path}", err=True)
+            raise typer.Exit(code=1)
+        changed = update_docs_catalogue(docs_path=docs_path, markdown=content)
+        if changed:
+            typer.echo(f"Updated §3.4 in {docs_path}")
+        else:
+            typer.echo(f"§3.4 in {docs_path} already matches invariant catalogue.")
+        return
+
+    # Flush exact markdown content matching §3.4
+    sys.stdout.write(content)
+
+
 if __name__ == "__main__":
     app()

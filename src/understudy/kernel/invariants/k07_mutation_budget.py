@@ -21,14 +21,21 @@ class K7MutationBudget(Invariant):
     """
 
     id: str = "K7"
+    name: str = "Production mutation budget"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF (over the counter model) + RUNTIME (enforced at actuation)"
     statement: str = (
-        "At most `mutation_budget` (default 3) production mutations in any rolling "
+        "At most `mutation_budget` (default 3) production mutations in any rolling\n"
         "15-minute window."
     )
     required_facts: Sequence[str] = (
         "prod_mutations_in_window",
         "mutation_budget",
+    )
+    smt_shape: str | None = "`prod_mutations_in_window + 1 ≤ mutation_budget`"
+    why_it_exists: str | None = (
+        "An agent in a flapping-alert loop can otherwise remediate the same\n"
+        "service into oblivion. A budget converts a runaway into an escalation."
     )
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:

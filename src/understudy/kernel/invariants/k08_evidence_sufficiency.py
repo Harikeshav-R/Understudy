@@ -30,14 +30,29 @@ class K8EvidenceSufficiency(Invariant):
     """
 
     id: str = "K8"
+    name: str = "Evidence sufficiency and freshness"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
     statement: str = (
-        "A plan may only be cleared on evidence that is fresh, dense, and high-fidelity."
+        "A plan may only be cleared on evidence that is fresh, dense, and\nhigh-fidelity."
     )
     required_facts: Sequence[str] = (
         "evidence_age_seconds",
         "probe_sample_count",
         "max_drop_ratio",
+    )
+    smt_shape: str | None = (
+        "```\n"
+        "evidence_age_seconds ≤ MAX_EVIDENCE_AGE (default 300)\n"
+        "∧ probe_sample_count  ≥ MIN_PROBE_SAMPLES (default 60)\n"
+        "∧ max_drop_ratio      ≤ MIRROR_DROP_CEILING (default 0.05)\n"
+        "```"
+    )
+    why_it_exists: str | None = (
+        "This is the invariant that turns the fidelity-gap limitation\n"
+        "(`docs/00-product.md` §0.7) from an acknowledged weakness into a checked "
+        "precondition. The\n"
+        "kernel refuses to launder a bad rehearsal into a production action."
     )
 
     def __init__(

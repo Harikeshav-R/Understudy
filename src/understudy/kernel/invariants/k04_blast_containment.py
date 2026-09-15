@@ -23,16 +23,30 @@ class K4BlastContainment(Invariant):
     """
 
     id: str = "K4"
+    name: str = "Blast-radius containment"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
     statement: str = (
-        "A plan's observed blast set must be a subset of its declared blast set, "
-        "and its declared blast set must be a subset of the dependency-graph "
-        "reachable set of its targets."
+        "A plan's observed blast set must be a subset of its declared blast set, and\n"
+        "its declared blast set must be a subset of the dependency-graph reachable set of its\n"
+        "targets."
     )
     required_facts: Sequence[str] = (
         "dependents[svc]",
         "declared_blast_set",
         "observed_blast_set",
+    )
+    smt_shape: str | None = (
+        "```\n"
+        "observed_blast_set ⊆ declared_blast_set ⊆ "
+        "\u22c3_{t ∈ plan_targets} dependents*(service(t))\n"
+        "```"
+    )
+    why_it_exists: str | None = (
+        "Forces the planner to state its expected impact in advance and makes\n"
+        '"the fix did something we did not predict" a vetoable event rather than a post-mortem\n'
+        "finding. Note the direction: a plan that affects *fewer* services than declared passes;\n"
+        "one that affects services it did not declare does not."
     )
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:

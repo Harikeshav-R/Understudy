@@ -25,14 +25,28 @@ class K9Reversibility(Invariant):
     """Safety invariant proving that candidate plans are strictly reversible."""
 
     id: str = "K9"
+    name: str = "Reversibility"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
     statement: str = (
         "Every plan except NO_ACTION declares an inverse whose target set equals its own."
+    )
+    doc_statement: str | None = (
+        "Every plan except `NO_ACTION` declares an inverse whose target set equals\nits own."
     )
     required_facts: Sequence[str] = (
         "plan_has_inverse",
         "inverse_targets",
         "plan_targets",
+    )
+    smt_shape: str | None = (
+        "`plan.action ≠ NO_ACTION ⟹ plan_has_inverse ∧ inverse_targets = plan_targets`"
+    )
+    why_it_exists: str | None = (
+        "If the fix makes things worse, the system must be able to undo exactly\n"
+        "what it did, and no more. Equality rather than subset is deliberate: an "
+        "inverse that touches\n"
+        "fewer resources leaves partial state behind."
     )
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:

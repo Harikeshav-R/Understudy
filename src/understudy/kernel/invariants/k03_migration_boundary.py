@@ -17,15 +17,37 @@ class K3MigrationBoundary(Invariant):
     """Safety invariant proving that rollback plans do not violate migration boundaries."""
 
     id: str = "K3"
+    name: str = "Migration boundary"
     tier: InvariantTier = InvariantTier.PROOF
+    tier_display: str = "PROOF"
     statement: str = (
         "A ROLLBACK_DEPLOY may not target a commit that predates the most recent "
+        "schema migration, and may not itself be a commit containing a migration."
+    )
+    doc_statement: str | None = (
+        "A `ROLLBACK_DEPLOY` may not target a commit that predates the most recent\n"
         "schema migration, and may not itself be a commit containing a migration."
     )
     required_facts: Sequence[str] = (
         "last_migration_commit_time",
         "rollback_target_commit_time",
         "target_contains_migration",
+    )
+    smt_shape: str | None = (
+        "```\n"
+        "plan.action = ROLLBACK_DEPLOY ⟹\n"
+        "    rollback_target_commit_time ≥ last_migration_commit_time\n"
+        "  ∧ ¬target_contains_migration\n"
+        "```"
+    )
+    why_it_exists: str | None = (
+        "Rolling application code back across a migration leaves code that does\n"
+        "not understand the live schema. It is the classic incident-response own-goal, "
+        "it will score\n"
+        "beautifully in a twin whose data happens not to exercise the changed column, "
+        "and no metric\n"
+        "would catch it. This invariant is the clearest single demonstration of why the kernel\n"
+        "exists, and the demo's veto beat (`docs/06-demo.md` §6.4) uses it."
     )
 
     def build(self, ctx: KernelContext) -> z3.BoolRef:
