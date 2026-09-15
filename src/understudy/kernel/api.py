@@ -23,12 +23,24 @@ class SafetyKernel(Protocol):
         raise NotImplementedError
 
 
+# Re-exports for consumers adhering to sibling import boundaries (AGENTS.md §5.2)
+from understudy.kernel.verify import (  # noqa: E402
+    PROOF_INVARIANTS,
+    Z3SafetyKernel,
+    render_veto_reason,
+    verify,
+)
+
 __all__ = [
+    "PROOF_INVARIANTS",
     "FactExtractor",
     "K8sFactSource",
     "SafetyKernel",
     "WorkloadReaderFactAdapter",
+    "Z3SafetyKernel",
     "extract_facts",
     "load_facts_json",
+    "render_veto_reason",
     "save_facts_json",
+    "verify",
 ]

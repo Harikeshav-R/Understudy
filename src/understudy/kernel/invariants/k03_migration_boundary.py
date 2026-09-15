@@ -52,8 +52,17 @@ class K3MigrationBoundary(Invariant):
             return z3.BoolVal(True)
 
         last_migration = ctx.datetime("last_migration_commit_time")
-        target_commit_time = ctx.datetime("rollback_target_commit_time")
-        target_has_migration = ctx.bool("target_contains_migration")
+
+        target_commit = ctx.plan.params.target_commit
+        if target_commit and ctx.has_fact(f"rollback_target_commit_time[{target_commit}]"):
+            target_commit_time = ctx.datetime(f"rollback_target_commit_time[{target_commit}]")
+        else:
+            target_commit_time = ctx.datetime("rollback_target_commit_time")
+
+        if target_commit and ctx.has_fact(f"target_contains_migration[{target_commit}]"):
+            target_has_migration = ctx.bool(f"target_contains_migration[{target_commit}]")
+        else:
+            target_has_migration = ctx.bool("target_contains_migration")
 
         return z3.And(
             target_commit_time >= last_migration,

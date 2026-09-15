@@ -1,0 +1,49 @@
+{
+  "plan_id": "plan_rollback_safe",
+  "candidate_index": 0,
+  "action": "rollback_deploy",
+  "params": {
+    "workload": "data-service",
+    "target_commit": "c0ffee_safe"
+  },
+  "target_resources": [
+    {
+      "namespace": "ust-prod",
+      "kind": "Deployment",
+      "name": "data-service"
+    }
+  ],
+  "declared_blast_set": [
+    "auth-service",
+    "data-service",
+    "edge-gateway"
+  ],
+  "inverse": {
+    "plan_id": "inv_plan_rollback_safe",
+    "candidate_index": 0,
+    "action": "rollback_deploy",
+    "params": {
+      "workload": "data-service",
+      "target_commit": "c0ffee_pre_incident"
+    },
+    "target_resources": [
+      {
+        "namespace": "ust-prod",
+        "kind": "Deployment",
+        "name": "data-service"
+      }
+    ],
+    "declared_blast_set": [
+      "auth-service",
+      "data-service",
+      "edge-gateway"
+    ],
+    "inverse": null,
+    "rationale": "Roll-forward inverse to pre-incident commit",
+    "origin": "planner",
+    "playbook_id": null
+  },
+  "rationale": "Safe rollback to commit c0ffee_safe which post-dates latest schema migration",
+  "origin": "planner",
+  "playbook_id": null
+}

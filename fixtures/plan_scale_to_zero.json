@@ -1,0 +1,49 @@
+{
+  "plan_id": "plan_scale_to_zero",
+  "candidate_index": 2,
+  "action": "scale_workload",
+  "params": {
+    "workload": "data-service",
+    "replica_delta": -2
+  },
+  "target_resources": [
+    {
+      "namespace": "ust-prod",
+      "kind": "Deployment",
+      "name": "data-service"
+    }
+  ],
+  "declared_blast_set": [
+    "auth-service",
+    "data-service",
+    "edge-gateway"
+  ],
+  "inverse": {
+    "plan_id": "inv_plan_scale_to_zero",
+    "candidate_index": 2,
+    "action": "scale_workload",
+    "params": {
+      "workload": "data-service",
+      "replica_delta": 2
+    },
+    "target_resources": [
+      {
+        "namespace": "ust-prod",
+        "kind": "Deployment",
+        "name": "data-service"
+      }
+    ],
+    "declared_blast_set": [
+      "auth-service",
+      "data-service",
+      "edge-gateway"
+    ],
+    "inverse": null,
+    "rationale": "Scale back up by +2 replicas",
+    "origin": "planner",
+    "playbook_id": null
+  },
+  "rationale": "Scale data-service replicas down to 0 to halt error storm, violating K1 floor",
+  "origin": "planner",
+  "playbook_id": null
+}

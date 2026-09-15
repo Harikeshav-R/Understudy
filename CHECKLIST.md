@@ -249,16 +249,16 @@ validated, normalised, invertible plans against the real cluster.
 - [x] B4.3f **[P1]** K5 single writer (+ tests, atomic claim under transaction)
 - [x] B4.3g **[P1]** K7 mutation budget (+ tests)
 - [x] B4.3h **[P1]** K8 evidence sufficiency and freshness (+ tests)
-- [ ] B4.4 **[P0]** `verify()`: assert negation per invariant, 5 s timeout, three-valued verdict
+- [x] B4.4 **[P0]** `verify()`: assert negation per invariant, 5 s timeout, three-valued verdict
 - [ ] B4.5 **[P0]** `ust kernel catalogue --markdown` + the CI test that docs and code agree
 - [ ] B4.6 **[P0]** Veto rendered into actionable prose
 
 **Checkpoint B4**
 
-- [ ] Safe rollback plan → `verdict=pass`, solver_ms < 500
-- [ ] Rollback across a migration → `verdict=veto invariant=K3`, reason names both commits
-- [ ] Scale-to-zero plan → `verdict=veto invariant=K1`
-- [ ] Facts missing the migration timestamp → `verdict=uncertain`, missing fact named
+- [x] Safe rollback plan → `verdict=pass`, solver_ms < 500
+- [x] Rollback across a migration → `verdict=veto invariant=K3`, reason names both commits
+- [x] Scale-to-zero plan → `verdict=veto invariant=K1`
+- [x] Facts missing the migration timestamp → `verdict=uncertain`, missing fact named
 - [ ] Catalogue output diffs clean against `docs/03-invariants.md` §3.4
 
 **Phase 4 gate:** the tournament decides from evidence and refuses to decide when it

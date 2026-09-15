@@ -17,8 +17,15 @@ from understudy.kernel.invariants.k05_single_writer import K5SingleWriter
 from understudy.kernel.invariants.k07_mutation_budget import K7MutationBudget
 from understudy.kernel.invariants.k08_evidence_sufficiency import K8EvidenceSufficiency
 from understudy.kernel.invariants.k09_reversibility import K9Reversibility
+from understudy.kernel.verify import (
+    PROOF_INVARIANTS,
+    Z3SafetyKernel,
+    render_veto_reason,
+    verify,
+)
 
 __all__ = [
+    "PROOF_INVARIANTS",
     "FactExtractor",
     "Invariant",
     "K1ReplicaFloor",
@@ -33,7 +40,10 @@ __all__ = [
     "KernelContext",
     "MissingFact",
     "WorkloadReaderFactAdapter",
+    "Z3SafetyKernel",
     "extract_facts",
     "load_facts_json",
+    "render_veto_reason",
     "save_facts_json",
+    "verify",
 ]

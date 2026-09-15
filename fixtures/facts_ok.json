@@ -91,6 +91,12 @@
       "observed_at": "2026-09-14T12:00:00Z"
     },
     {
+      "name": "last_migration_commit",
+      "value": "af9de754",
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
       "name": "last_migration_commit_time",
       "value": "2026-09-13T10:00:00Z",
       "source": "github",
@@ -104,6 +110,18 @@
     },
     {
       "name": "target_contains_migration",
+      "value": false,
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "rollback_target_commit_time[c0ffee_across_migration]",
+      "value": "2026-09-13T09:00:00Z",
+      "source": "github",
+      "observed_at": "2026-09-14T12:00:00Z"
+    },
+    {
+      "name": "target_contains_migration[c0ffee_across_migration]",
       "value": false,
       "source": "github",
       "observed_at": "2026-09-14T12:00:00Z"
