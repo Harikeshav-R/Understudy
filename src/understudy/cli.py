@@ -1723,6 +1723,14 @@ def kernel_verify(
             help="Output full KernelVerdict JSON.",
         ),
     ] = False,
+    explain: Annotated[
+        bool,
+        typer.Option(
+            "--explain",
+            "-e",
+            help="Output actionable prose explanation on veto.",
+        ),
+    ] = False,
 ) -> None:
     """Evaluate formal PROOF safety invariants for a proposed plan against current system facts."""
     import json
@@ -1731,7 +1739,8 @@ def kernel_verify(
 
     from understudy.contracts.enums import KernelVerdictType
     from understudy.contracts.plan import RemediationPlan
-    from understudy.kernel.api import load_facts_json, verify
+    from understudy.kernel.api import PROOF_INVARIANTS, explain_veto, load_facts_json, verify
+    from understudy.kernel.dsl import KernelContext
 
     if not plan_file.is_file():
         typer.echo(f"Error: plan file not found: {plan_file}", err=True)
@@ -1765,16 +1774,109 @@ def kernel_verify(
             f"verdict=pass, {len(verdict.results)} invariants, solver_ms={verdict.solver_ms:.1f}"
         )
     elif verdict.verdict == KernelVerdictType.VETO:
-        failed_inv = next((r for r in verdict.results if r.satisfied is False), None)
-        inv_id = failed_inv.invariant_id if failed_inv is not None else "unknown"
+        failed_res = next((r for r in verdict.results if r.satisfied is False), None)
+        inv_id = failed_res.invariant_id if failed_res is not None else "unknown"
         typer.echo(f"verdict=veto invariant={inv_id}, solver_ms={verdict.solver_ms:.1f}")
-        typer.echo(verdict.human_reason)
+        if explain:
+            target_inv = next((i for i in PROOF_INVARIANTS if i.id == inv_id), None)
+            ctx = KernelContext(plan, facts)
+            explanation = explain_veto(target_inv or inv_id, plan, ctx)
+            typer.echo(explanation.actionable_prose)
+        else:
+            typer.echo(verdict.human_reason)
     else:
         missing_repr = json.dumps(verdict.missing_facts)
         typer.echo(
             f"verdict=uncertain missing_facts={missing_repr}, solver_ms={verdict.solver_ms:.1f}"
         )
         typer.echo(verdict.human_reason)
+
+
+@kernel_app.command("explain")
+def kernel_explain(
+    plan_file: Annotated[
+        Path,
+        typer.Option(
+            "--plan",
+            "-p",
+            help="Path to RemediationPlan JSON file.",
+        ),
+    ],
+    facts_file: Annotated[
+        Path,
+        typer.Option(
+            "--facts",
+            "-f",
+            help="Path to Fact list JSON file.",
+        ),
+    ],
+    timeout: Annotated[
+        float,
+        typer.Option(
+            "--timeout",
+            "-t",
+            help="SMT solver timeout in seconds (default 5.0).",
+        ),
+    ] = 5.0,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output full VetoExplanation JSON.",
+        ),
+    ] = False,
+) -> None:
+    """Render a formal safety kernel veto into actionable prose for incident responders."""
+    from pydantic import ValidationError
+
+    from understudy.contracts.enums import KernelVerdictType
+    from understudy.contracts.plan import RemediationPlan
+    from understudy.kernel.api import PROOF_INVARIANTS, explain_veto, load_facts_json, verify
+    from understudy.kernel.dsl import KernelContext
+
+    if not plan_file.is_file():
+        typer.echo(f"Error: plan file not found: {plan_file}", err=True)
+        raise typer.Exit(code=1)
+
+    if not facts_file.is_file():
+        typer.echo(f"Error: facts file not found: {facts_file}", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        plan_content = plan_file.read_text(encoding="utf-8")
+        plan = RemediationPlan.model_validate_json(plan_content)
+    except (ValidationError, OSError) as exc:
+        typer.echo(f"Error reading plan from {plan_file}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    try:
+        facts = load_facts_json(facts_file)
+    except Exception as exc:
+        typer.echo(f"Error reading facts from {facts_file}: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+
+    verdict = verify(plan, facts, timeout_seconds=timeout)
+
+    if verdict.verdict == KernelVerdictType.PASS:
+        typer.echo(f"verdict=pass: All {len(verdict.results)} PROOF invariants verified safe.")
+        return
+
+    if verdict.verdict == KernelVerdictType.UNCERTAIN:
+        missing_str = ", ".join(verdict.missing_facts)
+        typer.echo(f"verdict=uncertain: Missing required fact(s) for verification: {missing_str}")
+        return
+
+    failed_res = next((r for r in verdict.results if r.satisfied is False), None)
+    inv_id = failed_res.invariant_id if failed_res is not None else "unknown"
+    target_inv = next((i for i in PROOF_INVARIANTS if i.id == inv_id), None)
+
+    ctx = KernelContext(plan, facts)
+    explanation = explain_veto(target_inv or inv_id, plan, ctx)
+
+    if json_output:
+        typer.echo(explanation.model_dump_json(indent=2))
+    else:
+        typer.echo(explanation.actionable_prose)
 
 
 @kernel_app.command("catalogue")

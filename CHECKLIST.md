@@ -251,7 +251,7 @@ validated, normalised, invertible plans against the real cluster.
 - [x] B4.3h **[P1]** K8 evidence sufficiency and freshness (+ tests)
 - [x] B4.4 **[P0]** `verify()`: assert negation per invariant, 5 s timeout, three-valued verdict
 - [x] B4.5 **[P0]** `ust kernel catalogue --markdown` + the CI test that docs and code agree
-- [ ] B4.6 **[P0]** Veto rendered into actionable prose
+- [x] B4.6 **[P0]** Veto rendered into actionable prose
 
 **Checkpoint B4**
 

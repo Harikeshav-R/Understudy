@@ -33,10 +33,15 @@ from understudy.kernel.catalogue import (  # noqa: E402
     update_docs_catalogue,
     verify_catalogue_matches_docs,
 )
+from understudy.kernel.explain import (  # noqa: E402
+    VetoExplanation,
+    explain_veto,
+    format_actionable_prose,
+    render_veto_reason,
+)
 from understudy.kernel.verify import (  # noqa: E402
     PROOF_INVARIANTS,
     Z3SafetyKernel,
-    render_veto_reason,
     verify,
 )
 
@@ -46,9 +51,12 @@ __all__ = [
     "FactExtractor",
     "K8sFactSource",
     "SafetyKernel",
+    "VetoExplanation",
     "WorkloadReaderFactAdapter",
     "Z3SafetyKernel",
+    "explain_veto",
     "extract_facts",
+    "format_actionable_prose",
     "generate_catalogue_markdown",
     "get_catalogue_invariants",
     "get_invariant_counts",

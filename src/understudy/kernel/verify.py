@@ -19,9 +19,15 @@ import z3
 
 from understudy.common.clock import Clock, resolve_clock
 from understudy.common.errors import MissingFact
-from understudy.contracts.enums import ActionType, KernelVerdictType
+from understudy.contracts.enums import KernelVerdictType
 from understudy.contracts.kernel import Fact, InvariantResult, KernelVerdict
 from understudy.kernel.dsl import Invariant, KernelContext
+from understudy.kernel.explain import (
+    VetoExplanation,
+    explain_veto,
+    format_actionable_prose,
+    render_veto_reason,
+)
 from understudy.kernel.invariants import (
     K1ReplicaFloor,
     K2NamespaceScope,
@@ -32,7 +38,6 @@ from understudy.kernel.invariants import (
     K8EvidenceSufficiency,
     K9Reversibility,
 )
-from understudy.kernel.invariants.k05_single_writer import _canonical_target
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -52,187 +57,6 @@ PROOF_INVARIANTS: tuple[Invariant, ...] = (
     K8EvidenceSufficiency(),
     K9Reversibility(),
 )
-
-
-def render_veto_reason(
-    inv: Invariant,
-    plan: RemediationPlan,
-    ctx: KernelContext,
-    model: z3.ModelRef | None,
-) -> tuple[str, list[str]]:
-    """Render a Z3 counterexample model or invariant violation into human prose and unsat core."""
-    _ = model
-    inv_id = inv.id
-
-    if inv_id == "K1":
-        # Extract workload and check replicas
-        workloads: set[str] = set()
-        if plan.params.workload:
-            workloads.add(plan.params.workload)
-        for target in plan.target_resources:
-            if target.kind == "Deployment":
-                workloads.add(target.name)
-
-        reasons: list[str] = []
-        cores: list[str] = []
-        for svc in sorted(workloads):
-            min_reps = ctx.get_int(f"min_replicas[{svc}]")
-            reps = ctx.get_int(f"replicas[{svc}]")
-            healthy_reps = ctx.get_int(f"healthy_replicas[{svc}]")
-
-            delta = 0
-            if plan.action == ActionType.SCALE_WORKLOAD and plan.params.workload == svc:
-                delta = plan.params.replica_delta or 0
-            elif plan.action == ActionType.RESTART_WORKLOAD:
-                delta = -1
-
-            post_reps = reps + delta
-            post_healthy = healthy_reps + delta
-
-            if post_reps < min_reps or post_healthy < min_reps:
-                reasons.append(
-                    f"scaling/restarting '{svc}' leaves post-intervention replicas ({post_reps}) "
-                    f"or healthy replicas ({post_healthy}) below minimum floor ({min_reps})"
-                )
-                cores.append(
-                    f"healthy_replicas[{svc}] ({post_healthy}) < min_replicas[{svc}] ({min_reps})"
-                )
-
-        detail = "; ".join(reasons)
-        human_reason = f"VETO: Invariant K1 violated: {detail}"
-        unsat_core = cores
-        return human_reason, unsat_core
-
-    if inv_id == "K2":
-        auth_ns = ctx.get_str("authorized_namespace")
-        target_namespaces: set[str] = {str(ns) for ns in ctx.get_set("plan_target_namespaces")}
-        for resource in plan.target_resources:
-            if resource.namespace:
-                target_namespaces.add(resource.namespace)
-
-        unauthorized = sorted(target_namespaces - {auth_ns})
-        unauth_str = ", ".join(unauthorized)
-        human_reason = (
-            f"VETO: Invariant K2 violated: plan mutates unauthorized namespace(s): {unauth_str}, "
-            f"authorized is '{auth_ns}'"
-        )
-        unsat_core = [f"namespace({ns}) != authorized_namespace({auth_ns})" for ns in unauthorized]
-        return human_reason, unsat_core
-
-    if inv_id == "K3":
-        target_commit = plan.params.target_commit or "unknown"
-        last_mig_commit = (
-            ctx.get_str("last_migration_commit")
-            if ctx.has_fact("last_migration_commit")
-            else "migration"
-        )
-        last_mig_time = ctx.get_datetime("last_migration_commit_time")
-
-        if target_commit != "unknown" and ctx.has_fact(
-            f"target_contains_migration[{target_commit}]"
-        ):
-            has_mig = ctx.get_bool(f"target_contains_migration[{target_commit}]")
-        else:
-            has_mig = ctx.get_bool("target_contains_migration")
-
-        if has_mig:
-            human_reason = (
-                f"VETO: Invariant K3 violated: rollback target commit {target_commit} "
-                f"contains a schema migration"
-            )
-            unsat_core = [f"target_contains_migration({target_commit}) == True"]
-            return human_reason, unsat_core
-
-        if target_commit != "unknown" and ctx.has_fact(
-            f"rollback_target_commit_time[{target_commit}]"
-        ):
-            target_time = ctx.get_datetime(f"rollback_target_commit_time[{target_commit}]")
-        else:
-            target_time = ctx.get_datetime("rollback_target_commit_time")
-
-        human_reason = (
-            f"VETO: Invariant K3 violated: rollback target commit {target_commit} deployed at "
-            f"{target_time.isoformat()} predates schema migration commit {last_mig_commit} at "
-            f"{last_mig_time.isoformat()}"
-        )
-        unsat_core = [
-            f"rollback_target_commit_time ({target_time.isoformat()}) < "
-            f"last_migration_commit_time ({last_mig_time.isoformat()})"
-        ]
-        return human_reason, unsat_core
-
-    if inv_id == "K4":
-        declared = ctx.get_set("declared_blast_set")
-        observed = ctx.get_set("observed_blast_set")
-        declared_str_set = {str(s) for s in declared}
-        observed_str_set = {str(s) for s in observed}
-
-        if not observed_str_set.issubset(declared_str_set):
-            unpredicted = sorted(observed_str_set - declared_str_set)
-            human_reason = (
-                f"VETO: Invariant K4 violated: observed blast set touched unpredicted service(s): "
-                f"{', '.join(unpredicted)}"
-            )
-            unsat_core = [f"observed service '{s}' not in declared blast set" for s in unpredicted]
-            return human_reason, unsat_core
-
-        human_reason = (
-            "VETO: Invariant K4 violated: declared blast set exceeds reachable "
-            "dependency graph dependents"
-        )
-        unsat_core = ["declared_blast_set not subset of reachable dependents"]
-        return human_reason, unsat_core
-
-    if inv_id == "K5":
-        plan_targets: set[str] = {_canonical_target(r) for r in plan.target_resources}
-        plan_targets.update(_canonical_target(t) for t in ctx.get_set("plan_targets"))
-        in_flight: set[str] = {_canonical_target(t) for t in ctx.get_set("in_flight_plan_targets")}
-
-        colliding = sorted(plan_targets & in_flight)
-        col_str = ", ".join(colliding)
-        human_reason = (
-            f"VETO: Invariant K5 violated: target resource(s) already held by an in-flight "
-            f"execution: {col_str}"
-        )
-        unsat_core = [f"target '{c}' in in_flight_plan_targets" for c in colliding]
-        return human_reason, unsat_core
-
-    if inv_id == "K7":
-        mutations = ctx.get_int("prod_mutations_in_window")
-        budget = ctx.get_int("mutation_budget")
-        human_reason = (
-            f"VETO: Invariant K7 violated: production mutations in 15-minute window "
-            f"({mutations} + 1) exceeds mutation budget ({budget})"
-        )
-        unsat_core = [f"prod_mutations_in_window ({mutations}) + 1 > mutation_budget ({budget})"]
-        return human_reason, unsat_core
-
-    if inv_id == "K8":
-        age = ctx.get_float("evidence_age_seconds")
-        samples = ctx.get_int("probe_sample_count")
-        drop = ctx.get_float("max_drop_ratio")
-        issues: list[str] = []
-        if age > 300.0:
-            issues.append(f"evidence age {age:.1f}s exceeds 300s limit")
-        if samples < 60:
-            issues.append(f"probe samples ({samples}) below 60 minimum")
-        if drop > 0.05:
-            issues.append(f"max drop ratio ({drop:.3f}) exceeds 0.05 ceiling")
-
-        human_reason = f"VETO: Invariant K8 violated: {'; '.join(issues)}"
-        return human_reason, issues
-
-    if inv_id == "K9":
-        human_reason = (
-            "VETO: Invariant K9 violated: plan lacks a deterministic inverse or inverse "
-            "targets do not strictly match plan targets"
-        )
-        unsat_core = ["plan_has_inverse == False or inverse_targets != plan_targets"]
-        return human_reason, unsat_core
-
-    human_reason = f"VETO: Invariant {inv_id} violated: {inv.statement}"
-    unsat_core = [f"{inv_id} negation satisfied in solver model"]
-    return human_reason, unsat_core
 
 
 def verify(
@@ -439,7 +263,10 @@ class Z3SafetyKernel:
 __all__ = [
     "DEFAULT_TIMEOUT_SECONDS",
     "PROOF_INVARIANTS",
+    "VetoExplanation",
     "Z3SafetyKernel",
+    "explain_veto",
+    "format_actionable_prose",
     "render_veto_reason",
     "verify",
 ]

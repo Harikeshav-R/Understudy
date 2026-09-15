@@ -10,6 +10,12 @@ from understudy.kernel.catalogue import (
     verify_catalogue_matches_docs,
 )
 from understudy.kernel.dsl import Invariant, KernelContext, MissingFact
+from understudy.kernel.explain import (
+    VetoExplanation,
+    explain_veto,
+    format_actionable_prose,
+    render_veto_reason,
+)
 from understudy.kernel.facts import (
     FactExtractor,
     K8sFactSource,
@@ -31,7 +37,6 @@ from understudy.kernel.invariants.k10_actuation_authorisation import K10Actuatio
 from understudy.kernel.verify import (
     PROOF_INVARIANTS,
     Z3SafetyKernel,
-    render_veto_reason,
     verify,
 )
 
@@ -53,9 +58,12 @@ __all__ = [
     "K10ActuationAuthorisation",
     "KernelContext",
     "MissingFact",
+    "VetoExplanation",
     "WorkloadReaderFactAdapter",
     "Z3SafetyKernel",
+    "explain_veto",
     "extract_facts",
+    "format_actionable_prose",
     "generate_catalogue_markdown",
     "get_catalogue_invariants",
     "get_invariant_counts",
