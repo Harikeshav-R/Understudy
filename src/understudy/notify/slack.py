@@ -651,10 +651,18 @@ class SlackNotifier(Notifier):
         incident_id: str,
         reason: str,
         partial_evidence: list[CandidateEvidence] | None = None,
+        *,
+        context: IncidentContext | None = None,
+        plans: list[RemediationPlan] | None = None,
+        verdict: KernelVerdict | None = None,
+        tournament: TournamentResult | None = None,
+        urgency: str = "high",
+        pd_incident_id: str | None = None,
     ) -> None:
         """Escalate an unresolvable or vetoed incident to PagerDuty on-call."""
         raise NotImplementedError(
-            "PagerDuty escalation notifier is implemented in build-plan step 5.4."
+            "PagerDuty escalation notifier is implemented in build-plan step 5.4. "
+            "Use PagerDutyNotifier or CompositeNotifier."
         )
 
 

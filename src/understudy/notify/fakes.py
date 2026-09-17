@@ -51,6 +51,13 @@ class FakeNotifier(Notifier):
         incident_id: str,
         reason: str,
         partial_evidence: list[CandidateEvidence] | None = None,
+        *,
+        context: IncidentContext | None = None,
+        plans: list[RemediationPlan] | None = None,
+        verdict: KernelVerdict | None = None,
+        tournament: TournamentResult | None = None,
+        urgency: str = "high",
+        pd_incident_id: str | None = None,
     ) -> None:
         """Record PagerDuty escalation."""
         self.pagerduty_escalations.append(
@@ -58,5 +65,11 @@ class FakeNotifier(Notifier):
                 "incident_id": incident_id,
                 "reason": reason,
                 "partial_evidence": partial_evidence or [],
+                "context": context,
+                "plans": plans,
+                "verdict": verdict,
+                "tournament": tournament,
+                "urgency": urgency,
+                "pd_incident_id": pd_incident_id,
             }
         )

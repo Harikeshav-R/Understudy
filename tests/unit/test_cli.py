@@ -1594,3 +1594,156 @@ def test_cli_notify_slack_file_errors(tmp_path: Path) -> None:
     res4 = runner.invoke(app, ["notify", "slack", "--context", str(bad_ctx)])
     assert res4.exit_code == 1
     assert "Error loading context file" in (res4.stderr or res4.stdout)
+
+
+def test_cli_notify_pagerduty_preview() -> None:
+    """Verify ust notify pagerduty in preview mode with fixtures."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    context_path = Path("fixtures/context_bad_deploy.json")
+
+    res = runner.invoke(
+        app,
+        [
+            "notify",
+            "pagerduty",
+            "--incident-id",
+            "inc_pd_test_001",
+            "--fixture",
+            str(fixture_path),
+            "--context",
+            str(context_path),
+        ],
+    )
+    assert res.exit_code == 0
+    assert "=== PagerDuty Escalation Note Preview" in res.stdout
+    assert "🚨 UNDERSTUDY AUTOMATED INCIDENT ESCALATION" in res.stdout
+    assert "CANDIDATE REMEDIATION SCOREBOARD" in res.stdout
+    assert "TOURNAMENT ARBITRATION & SAFETY REASONING" in res.stdout
+
+
+def test_cli_notify_pagerduty_preview_with_verdict(tmp_path: Path) -> None:
+    """Verify ust notify pagerduty with verdict file."""
+    verdict_file = tmp_path / "verdict.json"
+    verdict_data = {
+        "incident_id": "inc_veto_01",
+        "plan_id": "plan_0",
+        "verdict": "veto",
+        "results": [
+            {
+                "invariant_id": "K3",
+                "tier": "proof",
+                "satisfied": False,
+                "reason": "Migration boundary violation",
+            }
+        ],
+        "missing_facts": [],
+        "solver_ms": 12.5,
+        "human_reason": "Vetoed: migration violation",
+    }
+    verdict_file.write_text(json.dumps(verdict_data), encoding="utf-8")
+
+    res = runner.invoke(
+        app,
+        [
+            "notify",
+            "pagerduty",
+            "--incident-id",
+            "inc_veto_01",
+            "--verdict",
+            str(verdict_file),
+            "--reason",
+            "Custom veto reason",
+        ],
+    )
+    assert res.exit_code == 0
+    assert "Verdict:      VETO" in res.stdout
+    assert "Primary Reason: Custom veto reason" in res.stdout
+
+
+def test_cli_notify_pagerduty_json() -> None:
+    """Verify ust notify pagerduty --json outputs valid JSON."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    res = runner.invoke(
+        app,
+        ["notify", "pagerduty", "--fixture", str(fixture_path), "--json"],
+    )
+    assert res.exit_code == 0
+    json_start = res.stdout.find("{\n")
+    assert json_start != -1
+    data = json.loads(res.stdout[json_start:])
+    assert isinstance(data, dict)
+    assert "note_content" in data
+    assert "pd_incident_id" in data
+    assert data["urgency"] == "high"
+
+
+def test_cli_notify_pagerduty_post_success() -> None:
+    """Verify ust notify pagerduty --post delivers escalation."""
+    mock_resp = {"pd_incident_id": "P9999", "note": {"note": {"id": "N123"}}}
+    with patch(
+        "understudy.notify.pagerduty.PagerDutyNotifier.escalate",
+        new_callable=AsyncMock,
+        return_value=mock_resp,
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "pagerduty", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 0
+        assert "Successfully escalated to PagerDuty incident P9999" in res.stdout
+
+
+def test_cli_notify_pagerduty_post_error() -> None:
+    """Verify ust notify pagerduty --post handles delivery failure."""
+    with patch(
+        "understudy.notify.pagerduty.PagerDutyNotifier.escalate",
+        new_callable=AsyncMock,
+        side_effect=Exception("PagerDuty API token rejected"),
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "pagerduty", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 1
+        assert "Error escalating to PagerDuty: PagerDuty API token rejected" in (
+            res.stderr or res.stdout
+        )
+
+
+def test_cli_notify_pagerduty_file_errors(tmp_path: Path) -> None:
+    """Verify file error handling in ust notify pagerduty."""
+    # 1. Nonexistent fixture
+    res1 = runner.invoke(app, ["notify", "pagerduty", "--fixture", "nonexistent.json"])
+    assert res1.exit_code == 1
+    assert "Error: fixture file not found" in (res1.stderr or res1.stdout)
+
+    # 2. Bad JSON in fixture
+    bad_fix = tmp_path / "bad_fixture.json"
+    bad_fix.write_text("not json", encoding="utf-8")
+    res2 = runner.invoke(app, ["notify", "pagerduty", "--fixture", str(bad_fix)])
+    assert res2.exit_code == 1
+    assert "Error loading fixture" in (res2.stderr or res2.stdout)
+
+    # 3. Nonexistent context
+    res3 = runner.invoke(app, ["notify", "pagerduty", "--context", "nonexistent_context.json"])
+    assert res3.exit_code == 1
+    assert "Error: context file not found" in (res3.stderr or res3.stdout)
+
+    # 4. Bad JSON in context
+    bad_ctx = tmp_path / "bad_context.json"
+    bad_ctx.write_text("not json", encoding="utf-8")
+    res4 = runner.invoke(app, ["notify", "pagerduty", "--context", str(bad_ctx)])
+    assert res4.exit_code == 1
+    assert "Error loading context file" in (res4.stderr or res4.stdout)
+
+    # 5. Nonexistent verdict
+    res5 = runner.invoke(app, ["notify", "pagerduty", "--verdict", "nonexistent_verdict.json"])
+    assert res5.exit_code == 1
+    assert "Error: verdict file not found" in (res5.stderr or res5.stdout)
+
+    # 6. Bad JSON in verdict
+    bad_v = tmp_path / "bad_verdict.json"
+    bad_v.write_text("not json", encoding="utf-8")
+    res6 = runner.invoke(app, ["notify", "pagerduty", "--verdict", str(bad_v)])
+    assert res6.exit_code == 1
+    assert "Error loading verdict file" in (res6.stderr or res6.stdout)

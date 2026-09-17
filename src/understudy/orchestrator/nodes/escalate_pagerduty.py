@@ -25,6 +25,11 @@ async def escalate_pagerduty(state: State, deps: Deps) -> dict[str, Any]:
         incident_id=state.incident_id,
         reason=reason,
         partial_evidence=state.evidence,
+        context=state.context,
+        plans=state.plans,
+        verdict=state.verdict,
+        tournament=state.tournament,
+        urgency="high",
     )
 
     logger.info("pagerduty_escalated", incident_id=state.incident_id, reason=reason)

@@ -671,6 +671,12 @@ async def test_escalate_pagerduty_node() -> None:
     res4 = await escalate_pagerduty(state4, deps)
     assert res4["escalation_reason"] == "Incident escalated to human operator"
 
+    # Verify FakeNotifier recorded all 4 escalations with parameters
+    assert isinstance(deps.notifier, FakeNotifier)
+    assert len(deps.notifier.pagerduty_escalations) == 4
+    assert deps.notifier.pagerduty_escalations[1]["verdict"] == verdict
+    assert deps.notifier.pagerduty_escalations[1]["urgency"] == "high"
+
 
 @pytest.mark.asyncio
 async def test_teardown_fleet_node() -> None:

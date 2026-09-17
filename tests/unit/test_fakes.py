@@ -732,6 +732,14 @@ async def test_fake_notifier() -> None:
 
     await notifier.escalate_pagerduty("inc_001", "VETO triggered")
     assert len(notifier.pagerduty_escalations) == 1
+    assert notifier.pagerduty_escalations[0]["incident_id"] == "inc_001"
+    assert notifier.pagerduty_escalations[0]["reason"] == "VETO triggered"
+    assert "context" in notifier.pagerduty_escalations[0]
+    assert "plans" in notifier.pagerduty_escalations[0]
+    assert "verdict" in notifier.pagerduty_escalations[0]
+    assert "tournament" in notifier.pagerduty_escalations[0]
+    assert "urgency" in notifier.pagerduty_escalations[0]
+    assert "pd_incident_id" in notifier.pagerduty_escalations[0]
 
 
 @pytest.mark.asyncio

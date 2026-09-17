@@ -115,3 +115,7 @@ class NotificationError(UnderstudyError):
 
 class SlackNotificationError(NotificationError):
     """Raised on failure to deliver a Slack notification."""
+
+
+class PagerDutyNotificationError(NotificationError):
+    """Raised on failure to escalate, post notes, or update urgency in PagerDuty."""

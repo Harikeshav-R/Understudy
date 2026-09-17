@@ -79,6 +79,7 @@ class SecretSettings(BaseModel):
     pagerduty_service_id: str | None = None
     pagerduty_webhook_secret: str | None = None
     pagerduty_routing_key: str | None = None
+    pagerduty_from_email: str | None = None
     datadog_api_key: str | None = None
     datadog_app_key: str | None = None
 
@@ -284,6 +285,7 @@ def load_settings(
         "PAGERDUTY_SERVICE_ID": "pagerduty_service_id",
         "PAGERDUTY_WEBHOOK_SECRET": "pagerduty_webhook_secret",
         "PAGERDUTY_ROUTING_KEY": "pagerduty_routing_key",
+        "PAGERDUTY_FROM_EMAIL": "pagerduty_from_email",
         "DATADOG_API_KEY": "datadog_api_key",
         "DATADOG_APP_KEY": "datadog_app_key",
     }
