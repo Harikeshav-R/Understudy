@@ -43,3 +43,4 @@ class KernelVerdict(BaseModel):
     missing_facts: list[str] = Field(default_factory=list)
     solver_ms: float
     human_reason: str  # rendered for Slack/PagerDuty
+    evaluated_at: datetime | None = None

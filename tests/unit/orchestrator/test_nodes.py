@@ -592,6 +592,23 @@ async def test_actuate_node() -> None:
     assert "outcome" not in res_fail
     assert "did not resolve incident" in res_fail["escalation_reason"]
 
+    # Case 6: Actuator returns False with worsened outcome
+    class WorseningActuator(FailingActuator):
+        def __init__(self) -> None:
+            self.last_prod_outcome = "worsened"
+
+    deps_worse = Deps(
+        **{
+            **deps.__dict__,
+            "actuator": WorseningActuator(),
+        }
+    )
+    res_worse = await actuate(state_ok, deps_worse)
+    assert res_worse["prod_outcome"] == "worsened"
+    assert res_worse["prod_applied_plan_id"] == "plan_0"
+    assert "outcome" not in res_worse
+    assert "did not resolve incident" in res_worse["escalation_reason"]
+
 
 @pytest.mark.asyncio
 async def test_notify_slack_node() -> None:

@@ -704,6 +704,16 @@ async def test_fake_actuator() -> None:
     ):
         await actuator.apply_to_production(plan, veto_verdict)
 
+    mismatched_verdict = KernelVerdict(
+        incident_id="inc_1",
+        plan_id="plan_mismatch",
+        verdict=KernelVerdictType.PASS,
+        solver_ms=1.0,
+        human_reason="ok",
+    )
+    with pytest.raises(ActuationError, match="verdict plan_id mismatch"):
+        await actuator.apply_to_production(plan, mismatched_verdict)
+
     assert await actuator.revert(plan, "ust-prod") is True
     assert ("plan_0", "ust-prod") in actuator.reverted_plans
 

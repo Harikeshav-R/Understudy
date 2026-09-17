@@ -66,6 +66,7 @@ def verify(
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
     invariants: Sequence[Invariant] | None = None,
     incident_id: str | None = None,
+    clock: Clock | None = None,
 ) -> KernelVerdict:
     """Evaluate formal PROOF safety invariants for a proposed plan against system facts.
 
@@ -81,6 +82,7 @@ def verify(
         timeout_seconds: Maximum time allowed for verification (default 5.0 s).
         invariants: Optional sequence of Invariants to check (defaults to PROOF_INVARIANTS).
         incident_id: Optional incident ID override.
+        clock: Optional system or frozen clock instance for evaluating timestamps.
 
     Returns:
         KernelVerdict containing PASS, VETO, or UNCERTAIN, plus per-invariant results and solver_ms.
@@ -88,6 +90,7 @@ def verify(
     start_time = time.perf_counter()
     inc_id = incident_id or "inc_kernel_verify"
     timeout_ms = int(timeout_seconds * 1000)
+    evaluated_at = resolve_clock(clock).now()
 
     ctx = KernelContext(plan, facts)
     inv_list = list(invariants) if invariants is not None else list(PROOF_INVARIANTS)
@@ -114,6 +117,7 @@ def verify(
                 missing_facts=all_missing,
                 solver_ms=solver_ms,
                 human_reason="UNCERTAIN: Safety kernel solver timed out (5s ceiling exceeded).",
+                evaluated_at=evaluated_at,
             )
 
         solver.set("timeout", max(1, remaining_ms))
@@ -182,6 +186,7 @@ def verify(
                     missing_facts=[],
                     solver_ms=veto_ms,
                     human_reason=veto_reason,
+                    evaluated_at=evaluated_at,
                 )
         else:
             # unknown (timeout or undecidable)
@@ -210,6 +215,7 @@ def verify(
                 missing_facts=all_missing,
                 solver_ms=solver_ms,
                 human_reason=reason,
+                evaluated_at=evaluated_at,
             )
 
     solver_ms = (time.perf_counter() - start_time) * 1000.0
@@ -226,6 +232,7 @@ def verify(
             missing_facts=all_missing,
             solver_ms=solver_ms,
             human_reason=f"UNCERTAIN: Missing required fact(s) for verification: {missing_str}",
+            evaluated_at=evaluated_at,
         )
 
     return KernelVerdict(
@@ -236,6 +243,7 @@ def verify(
         missing_facts=[],
         solver_ms=solver_ms,
         human_reason=f"All {len(results)} PROOF invariants verified safe by safety kernel.",
+        evaluated_at=evaluated_at,
     )
 
 
@@ -260,6 +268,7 @@ class Z3SafetyKernel:
             facts=facts,
             timeout_seconds=self.timeout_seconds,
             invariants=self._invariants,
+            clock=self.clock,
         )
 
 

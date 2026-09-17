@@ -271,7 +271,7 @@ should not; the kernel proves, vetoes, abstains, and explains each.
 Both streams converge. Pair on this; do not split it.
 
 - [x] 5.1 `actuator/apply.py`: one idempotent handler per action type, namespace-parameterised
-- [ ] 5.2 `apply_to_production` with the K10 assertion, pre-record, post-apply verification, kill switch
+- [x] 5.2 `apply_to_production` with the K10 assertion, pre-record, post-apply verification, kill switch
 - [ ] 5.3 Slack reasoning post with the candidate table
 - [ ] 5.4 PagerDuty escalation with full comparative evidence
 - [ ] 5.5 Every fake in `Deps` replaced by the real implementation; `--fake` still works

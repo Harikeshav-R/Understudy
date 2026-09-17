@@ -27,6 +27,12 @@ class FakeActuator(Actuator):
                 f"verdict (got {verdict.verdict})"
             )
             raise ActuationError(msg)
+        if verdict.plan_id != plan.plan_id:
+            msg = (
+                f"Cannot actuate plan {plan.plan_id} on production: "
+                f"verdict plan_id mismatch ({verdict.plan_id})"
+            )
+            raise ActuationError(msg)
         self.applied_plans.append((plan.plan_id, "ust-prod"))
         return True
 

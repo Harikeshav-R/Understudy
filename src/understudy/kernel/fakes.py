@@ -2,6 +2,7 @@
 
 from collections.abc import Mapping
 
+from understudy.common.clock import Clock, resolve_clock
 from understudy.contracts.enums import InvariantTier, KernelVerdictType
 from understudy.contracts.kernel import Fact, InvariantResult, KernelVerdict
 from understudy.contracts.plan import RemediationPlan
@@ -46,13 +47,19 @@ class FakeK8sFactSource(K8sFactSource):
 class FakeSafetyKernel(SafetyKernel):
     """Deterministic formal safety kernel fake."""
 
-    def __init__(self, force_verdict: KernelVerdictType | None = None) -> None:
+    def __init__(
+        self,
+        force_verdict: KernelVerdictType | None = None,
+        clock: Clock | None = None,
+    ) -> None:
         self.force_verdict = force_verdict
+        self.clock: Clock = resolve_clock(clock)
 
     async def verify(self, plan: RemediationPlan, facts: list[Fact]) -> KernelVerdict:
         """Evaluate invariants for a plan against facts."""
         _ = facts
         verdict_type = self.force_verdict or KernelVerdictType.PASS
+        now = self.clock.now()
 
         if verdict_type == KernelVerdictType.PASS:
             results = [
@@ -96,6 +103,7 @@ class FakeSafetyKernel(SafetyKernel):
             missing_facts=missing,
             solver_ms=15.0,
             human_reason=human_reason,
+            evaluated_at=now,
         )
 
 
