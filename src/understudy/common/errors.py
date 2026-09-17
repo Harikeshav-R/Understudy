@@ -107,3 +107,11 @@ class MirrorError(UnderstudyError):
 
 class TwinNotFoundError(MirrorError):
     """Raised when a requested twin is not registered with the mirror gateway."""
+
+
+class NotificationError(UnderstudyError):
+    """Raised on failure to post notifications or escalations."""
+
+
+class SlackNotificationError(NotificationError):
+    """Raised on failure to deliver a Slack notification."""

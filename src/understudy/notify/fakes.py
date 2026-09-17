@@ -3,6 +3,7 @@
 from typing import Any
 
 from understudy.contracts.evidence import CandidateEvidence, TournamentResult
+from understudy.contracts.incident import IncidentContext
 from understudy.contracts.kernel import KernelVerdict
 from understudy.contracts.plan import RemediationPlan
 from understudy.notify.api import Notifier
@@ -22,6 +23,12 @@ class FakeNotifier(Notifier):
         plan: RemediationPlan | None = None,
         result: TournamentResult | None = None,
         verdict: KernelVerdict | None = None,
+        *,
+        context: IncidentContext | None = None,
+        plans: list[RemediationPlan] | None = None,
+        evidence: list[CandidateEvidence] | None = None,
+        prod_outcome: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Record Slack post."""
         self.slack_posts.append(
@@ -31,6 +38,11 @@ class FakeNotifier(Notifier):
                 "plan": plan,
                 "result": result,
                 "verdict": verdict,
+                "context": context,
+                "plans": plans,
+                "evidence": evidence,
+                "prod_outcome": prod_outcome,
+                "run_id": run_id,
             }
         )
 

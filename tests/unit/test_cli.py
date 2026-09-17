@@ -1,7 +1,9 @@
 """Unit tests for Understudy CLI entrypoint and package metadata."""
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
@@ -1494,3 +1496,101 @@ def test_cli_tournament_replay_errors(tmp_path: Path) -> None:
     res_invalid = runner.invoke(app, ["tournament", "replay", "--fixture", str(invalid_schema)])
     assert res_invalid.exit_code == 1
     assert "Error validating CandidateEvidence" in (res_invalid.stderr or res_invalid.stdout)
+
+
+def test_cli_notify_slack_preview() -> None:
+    """Verify ust notify slack in preview mode with fixtures."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    context_path = Path("fixtures/context_bad_deploy.json")
+
+    res = runner.invoke(
+        app,
+        [
+            "notify",
+            "slack",
+            "--incident-id",
+            "inc_test_001",
+            "--fixture",
+            str(fixture_path),
+            "--context",
+            str(context_path),
+        ],
+    )
+    assert res.exit_code == 0
+    assert "=== Slack Message Preview" in res.stdout
+    assert "Candidate Scoreboard:" in res.stdout
+    assert "Decision Analysis:" in res.stdout
+    assert "Mirror Traffic Fidelity:" in res.stdout
+
+
+def test_cli_notify_slack_json() -> None:
+    """Verify ust notify slack --json outputs valid JSON blocks."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    res = runner.invoke(
+        app,
+        ["notify", "slack", "--fixture", str(fixture_path), "--json"],
+    )
+    assert res.exit_code == 0
+    json_start = res.stdout.find("[\n")
+    assert json_start != -1
+    blocks = json.loads(res.stdout[json_start:])
+    assert isinstance(blocks, list)
+    assert any(b.get("type") == "header" for b in blocks)
+
+
+def test_cli_notify_slack_post_success() -> None:
+    """Verify ust notify slack --post delivers message."""
+    mock_resp = {"ok": True, "channel": "C12345", "ts": "1726500000.0001"}
+    with patch(
+        "understudy.notify.slack.SlackNotifier.post_reasoning",
+        new_callable=AsyncMock,
+        return_value=mock_resp,
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "slack", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 0
+        assert "Successfully posted Slack reasoning message to channel C12345" in res.stdout
+
+
+def test_cli_notify_slack_post_error() -> None:
+    """Verify ust notify slack --post handles delivery failure."""
+    with patch(
+        "understudy.notify.slack.SlackNotifier.post_reasoning",
+        new_callable=AsyncMock,
+        side_effect=Exception("Slack API token rejected"),
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "slack", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 1
+        assert "Error posting to Slack: Slack API token rejected" in (res.stderr or res.stdout)
+
+
+def test_cli_notify_slack_file_errors(tmp_path: Path) -> None:
+    """Verify file error handling in ust notify slack."""
+    # 1. Nonexistent fixture
+    res1 = runner.invoke(app, ["notify", "slack", "--fixture", "nonexistent.json"])
+    assert res1.exit_code == 1
+    assert "Error: fixture file not found" in (res1.stderr or res1.stdout)
+
+    # 2. Bad JSON in fixture
+    bad_fix = tmp_path / "bad_fixture.json"
+    bad_fix.write_text("not json", encoding="utf-8")
+    res2 = runner.invoke(app, ["notify", "slack", "--fixture", str(bad_fix)])
+    assert res2.exit_code == 1
+    assert "Error loading fixture" in (res2.stderr or res2.stdout)
+
+    # 3. Nonexistent context
+    res3 = runner.invoke(app, ["notify", "slack", "--context", "nonexistent_context.json"])
+    assert res3.exit_code == 1
+    assert "Error: context file not found" in (res3.stderr or res3.stdout)
+
+    # 4. Bad JSON in context
+    bad_ctx = tmp_path / "bad_context.json"
+    bad_ctx.write_text("not json", encoding="utf-8")
+    res4 = runner.invoke(app, ["notify", "slack", "--context", str(bad_ctx)])
+    assert res4.exit_code == 1
+    assert "Error loading context file" in (res4.stderr or res4.stdout)

@@ -1918,5 +1918,190 @@ def kernel_catalogue(
     sys.stdout.write(content)
 
 
+notify_app = typer.Typer(
+    name="notify",
+    help="Notification channels (Slack reasoning posts and PagerDuty escalations).",
+)
+app.add_typer(notify_app, name="notify")
+
+
+@notify_app.command("slack")
+def notify_slack_cmd(
+    incident_id: Annotated[
+        str,
+        typer.Option("--incident-id", "-i", help="Incident identifier."),
+    ] = "inc_demo_001",
+    preview: Annotated[
+        bool,
+        typer.Option("--preview/--no-preview", help="Preview mode (default True unless --post)."),
+    ] = True,
+    post: Annotated[
+        bool,
+        typer.Option("--post", help="Deliver reasoning post to live Slack channel."),
+    ] = False,
+    fixture: Annotated[
+        Path | None,
+        typer.Option(
+            "--fixture",
+            help="Path to CandidateEvidence list JSON fixture.",
+        ),
+    ] = None,
+    context_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON file.",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output raw Block Kit JSON blocks in preview mode.",
+        ),
+    ] = False,
+) -> None:
+    """Preview or post an Understudy 7-block reasoning message to Slack."""
+    _ = preview
+    import asyncio
+    import json
+
+    from pydantic import ValidationError
+
+    from understudy.contracts.enums import ActionType
+    from understudy.contracts.evidence import CandidateEvidence
+    from understudy.contracts.incident import IncidentContext
+    from understudy.contracts.plan import ActionParams, RemediationPlan
+    from understudy.notify.slack import (
+        SlackNotifier,
+        build_slack_reasoning_blocks,
+        build_slack_reasoning_text,
+    )
+    from understudy.tournament.arbiter import arbitrate
+    from understudy.tournament.scorer import score_candidates
+
+    evidences: list[CandidateEvidence] = []
+    if fixture is not None:
+        if not fixture.is_file():
+            typer.echo(f"Error: fixture file not found: {fixture}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            with fixture.open(encoding="utf-8") as f:
+                raw = json.load(f)
+            raw_list = raw if isinstance(raw, list) else raw.get("evidence", [])
+            evidences = [CandidateEvidence.model_validate(item) for item in raw_list]
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            typer.echo(f"Error loading fixture {fixture}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    context: IncidentContext | None = None
+    if context_file is not None:
+        if not context_file.is_file():
+            typer.echo(f"Error: context file not found: {context_file}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            with context_file.open(encoding="utf-8") as f:
+                context = IncidentContext.model_validate_json(f.read())
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            typer.echo(f"Error loading context file {context_file}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    plans: list[RemediationPlan] = []
+    if evidences:
+        for idx, ev in enumerate(evidences):
+            act = (
+                ActionType.ROLLBACK_DEPLOY
+                if idx == 0
+                else (
+                    ActionType.RESTART_WORKLOAD
+                    if idx == 1
+                    else (ActionType.SCALE_WORKLOAD if idx == 2 else ActionType.NO_ACTION)
+                )
+            )
+            workload = "data-service"
+            if context and context.alert:
+                workload = context.alert.service
+            plans.append(
+                RemediationPlan(
+                    plan_id=ev.plan_id,
+                    candidate_index=idx,
+                    action=act,
+                    params=ActionParams(workload=workload),
+                    target_resources=[],
+                    declared_blast_set=[],
+                    inverse=None,
+                    rationale=f"Candidate {idx} intervention",
+                    origin="planner",
+                )
+            )
+
+    result = None
+    if evidences:
+        scores = score_candidates(evidences)
+        result = arbitrate(scores=scores, evidence=evidences)
+
+    if post:
+        notifier = SlackNotifier()
+        try:
+            resp = asyncio.run(
+                notifier.post_reasoning(
+                    incident_id=incident_id,
+                    context=context,
+                    plans=plans,
+                    evidence=evidences,
+                    result=result,
+                    prod_outcome="resolved" if result and result.winner_plan_id else "executed",
+                    run_id=f"run_{incident_id}",
+                )
+            )
+            typer.echo(
+                f"Successfully posted Slack reasoning message to channel {resp.get('channel')} "
+                f"(ts: {resp.get('ts')})"
+            )
+        except Exception as exc:
+            typer.echo(f"Error posting to Slack: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        return
+
+    # Preview mode
+    blocks = build_slack_reasoning_blocks(
+        incident_id=incident_id,
+        context=context,
+        plans=plans,
+        evidence=evidences,
+        result=result,
+        prod_outcome="resolved" if result and result.winner_plan_id else "executed",
+        run_id=f"run_{incident_id}",
+    )
+    fallback_text = build_slack_reasoning_text(
+        incident_id=incident_id,
+        context=context,
+        plans=plans,
+        result=result,
+        prod_outcome="resolved" if result and result.winner_plan_id else "executed",
+    )
+
+    if json_output:
+        typer.echo(json.dumps(blocks, indent=2))
+    else:
+        typer.echo(f"=== Slack Message Preview ({len(blocks)} blocks) ===")
+        typer.echo(f"Fallback Text: {fallback_text}\n")
+        for b in blocks:
+            b_type = b.get("type")
+            if b_type == "header":
+                typer.echo(f"[HEADER] {b['text']['text']}")
+            elif b_type == "section" and "fields" in b:
+                for f_item in b["fields"]:
+                    typer.echo(f"  • {f_item['text'].replace(chr(10), ' ')}")
+            elif b_type == "section":
+                typer.echo(f"\n{b['text']['text']}")
+            elif b_type == "context":
+                for elem in b.get("elements", []):
+                    typer.echo(f"\n{elem['text']}")
+            else:
+                typer.echo("-" * 60)
+
+
 if __name__ == "__main__":
     app()

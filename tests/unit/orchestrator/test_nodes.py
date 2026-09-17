@@ -624,11 +624,17 @@ async def test_notify_slack_node() -> None:
     )
     res1 = await notify_slack_node(state1, deps)
     assert res1 == {}
+    assert len(deps.notifier.slack_posts) == 1  # type: ignore[attr-defined]
+    post1 = deps.notifier.slack_posts[0]  # type: ignore[attr-defined]
+    assert post1["incident_id"] == "inc_123"
+    assert post1["prod_outcome"] == "resolved"
+    assert post1["run_id"] == "run_inc_123"
 
     # Case 2: Without applied plan and prod_outcome is None
     state2 = State(incident_id="inc_123")
     res2 = await notify_slack(state2, deps)
     assert res2 == {}
+    assert len(deps.notifier.slack_posts) == 2  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio

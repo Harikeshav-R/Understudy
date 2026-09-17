@@ -723,6 +723,12 @@ async def test_fake_notifier() -> None:
     notifier = FakeNotifier()
     await notifier.notify_slack("inc_001", "Plan executed")
     assert len(notifier.slack_posts) == 1
+    assert notifier.slack_posts[0]["incident_id"] == "inc_001"
+    assert "context" in notifier.slack_posts[0]
+    assert "plans" in notifier.slack_posts[0]
+    assert "evidence" in notifier.slack_posts[0]
+    assert "prod_outcome" in notifier.slack_posts[0]
+    assert "run_id" in notifier.slack_posts[0]
 
     await notifier.escalate_pagerduty("inc_001", "VETO triggered")
     assert len(notifier.pagerduty_escalations) == 1
