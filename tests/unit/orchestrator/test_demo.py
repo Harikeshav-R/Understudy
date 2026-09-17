@@ -191,3 +191,14 @@ async def test_run_demo_custom_clock() -> None:
     assert record.context.gathered_at == moment
     assert record.started_at == moment
     assert record.finished_at == moment
+
+
+def test_fake_orchestrator_clock_wiring() -> None:
+    """Verify FakeOrchestrator resolves clock from explicit clock or deps."""
+    clock = FrozenClock()
+    orch1 = FakeOrchestrator(clock=clock)
+    assert orch1.clock is clock
+
+    fake_deps = create_fake_deps(clock=clock)
+    orch2 = FakeOrchestrator(deps=fake_deps)
+    assert orch2.clock is clock

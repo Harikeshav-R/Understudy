@@ -33,3 +33,14 @@ class BlastRadiusCalculator(Protocol):
     def calculate(self, target_service: str, affected_services: set[str]) -> float:
         """Calculate normalized blast radius score [0, 1]."""
         raise NotImplementedError
+
+
+from understudy.graph.calculator import ServiceBlastRadiusCalculator  # noqa: E402
+from understudy.graph.service_graph import ServiceDependencyGraph  # noqa: E402
+
+__all__ = [
+    "BlastRadiusCalculator",
+    "DependencyGraph",
+    "ServiceBlastRadiusCalculator",
+    "ServiceDependencyGraph",
+]

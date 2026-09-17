@@ -44,3 +44,15 @@ class Notifier(Protocol):
     ) -> None:
         """Escalate an unresolvable or vetoed incident to PagerDuty on-call."""
         raise NotImplementedError
+
+
+from understudy.notify.composite import CompositeNotifier  # noqa: E402
+from understudy.notify.pagerduty import PagerDutyNotifier  # noqa: E402
+from understudy.notify.slack import SlackNotifier  # noqa: E402
+
+__all__ = [
+    "CompositeNotifier",
+    "Notifier",
+    "PagerDutyNotifier",
+    "SlackNotifier",
+]

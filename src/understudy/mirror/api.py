@@ -20,3 +20,11 @@ class MirrorRegistry(Protocol):
     async def get_stats(self, twin_id: str) -> MirrorStats:
         """Fetch delivery and drop metrics for a registered twin."""
         raise NotImplementedError
+
+
+from understudy.mirror.registry import HttpMirrorRegistry  # noqa: E402
+
+__all__ = [
+    "HttpMirrorRegistry",
+    "MirrorRegistry",
+]

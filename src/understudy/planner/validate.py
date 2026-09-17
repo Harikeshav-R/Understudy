@@ -29,7 +29,6 @@ from understudy.contracts.incident import (
 )
 from understudy.contracts.plan import ActionParams, RemediationPlan
 from understudy.graph.api import DependencyGraph
-from understudy.planner.api import Planner
 from understudy.planner.inverse import synthesize_inverse
 from understudy.planner.prompt import (
     PlannerPromptResponse,
@@ -632,7 +631,7 @@ async def generate_candidates_with_retry(
     ) from last_error
 
 
-class LLMPlanner(Planner):
+class LLMPlanner:
     """Concrete candidate remediation planner with OpenRouter integration."""
 
     def __init__(

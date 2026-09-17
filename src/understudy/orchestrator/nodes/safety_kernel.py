@@ -3,8 +3,9 @@
 from typing import Any
 
 from understudy.common.logging import get_logger
-from understudy.contracts.enums import ActionType, KernelVerdictType, RunOutcome
+from understudy.contracts.enums import KernelVerdictType, RunOutcome
 from understudy.contracts.kernel import Fact
+from understudy.kernel.api import WorkloadReaderFactAdapter, extract_facts
 from understudy.orchestrator.api import Deps
 from understudy.orchestrator.state import State
 
@@ -25,29 +26,47 @@ async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
         }
 
     now = deps.clock.now()
-    target_namespaces = {r.namespace for r in winner_plan.target_resources} or {"ust-prod"}
-    has_inverse = winner_plan.inverse is not None or winner_plan.action == ActionType.NO_ACTION
 
-    facts: list[Fact] = [
-        Fact(
-            name="plan_target_namespaces",
-            value=target_namespaces,
-            source="config",
-            observed_at=now,
-        ),
-        Fact(
-            name="plan_has_inverse",
-            value=has_inverse,
-            source="config",
-            observed_at=now,
-        ),
-        Fact(
-            name="declared_blast_set",
-            value=set(winner_plan.declared_blast_set),
-            source="graph",
-            observed_at=now,
-        ),
-    ]
+    # Find candidate evidence for the winning plan if tournament ran
+    winner_evidence = None
+    if state.evidence:
+        winner_evidence = next(
+            (e for e in state.evidence if e.plan_id == winner_plan.plan_id),
+            None,
+        )
+
+    # Resolve K8s fact source from fleet controller if available
+    workload_reader = getattr(deps.fleet_controller, "workload_reader", None)
+    k8s_source = (
+        WorkloadReaderFactAdapter(workload_reader=workload_reader)
+        if workload_reader is not None
+        else None
+    )
+
+    # Extract complete timestamped facts across K8s, GitHub, store, graph, and evidence
+    facts = await extract_facts(
+        winner_plan,
+        evidence=winner_evidence,
+        context=state.context,
+        k8s_source=k8s_source,
+        deploy_history=deps.deploy_history,
+        run_store=deps.run_store,
+        dependency_graph=deps.dependency_graph,
+        clock=deps.clock,
+    )
+
+    # Ensure plan_target_namespaces has fallback to {"ust-prod"} if empty
+    ns_fact = next((f for f in facts if f.name == "plan_target_namespaces"), None)
+    if ns_fact is None or not ns_fact.value:
+        facts = [f for f in facts if f.name != "plan_target_namespaces"] + [
+            Fact(
+                name="plan_target_namespaces",
+                value={r.namespace for r in winner_plan.target_resources if r.namespace}
+                or {"ust-prod"},
+                source="config",
+                observed_at=now,
+            )
+        ]
 
     verdict = await deps.safety_kernel.verify(winner_plan, facts)
     logger.info(

@@ -112,6 +112,8 @@ def render_graph_mermaid(deps: Deps | None = None) -> str:
     return _render_graph_mermaid(deps=deps)
 
 
+from understudy.orchestrator.fakes import create_fake_deps  # noqa: E402
+
 __all__ = [
     "Deps",
     "Orchestrator",
@@ -120,6 +122,7 @@ __all__ = [
     "StoreCheckpointSaver",
     "build_graph",
     "create_checkpointer",
+    "create_fake_deps",
     "render_graph_mermaid",
     "render_graph_png",
     "run_demo",

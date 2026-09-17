@@ -60,3 +60,17 @@ class DeployHistory(Protocol):
     async def recent_deploys(self, limit: int = 5) -> list[DeployRef]:
         """Fetch recent deployment metadata from version control."""
         raise NotImplementedError
+
+
+from understudy.signals.github import GitHubDeployHistory  # noqa: E402
+from understudy.signals.pagerduty import PagerDutyAlertSource  # noqa: E402
+from understudy.signals.prometheus import PrometheusLokiAdapter  # noqa: E402
+
+__all__ = [
+    "AlertSource",
+    "DeployHistory",
+    "GitHubDeployHistory",
+    "ObservabilityAdapter",
+    "PagerDutyAlertSource",
+    "PrometheusLokiAdapter",
+]

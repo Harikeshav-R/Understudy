@@ -498,6 +498,45 @@ async def test_safety_kernel_node() -> None:
     res_no_act = await safety_kernel(state_no_act, deps)
     assert res_no_act["verdict"].verdict == KernelVerdictType.PASS
 
+    # Case 6: UNCERTAIN verdict triggers escalation
+    deps_uncertain = Deps(
+        **{
+            **deps.__dict__,
+            "safety_kernel": FakeSafetyKernel(force_verdict=KernelVerdictType.UNCERTAIN),
+        }
+    )
+    res_uncertain = await safety_kernel(state_pass, deps_uncertain)
+    assert res_uncertain["verdict"].verdict == KernelVerdictType.UNCERTAIN
+    assert res_uncertain["outcome"] == RunOutcome.ESCALATED
+
+    # Case 7: Winner plan with candidate evidence in state
+    ev = CandidateEvidence(
+        plan_id="plan_0",
+        twin_id="twin_0",
+        applied_at=now,
+        recovered=True,
+        evidence_complete=True,
+        observed_blast_set=["edge-gateway"],
+        probes=[],
+        mirror_stats=MirrorStats(twin_id="twin_0", delivered=100, dropped=1),
+    )
+    state_with_ev = state_pass.model_copy(update={"evidence": [ev]})
+    res_with_ev = await safety_kernel(state_with_ev, deps)
+    assert res_with_ev["verdict"].verdict == KernelVerdictType.PASS
+
+    # Case 8: Fleet controller with workload_reader attribute
+    class _FleetWithReader(FakeFleetController):
+        workload_reader = None
+
+    deps_with_reader = Deps(
+        **{
+            **deps.__dict__,
+            "fleet_controller": _FleetWithReader(),
+        }
+    )
+    res_reader = await safety_kernel(state_pass, deps_with_reader)
+    assert res_reader["verdict"].verdict == KernelVerdictType.PASS
+
 
 @pytest.mark.asyncio
 async def test_actuate_node() -> None:
