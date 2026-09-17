@@ -13,7 +13,7 @@ from typing import Any
 from understudy.actuator.api import Actuator
 from understudy.actuator.production import ProductionActuator
 from understudy.common.clock import Clock, SystemClock, resolve_clock
-from understudy.common.config import Settings, get_settings
+from understudy.common.config import Settings, TimeoutSettings, get_settings
 from understudy.contracts.incident import Alert
 from understudy.contracts.run import RunRecord
 from understudy.fleet.api import FleetController
@@ -90,10 +90,12 @@ def create_real_deps(
     actuator: Actuator | None = None,
     notifier: Notifier | None = None,
     checkpoint_store: CheckpointStore | None = None,
+    timeouts: TimeoutSettings | None = None,
 ) -> Deps:
     """Construct and return a Deps container wired with production implementations."""
     active_settings = settings or get_settings()
     active_clock = resolve_clock(clock or SystemClock())
+    res_timeouts = timeouts or active_settings.timeouts
 
     # 1. Store subsystem
     db = store_db or StoreDatabase(dsn=active_settings.endpoints.postgres_system)
@@ -200,6 +202,7 @@ def create_real_deps(
         notifier=res_notifier,
         clock=active_clock,
         checkpoint_store=checkpoint_store,
+        timeouts=res_timeouts,
     )
 
 

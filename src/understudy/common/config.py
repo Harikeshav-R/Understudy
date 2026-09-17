@@ -34,11 +34,11 @@ class TimeoutSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    fork_seconds: int = 120
-    candidate_apply_seconds: int = 60
-    observation_seconds: int = 200
-    kernel_seconds: int = 5
-    incident_seconds: int = 600
+    fork_seconds: float = 120.0
+    candidate_apply_seconds: float = 60.0
+    observation_seconds: float = 200.0
+    kernel_seconds: float = 5.0
+    incident_seconds: float = 600.0
 
 
 class ClusterSettings(BaseModel):

@@ -7,6 +7,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from understudy.actuator.api import Actuator
 from understudy.common.clock import Clock, SystemClock
+from understudy.common.config import TimeoutSettings
 from understudy.contracts.incident import Alert
 from understudy.contracts.run import RunRecord
 from understudy.fleet.api import FleetController
@@ -49,6 +50,7 @@ class Deps:
     notifier: Notifier
     clock: Clock = field(default_factory=SystemClock)
     checkpoint_store: CheckpointStore | None = None
+    timeouts: TimeoutSettings = field(default_factory=TimeoutSettings)
 
 
 @runtime_checkable
@@ -60,13 +62,13 @@ class Orchestrator(Protocol):
         raise NotImplementedError
 
 
-def build_graph(deps: Deps, checkpointer: Any = ...) -> Any:
+def build_graph(deps: Deps, checkpointer: Any = ..., **kwargs: Any) -> Any:
     """Compile and return the executable LangGraph state graph using provided dependencies."""
     from understudy.orchestrator.graph import build_graph as _build_graph
 
     if checkpointer is ...:
-        return _build_graph(deps)
-    return _build_graph(deps, checkpointer=checkpointer)
+        return _build_graph(deps, **kwargs)
+    return _build_graph(deps, checkpointer=checkpointer, **kwargs)
 
 
 async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
@@ -113,10 +115,24 @@ def render_graph_mermaid(deps: Deps | None = None) -> str:
 
 
 from understudy.orchestrator.fakes import create_fake_deps  # noqa: E402
+from understudy.orchestrator.timeouts import (  # noqa: E402
+    DEFAULT_NODE_TIMEOUT_MAP,
+    IncidentTimeoutError,
+    IncidentWatchdog,
+    NodeTimeoutError,
+    OrchestratorTimeoutError,
+    resolve_node_timeout,
+    with_node_timeout,
+)
 
 __all__ = [
+    "DEFAULT_NODE_TIMEOUT_MAP",
     "Deps",
+    "IncidentTimeoutError",
+    "IncidentWatchdog",
+    "NodeTimeoutError",
     "Orchestrator",
+    "OrchestratorTimeoutError",
     "PostgresCheckpointSaver",
     "State",
     "StoreCheckpointSaver",
@@ -125,6 +141,8 @@ __all__ = [
     "create_fake_deps",
     "render_graph_mermaid",
     "render_graph_png",
+    "resolve_node_timeout",
     "run_demo",
     "run_incident",
+    "with_node_timeout",
 ]

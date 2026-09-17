@@ -18,6 +18,7 @@ import pytest
 from understudy.actuator.api import Actuator
 from understudy.actuator.production import ProductionActuator
 from understudy.common.clock import Clock, FrozenClock, SystemClock
+from understudy.common.config import TimeoutSettings
 from understudy.contracts.enums import RunOutcome
 from understudy.contracts.incident import Alert
 from understudy.contracts.run import RunRecord
@@ -139,6 +140,10 @@ def test_create_real_deps_defaults() -> None:
     assert isinstance(deps.clock, Clock)
     assert isinstance(deps.clock, SystemClock)
 
+    # Timeouts
+    assert isinstance(deps.timeouts, TimeoutSettings)
+    assert deps.timeouts.fork_seconds == 120.0
+
 
 def test_create_real_deps_custom_clock_and_db(tmp_path: Path) -> None:
     """Verify create_real_deps wires custom clock, settings, and database."""
@@ -161,13 +166,16 @@ edges:
 """
     )
 
+    custom_timeouts = TimeoutSettings(fork_seconds=45.0)
     deps = create_real_deps(
         clock=frozen_clock,
         store_db=custom_db,
         dependencies_path=manifest,
+        timeouts=custom_timeouts,
     )
 
     assert deps.clock is frozen_clock
+    assert deps.timeouts.fork_seconds == 45.0
     run_store = deps.run_store
     assert isinstance(run_store, PostgresRunStore)
     assert run_store._db is custom_db

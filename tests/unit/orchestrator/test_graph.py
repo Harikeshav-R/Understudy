@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 import pytest
 
 from understudy.actuator.fakes import FakeActuator
+from understudy.common.config import TimeoutSettings
 from understudy.common.errors import OrchestratorError
 from understudy.contracts.enums import (
     InvariantTier,
@@ -25,6 +27,7 @@ from understudy.contracts.incident import Alert
 from understudy.contracts.kernel import InvariantResult, KernelVerdict
 from understudy.kernel.fakes import FakeSafetyKernel
 from understudy.notify.fakes import FakeNotifier
+from understudy.orchestrator.api import Deps
 from understudy.orchestrator.api import build_graph as api_build_graph
 from understudy.orchestrator.api import run_incident as api_run_incident
 from understudy.orchestrator.fakes import create_fake_deps
@@ -612,3 +615,83 @@ def test_node_runner_protocol() -> None:
 
     runner = cast("NodeRunner", object())
     NodeRunner.__call__(runner, State())
+
+
+@pytest.mark.asyncio
+async def test_node_timeout_in_graph_routes_to_handle_failure() -> None:
+    """A node that exceeds its timeout raises NodeTimeoutError and diverts to handle_failure."""
+    deps = create_fake_deps(timeouts=TimeoutSettings(fork_seconds=1))
+
+    async def slow_fork(state: State, d: Deps) -> dict[str, Any]:
+        _ = (state, d)
+        await asyncio.sleep(0.1)
+        return {}
+
+    from understudy.orchestrator.nodes import fork_fleet as orig_fork
+
+    ALL_NODES["fork_fleet"] = slow_fork
+    try:
+        graph = build_graph(deps, custom_node_timeouts={"fork_fleet": 0.01})
+        alert = _sample_alert("alt_node_timeout")
+        incident_id = f"inc_{alert.alert_id}"
+        initial_state = State(alert=alert, incident_id=incident_id)
+        config: RunnableConfig = {"configurable": {"thread_id": incident_id}}
+        final_output = await graph.ainvoke(initial_state, config=config)
+        final_state = (
+            final_output if isinstance(final_output, State) else State.model_validate(final_output)
+        )
+        assert final_state.outcome == RunOutcome.FAILED
+        assert any("NodeTimeoutError" in err for err in final_state.errors)
+        assert "fork_fleet" in (final_state.escalation_reason or "")
+    finally:
+        ALL_NODES["fork_fleet"] = orig_fork
+
+
+@pytest.mark.asyncio
+async def test_run_incident_whole_incident_watchdog_timeout() -> None:
+    """When incident execution exceeds incident_seconds, watchdog escalates and returns record."""
+    deps = create_fake_deps(timeouts=TimeoutSettings(incident_seconds=1))
+    deps = deps.__class__(**{**deps.__dict__, "timeouts": TimeoutSettings(incident_seconds=0.02)})
+
+    async def slow_observe(state: State, d: Deps) -> dict[str, Any]:
+        _ = (state, d)
+        await asyncio.sleep(0.2)
+        return {}
+
+    from understudy.orchestrator.nodes import observe as orig_observe
+
+    ALL_NODES["observe"] = slow_observe
+    try:
+        alert = _sample_alert("alt_watchdog_to")
+        record = await run_incident(alert, deps)
+        assert record.outcome == RunOutcome.ESCALATED
+        assert "Incident watchdog timeout exceeded" in (record.escalation_reason or "")
+
+        notifier = deps.notifier
+        assert isinstance(notifier, FakeNotifier)
+        assert len(notifier.pagerduty_escalations) == 1
+        assert "watchdog timeout exceeded" in notifier.pagerduty_escalations[0]["reason"]
+    finally:
+        ALL_NODES["observe"] = orig_observe
+
+
+@pytest.mark.asyncio
+async def test_run_incident_watchdog_timeout_before_context() -> None:
+    """When watchdog fires before context is gathered, run_incident raises OrchestratorError."""
+    deps = create_fake_deps()
+    deps = deps.__class__(**{**deps.__dict__, "timeouts": TimeoutSettings(incident_seconds=0.02)})
+
+    async def hanging_ingest(state: State, d: Deps) -> dict[str, Any]:
+        _ = (state, d)
+        await asyncio.sleep(0.2)
+        return {}
+
+    from understudy.orchestrator.nodes import ingest as orig_ingest
+
+    ALL_NODES["ingest"] = hanging_ingest
+    try:
+        alert = _sample_alert("alt_watchdog_no_ctx")
+        with pytest.raises(OrchestratorError, match="Incident watchdog timed out"):
+            await run_incident(alert, deps)
+    finally:
+        ALL_NODES["ingest"] = orig_ingest

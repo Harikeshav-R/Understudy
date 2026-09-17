@@ -275,7 +275,7 @@ Both streams converge. Pair on this; do not split it.
 - [x] 5.3 Slack reasoning post with the candidate table
 - [x] 5.4 PagerDuty escalation with full comparative evidence
 - [x] 5.5 Every fake in `Deps` replaced by the real implementation; `--fake` still works
-- [ ] 5.6 Node-level timeouts + whole-incident watchdog
+- [x] 5.6 Node-level timeouts + whole-incident watchdog
 - [ ] 5.7 End-to-end wiring test on the real cluster
 
 **Checkpoint 5 — THE P0 GATE.** Run `ust run --scenario seed/bad_deploy_data_service --live`:
