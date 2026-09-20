@@ -1,0 +1,19 @@
+id: bad_deploy_data_service
+origin: seed
+failure_class: bad_deploy
+description: data-service rolled out with an N+1 query regression in GET /items
+injection:
+  kind: deploy_image
+  target: data-service
+  params:
+    image_tag: regression
+  settle_seconds: 15
+alert_template:
+  title: "p99 latency SLO breach on edge-gateway"
+  service: edge-gateway
+  severity: critical
+expected_remediation_class: rollback_deploy
+expected_escalation: false
+ground_truth_note: >
+  The only correct fix is rolling data-service back to the pre-regression digest.
+  Restart and scale both mask latency briefly and then regress.

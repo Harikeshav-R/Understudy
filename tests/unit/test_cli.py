@@ -1293,7 +1293,15 @@ def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
             "twin_inc_comp_2": MirrorStats(twin_id="twin_inc_comp_2", delivered=800, dropped=200),
         }
 
+    async def _mock_prod_stats(_self: Any) -> dict[str, Any]:
+        return {"delivered": 1000, "paths": {"/api/items": 1000}}
+
+    async def _mock_twin_paths(_self: Any, _twin_id: str) -> dict[str, int]:
+        return {"/api/items": 1000}
+
     monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_prod_stats", _mock_prod_stats)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_twin_paths", _mock_twin_paths)
 
     res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
     assert res.exit_code == 0
@@ -1301,14 +1309,22 @@ def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
     assert "OK" in res.stdout
     assert "DEGRADED" in res.stdout
 
-    # All twins passing fidelity check
+    # All twins passing fidelity check (with empty paths to test branch without path histogram)
     async def _mock_stats_all_ok(_self: Any) -> dict[str, MirrorStats]:
         return {
             "twin_inc_comp_0": MirrorStats(twin_id="twin_inc_comp_0", delivered=1000, dropped=0),
             "twin_inc_comp_1": MirrorStats(twin_id="twin_inc_comp_1", delivered=995, dropped=5),
         }
 
+    async def _mock_prod_stats_empty(_self: Any) -> dict[str, Any]:
+        return {"delivered": 1000, "paths": {}}
+
+    async def _mock_twin_paths_empty(_self: Any, _twin_id: str) -> dict[str, int]:
+        return {}
+
     monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats_all_ok)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_prod_stats", _mock_prod_stats_empty)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_twin_paths", _mock_twin_paths_empty)
     res_all_ok = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
     assert res_all_ok.exit_code == 0
     assert (
@@ -1747,3 +1763,116 @@ def test_cli_notify_pagerduty_file_errors(tmp_path: Path) -> None:
     res6 = runner.invoke(app, ["notify", "pagerduty", "--verdict", str(bad_v)])
     assert res6.exit_code == 1
     assert "Error loading verdict file" in (res6.stderr or res6.stdout)
+
+
+def test_cli_run_validation_errors() -> None:
+    """Verify ust run validates mutual exclusivity and necessity of --live and --fake."""
+    res_neither = runner.invoke(app, ["run", "--scenario", "seed/bad_deploy_data_service"])
+    assert res_neither.exit_code == 1
+    assert "Either --live or --fake must be specified" in (res_neither.stderr or res_neither.stdout)
+
+    res_both = runner.invoke(
+        app,
+        ["run", "--scenario", "seed/bad_deploy_data_service", "--live", "--fake"],
+    )
+    assert res_both.exit_code == 1
+    assert "Cannot specify both --live and --fake" in (res_both.stderr or res_both.stdout)
+
+
+def test_cli_run_fake_happy_path() -> None:
+    """Verify ust run --fake executes scenario to resolution and prints scoreboard."""
+    res = runner.invoke(
+        app,
+        ["run", "--scenario", "seed/bad_deploy_data_service", "--fake", "--seed", "42"],
+    )
+    assert res.exit_code == 0
+    assert "ingest ->" in res.stdout
+    assert "record_run" in res.stdout
+    assert "Scoreboard" in res.stdout
+    assert "outcome=executed plan=plan_cand_0" in res.stdout
+
+
+def test_cli_run_fake_escalation_migration() -> None:
+    """Verify ust run --fake with migration scenario escalates to PagerDuty due to K3."""
+    res = runner.invoke(
+        app,
+        ["run", "--scenario", "seed/bad_deploy_with_migration", "--fake", "--seed", "42"],
+    )
+    assert res.exit_code == 0
+    assert "escalate_pagerduty" in res.stdout
+    assert "outcome=escalated" in res.stdout
+    assert "K3" in res.stdout
+
+
+def test_cli_run_fake_force_veto() -> None:
+    """Verify ust run --fake with --force-veto escalates to PagerDuty."""
+    res = runner.invoke(
+        app,
+        [
+            "run",
+            "--scenario",
+            "seed/bad_deploy_data_service",
+            "--fake",
+            "--seed",
+            "42",
+            "--force-veto",
+        ],
+    )
+    assert res.exit_code == 0
+    assert "escalate_pagerduty" in res.stdout
+    assert "outcome=escalated" in res.stdout
+
+
+def test_cli_run_without_evidence() -> None:
+    """Verify ust run handles runs that yield no candidate evidence gracefully."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.enums import RunOutcome
+    from understudy.contracts.incident import (
+        Alert,
+        DependencyGraphSnapshot,
+        IncidentContext,
+        MetricWindow,
+    )
+    from understudy.contracts.run import RunRecord
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    ctx = IncidentContext(
+        incident_id="inc_empty",
+        alert=Alert(
+            alert_id="alt_empty",
+            source="synthetic",
+            service="edge-gateway",
+            title="SLO breach",
+            severity="critical",
+            fired_at=now,
+        ),
+        signatures=[],
+        metrics_window=MetricWindow(service="edge-gateway", start_time=now, end_time=now),
+        recent_deploys=[],
+        dependency_graph=DependencyGraphSnapshot(observed_at=now),
+        gathered_at=now,
+    )
+    rec = RunRecord(
+        run_id="run_empty",
+        incident_id="inc_empty",
+        started_at=now,
+        finished_at=now,
+        outcome=RunOutcome.FAILED,
+        context=ctx,
+        plans=[],
+        evidence=[],
+    )
+    with patch(
+        "understudy.runner.run_scenario",
+        new_callable=AsyncMock,
+        return_value=(["ingest", "fail"], rec),
+    ):
+        res = runner.invoke(
+            app,
+            ["run", "--scenario", "seed/bad_deploy_data_service", "--fake"],
+        )
+        assert res.exit_code == 0
+        assert "ingest -> fail" in res.stdout
+        assert "outcome=failed" in res.stdout
+        assert "Scoreboard" not in res.stdout

@@ -8,7 +8,7 @@ Conforms to protocols defined in understudy.store.api:
 
 from typing import Any
 
-from sqlalchemy import any_, case, func, literal, select, text, update
+from sqlalchemy import and_, any_, case, func, literal, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
@@ -76,7 +76,22 @@ class PostgresRunStore(RunStore):
                     text("SELECT pg_advisory_xact_lock(:key)"),
                     {"key": _RUN_CLAIM_ADVISORY_LOCK_KEY},
                 )
-                stmt = select(RunModel).where(RunModel.finished_at.is_(None)).limit(1)
+                finished_incidents = (
+                    select(RunModel.incident_id)
+                    .where(RunModel.finished_at.is_not(None))
+                    .scalar_subquery()
+                )
+                stmt = (
+                    select(RunModel)
+                    .where(
+                        RunModel.finished_at.is_(None),
+                        ~and_(
+                            RunModel.run_id.like("%_pre_actuation"),
+                            RunModel.incident_id.in_(finished_incidents),
+                        ),
+                    )
+                    .limit(1)
+                )
                 res = await session.execute(stmt)
                 if res.scalar_one_or_none() is not None:
                     raise StoreError(
@@ -119,11 +134,22 @@ class PostgresRunStore(RunStore):
             return [RunRecord.model_validate(m.payload) for m in models]
 
     async def get_active_runs(self) -> list[RunRecord]:
-        """List runs with no finished_at timestamp yet."""
+        """List runs with no finished_at timestamp yet whose incident has not finished."""
         async with self._db.session() as session:
+            finished_incidents = (
+                select(RunModel.incident_id)
+                .where(RunModel.finished_at.is_not(None))
+                .scalar_subquery()
+            )
             stmt = (
                 select(RunModel)
-                .where(RunModel.finished_at.is_(None))
+                .where(
+                    RunModel.finished_at.is_(None),
+                    ~and_(
+                        RunModel.run_id.like("%_pre_actuation"),
+                        RunModel.incident_id.in_(finished_incidents),
+                    ),
+                )
                 .order_by(RunModel.started_at.desc())
             )
             res = await session.execute(stmt)

@@ -15,6 +15,7 @@ Implements build-plan step 5.1:
 """
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Any, ClassVar
 
@@ -251,6 +252,14 @@ class K8sPlanApplier:
                     resolved = match.image_digests[workload]
                     if resolved.startswith("sha256:"):
                         base = _extract_base_repo(current_image)
+                        clean_hex = resolved.removeprefix("sha256:")
+                        for tag in ("good", "regression", "latest", "prod"):
+                            candidate_tag_spec = f"{base}:{tag}"
+                            if (
+                                hashlib.sha256(candidate_tag_spec.encode("utf-8")).hexdigest()
+                                == clean_hex
+                            ):
+                                return candidate_tag_spec
                         return f"{base}@{resolved}"
                     return resolved
             except Exception as exc:
@@ -328,6 +337,14 @@ class K8sPlanApplier:
             )
             return True
 
+        container_patch: dict[str, Any] = {
+            "name": target_container.name,
+            "image": target_image,
+        }
+        if workload == "data-service":
+            variant = "regression" if ":regression" in target_image else "good"
+            container_patch["env"] = [{"name": "DATA_SERVICE_VARIANT", "value": variant}]
+
         patch: dict[str, Any] = {
             "metadata": {
                 "annotations": {
@@ -341,14 +358,7 @@ class K8sPlanApplier:
                             ANNOTATION_PLAN_ID: plan.plan_id,
                         }
                     },
-                    "spec": {
-                        "containers": [
-                            {
-                                "name": target_container.name,
-                                "image": target_image,
-                            }
-                        ]
-                    },
+                    "spec": {"containers": [container_patch]},
                 }
             },
         }

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from understudy.contracts.evidence import ProbeSample
     from understudy.contracts.kernel import KernelVerdict
     from understudy.contracts.plan import RemediationPlan
+    from understudy.signals.api import DeployHistory
     from understudy.store.api import RunStore
     from understudy.tournament.api import EnvironmentProbe, ProbeResult
 
@@ -173,9 +174,14 @@ def build_pre_actuation_run_record(
             gathered_at=now,
         )
 
+    inc_id = (
+        context.incident_id
+        if (context and context.incident_id and verdict.incident_id == "inc_kernel_verify")
+        else verdict.incident_id
+    )
     return RunRecord(
-        run_id=f"run_{verdict.incident_id}_pre_actuation",
-        incident_id=verdict.incident_id,
+        run_id=f"run_{inc_id}_pre_actuation",
+        incident_id=inc_id,
         started_at=now,
         finished_at=None,
         outcome=RunOutcome.EXECUTED,
@@ -237,15 +243,18 @@ class ProductionActuator(Actuator):
         applier: K8sPlanApplier | None = None,
         probe: EnvironmentProbe | None = None,
         run_store: RunStore | None = None,
+        deploy_history: DeployHistory | None = None,
         clock: Clock | None = None,
         settings: Settings | None = None,
         enforce_caller_guard: bool = True,
     ) -> None:
         self.settings: Settings = settings or get_settings()
         self.clock: Clock = resolve_clock(clock)
+        self.deploy_history = deploy_history
         self.applier: K8sPlanApplier = applier or K8sPlanApplier(
             clock=self.clock,
             settings=self.settings,
+            deploy_history=deploy_history,
         )
         self.probe: EnvironmentProbe | None = probe
         self.run_store: RunStore | None = run_store

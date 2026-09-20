@@ -276,27 +276,27 @@ Both streams converge. Pair on this; do not split it.
 - [x] 5.4 PagerDuty escalation with full comparative evidence
 - [x] 5.5 Every fake in `Deps` replaced by the real implementation; `--fake` still works
 - [x] 5.6 Node-level timeouts + whole-incident watchdog
-- [ ] 5.7 End-to-end wiring test on the real cluster
+- [x] 5.7 End-to-end wiring test on the real cluster (Harikeshav-R, feat/phase-5-actuation)
 
 **Checkpoint 5 — THE P0 GATE.** Run `ust run --scenario seed/bad_deploy_data_service --live`:
 
-- [ ] Real PagerDuty alert received via the tunnel
-- [ ] Context contains real Loki signatures and the real regression commit
-- [ ] Four candidates generated, one of them the correct rollback
-- [ ] Three twin namespaces Ready, three twin databases cloned
-- [ ] Mirror drop < 5% on all three twins
-- [ ] Scoreboard printed; winner is the rollback; margin > 0.15
-- [ ] Kernel `verdict=pass`
-- [ ] Production rolled back; prod probe healthy within 180 s; `prod_outcome=resolved`
-- [ ] Slack post present with the candidate table
-- [ ] All twin namespaces and databases gone
-- [ ] Run record written and provably immutable
+- [x] Real PagerDuty alert received via the tunnel
+- [x] Context contains real Loki signatures and the real regression commit
+- [x] Four candidates generated, one of them the correct rollback
+- [x] Three twin namespaces Ready, three twin databases cloned
+- [x] Mirror drop < 5% on all three twins
+- [x] Scoreboard printed; winner is the rollback; margin > 0.15
+- [x] Kernel `verdict=pass`
+- [x] Production rolled back; prod probe healthy within 180 s; `prod_outcome=resolved`
+- [x] Slack post present with the candidate table
+- [x] All twin namespaces and databases gone
+- [x] Run record written and provably immutable
 
 Then `ust run --scenario seed/bad_deploy_with_migration --live`:
 
-- [ ] Kernel `verdict=veto invariant=K3`
-- [ ] **No production change** (verify `ust-prod` untouched)
-- [ ] PagerDuty note carries all four candidates with scores and the counterexample
+- [x] Kernel `verdict=veto invariant=K3`
+- [x] **No production change** (verify `ust-prod` untouched)
+- [x] PagerDuty note carries all four candidates with scores and the counterexample
 
 - [ ] Commit tagged `p0-complete`
 

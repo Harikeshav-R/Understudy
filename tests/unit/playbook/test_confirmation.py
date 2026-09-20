@@ -189,6 +189,17 @@ def test_parse_confirmation_response_success() -> None:
     assert res4.retained_playbook_id is None
     assert "No confirmation reason provided" in res4.reason
 
+    # 5. Think tags and conversational wrapper
+    raw5 = (
+        "<think>Let me evaluate the candidates carefully.</think>\n"
+        "Here is the evaluation:\n"
+        '{"retained_playbook_id": "pb_test_01", "confidence": 0.9, "reason": "Matched perfectly"}\n'
+        "Hope this helps!"
+    )
+    res5 = parse_confirmation_response(raw5, valid_ids)
+    assert res5.retained_playbook_id == "pb_test_01"
+    assert res5.confidence == 0.9
+
 
 def test_parse_confirmation_response_hallucinated_id() -> None:
     valid_ids = {"pb_test_01"}

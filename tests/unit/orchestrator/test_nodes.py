@@ -280,6 +280,21 @@ async def test_plan_candidates_node() -> None:
     res_dup = await plan_candidates(state, deps_dup_pb)
     assert len(res_dup["plans"]) == 4
 
+    # Case 5: Playbook retrieval raises an exception (falls back to planner)
+    class ErrorPlaybookLibrary(FakePlaybookLibrary):
+        async def retrieve_candidate(self, incident: IncidentContext) -> RemediationPlan | None:
+            _ = incident
+            raise RuntimeError("Database connection lost during vector search")
+
+    deps_err_pb = Deps(
+        **{
+            **deps.__dict__,
+            "playbook_library": ErrorPlaybookLibrary(),
+        }
+    )
+    res_err = await plan_candidates(state, deps_err_pb)
+    assert len(res_err["plans"]) == 4
+
 
 @pytest.mark.asyncio
 async def test_fork_fleet_node() -> None:
@@ -472,7 +487,13 @@ async def test_safety_kernel_node() -> None:
     state_pass = State(incident_id="inc_123", plans=[p0], tournament=tour)
     res_pass = await safety_kernel(state_pass, deps)
     assert res_pass["verdict"].verdict == KernelVerdictType.PASS
+    assert res_pass["verdict"].incident_id == "inc_123"
     assert "outcome" not in res_pass
+
+    # Case 2b: PASS verdict with empty incident_id
+    state_empty_id = State(incident_id="", plans=[p0], tournament=tour)
+    res_empty_id = await safety_kernel(state_empty_id, deps)
+    assert res_empty_id["verdict"].verdict == KernelVerdictType.PASS
 
     # Case 3: VETO verdict triggers escalation
     deps_veto = Deps(

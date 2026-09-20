@@ -588,8 +588,10 @@ class K8sWorkloadReader(WorkloadReader):
                 volumes=volumes,
             )
 
-        # Read live data for all referenced ConfigMaps
-        config_maps_data = await self.read_config_maps(namespace, all_referenced_cm_names)
+        # Read live data for all referenced ConfigMaps and any custom ConfigMaps in the namespace
+        custom_cm_names = await self.list_custom_config_maps(namespace)
+        all_cm_names = all_referenced_cm_names | custom_cm_names
+        config_maps_data = await self.read_config_maps(namespace, all_cm_names)
 
         return ClusterWorkloadSnapshot(
             namespace=namespace,
@@ -597,6 +599,35 @@ class K8sWorkloadReader(WorkloadReader):
             config_maps=config_maps_data,
             captured_at=self.clock.now(),
         )
+
+    async def list_custom_config_maps(self, namespace: str) -> set[str]:
+        """List custom ConfigMap names in the namespace, ignoring system ConfigMaps."""
+        try:
+            resp = await asyncio.to_thread(
+                self.core_api.list_namespaced_config_map,
+                namespace=namespace,
+                _request_timeout=self.timeout_seconds,
+            )
+        except ApiException as exc:
+            logger.warning(
+                "failed_listing_custom_config_maps",
+                namespace=namespace,
+                status=exc.status,
+                reason=exc.reason,
+            )
+            return set()
+
+        items = getattr(resp, "items", None)
+        if not isinstance(items, list):
+            return set()
+
+        names: set[str] = set()
+        for cm in items:
+            metadata = getattr(cm, "metadata", None)
+            name = getattr(metadata, "name", None) if metadata else None
+            if name and name != "kube-root-ca.crt" and not name.startswith("kube-"):
+                names.add(name)
+        return names
 
     async def read_config_maps(self, namespace: str, names: set[str]) -> dict[str, dict[str, str]]:
         """Read data of referenced ConfigMaps from the cluster namespace."""

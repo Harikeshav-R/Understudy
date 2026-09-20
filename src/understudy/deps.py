@@ -173,6 +173,7 @@ def create_real_deps(
     res_actuator = actuator or ProductionActuator(
         probe=probe,
         run_store=res_run_store,
+        deploy_history=res_deploy_history,
         clock=active_clock,
         settings=active_settings,
     )

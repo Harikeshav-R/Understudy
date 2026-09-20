@@ -65,6 +65,7 @@ class DeployHistory(Protocol):
 from understudy.signals.github import GitHubDeployHistory  # noqa: E402
 from understudy.signals.pagerduty import PagerDutyAlertSource  # noqa: E402
 from understudy.signals.prometheus import PrometheusLokiAdapter  # noqa: E402
+from understudy.signals.scenarios import ScenarioDeployHistory  # noqa: E402
 
 __all__ = [
     "AlertSource",
@@ -73,4 +74,5 @@ __all__ = [
     "ObservabilityAdapter",
     "PagerDutyAlertSource",
     "PrometheusLokiAdapter",
+    "ScenarioDeployHistory",
 ]

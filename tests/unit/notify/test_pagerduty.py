@@ -657,6 +657,49 @@ async def test_pagerduty_notifier_escalate_and_escalate_pagerduty() -> None:
 
 
 @pytest.mark.asyncio
+async def test_pagerduty_notifier_escalate_404_handled() -> None:
+    def handler_404(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": {"message": "Incident Not Found"}})
+
+    client_404 = httpx.AsyncClient(transport=httpx.MockTransport(handler_404))
+    notifier_404 = PagerDutyNotifier(token="mock-tok", http_client=client_404)
+
+    resp = await notifier_404.escalate(
+        incident_id="inc_synthetic",
+        reason="Veto test",
+        pd_incident_id="synthetic_id",
+    )
+    assert resp["note"]["status"] == "incident_not_found"
+    assert resp["incident"]["status"] == "incident_not_found"
+
+    def handler_500_note(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="Internal Server Error")
+
+    client_500 = httpx.AsyncClient(transport=httpx.MockTransport(handler_500_note))
+    notifier_500 = PagerDutyNotifier(token="mock-tok", http_client=client_500)
+    with pytest.raises(PagerDutyNotificationError, match="HTTP 500"):
+        await notifier_500.escalate(
+            incident_id="inc_err",
+            reason="error",
+            pd_incident_id="id1",
+        )
+
+    def handler_500_urgency(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(201, json={"note": {"id": "N1"}})
+        return httpx.Response(500, text="Urgency Error")
+
+    client_500_urgency = httpx.AsyncClient(transport=httpx.MockTransport(handler_500_urgency))
+    notifier_500_urgency = PagerDutyNotifier(token="mock-tok", http_client=client_500_urgency)
+    with pytest.raises(PagerDutyNotificationError, match="HTTP 500"):
+        await notifier_500_urgency.escalate(
+            incident_id="inc_err2",
+            reason="error",
+            pd_incident_id="id2",
+        )
+
+
+@pytest.mark.asyncio
 async def test_pagerduty_notifier_notify_slack_raises() -> None:
     notifier = PagerDutyNotifier(token="mock-tok")
     with pytest.raises(NotImplementedError, match="Slack notification is handled by SlackNotifier"):

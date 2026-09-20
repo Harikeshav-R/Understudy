@@ -549,6 +549,90 @@ async def test_rehearsal_tournament_judge_failure_handled_gracefully() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rehearsal_tournament_judge_timeout_handled_gracefully() -> None:
+    """When advisory LLM judge times out, tournament proceeds safely without it."""
+    clock = FrozenClock(datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC))
+    now = clock.now()
+
+    mock_probe = AsyncMock()
+    mock_probe.probe_environment.return_value = ProbeResult(
+        namespace="ust-twin-0",
+        target_service="edge-gateway",
+        probes=[
+            ProbeSample(
+                at=now,
+                healthy=True,
+                p99_latency_ms=90.0,
+                error_rate=0.0,
+            )
+            for _ in range(60)
+        ],
+        recovered=True,
+        recovery_seconds=15.0,
+        timeout_exceeded=False,
+    )
+
+    mock_blast = AsyncMock()
+    mock_blast.capture_baseline.return_value = EnvironmentBaseline(
+        namespace="ust-twin-0",
+        captured_at=now,
+        window_start=now,
+        window_end=now,
+        baselines={},
+    )
+    mock_blast.evaluate_environment.return_value = BlastEvaluation(
+        target_service="data-service",
+        reachable_set=["data-service"],
+        affected_services=[],
+        observed_blast_set=[],
+        blast_radius=0.0,
+        downstream_error_delta=0.0,
+        pre_apply_baselines={},
+        post_apply_windows={},
+    )
+
+    mock_judge = AsyncMock()
+    mock_judge.evaluate.side_effect = TimeoutError("Judge call timed out")
+
+    tournament = RehearsalTournament(
+        probe=mock_probe,
+        blast=mock_blast,
+        judge=mock_judge,
+        clock=clock,
+    )
+
+    twins = [
+        TwinHandle(
+            twin_id="twin_0",
+            incident_id="inc_test",
+            candidate_index=0,
+            namespace="ust-twin-0",
+            database="twin_db_0",
+            forked_from_snapshot_at=now,
+            ready_at=now,
+            state="ready",
+        )
+    ]
+    plans = [
+        RemediationPlan(
+            plan_id="plan_0",
+            candidate_index=0,
+            action=ActionType.ROLLBACK_DEPLOY,
+            params=ActionParams(workload="data-service"),
+            origin="planner",
+            rationale="Rollback bad deploy",
+        )
+    ]
+
+    evidences, result = await tournament.observe_and_score(twins, plans)
+    assert len(evidences) == 1
+    assert result.outcome == TournamentOutcome.DECIDED
+    assert result.winner_plan_id == "plan_0"
+    assert result.llm_ranking is None
+    assert result.llm_agreement is None
+
+
+@pytest.mark.asyncio
 async def test_rehearsal_tournament_without_judge() -> None:
     """RehearsalTournament operates normally when judge is None."""
     clock = FrozenClock(datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC))

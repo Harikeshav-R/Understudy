@@ -8,6 +8,7 @@ Implements build-plan step A4.5, ADR-017, ADR-018, and architecture §2.7, §2.8
 - Implements RehearsalTournament conforming to the Tournament protocol.
 """
 
+import asyncio
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -341,9 +342,10 @@ class RehearsalTournament(Tournament):
                 "RehearsalTournament requires EnvironmentProbe and BlastTracker to observe twins"
             )
 
-        evidences: list[CandidateEvidence] = []
-        for twin, plan in zip(twins, plans, strict=False):
+        async def _rehearse_one(twin: TwinHandle, plan: RemediationPlan) -> CandidateEvidence:
             applied_at = twin.ready_at or now
+            assert self.blast is not None
+            assert self.probe is not None
 
             # 1. Capture pre-apply telemetry baseline BEFORE candidate rehearsal (architecture §2.6)
             baseline = await self.blast.capture_baseline(namespace=twin.namespace, at=applied_at)
@@ -372,7 +374,7 @@ class RehearsalTournament(Tournament):
                 probe_result.recovered or len(probe_result.probes) >= 60
             ) and mirror_stats.drop_ratio <= 0.05
 
-            ev = CandidateEvidence(
+            return CandidateEvidence(
                 plan_id=plan.plan_id,
                 twin_id=twin.twin_id,
                 applied_at=applied_at,
@@ -385,15 +387,22 @@ class RehearsalTournament(Tournament):
                 mirror_stats=mirror_stats,
                 evidence_complete=evidence_complete,
             )
-            evidences.append(ev)
+
+        tasks = [_rehearse_one(t, p) for t, p in zip(twins, plans, strict=False)]
+        evidences = list(await asyncio.gather(*tasks))
 
         scores = self.scorer.score(evidences)
 
         judge_eval: JudgeEvaluation | None = None
         if self.judge is not None:
             try:
-                judge_eval = await self.judge.evaluate(evidences)
-            except (JudgeError, httpx.HTTPError, UnderstudyError) as exc:
+                judge_eval = await asyncio.wait_for(self.judge.evaluate(evidences), timeout=5.0)
+            except (
+                JudgeError,
+                httpx.HTTPError,
+                UnderstudyError,
+                TimeoutError,
+            ) as exc:
                 logger.warning("llm_judge_evaluation_failed", error=str(exc))
                 judge_eval = None
 

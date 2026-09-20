@@ -130,3 +130,299 @@ def test_create_synthetic_alert_normalizes_service_override() -> None:
         service="auth-service-k8s",
     )
     assert alert.service == "auth-service"
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_invalid_base() -> None:
+    """Non-DeployHistory base raises TypeError."""
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    with pytest.raises(TypeError, match="must implement DeployHistory protocol"):
+        ScenarioDeployHistory(base="not_a_deploy_history", scenario_id="bad_deploy")
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_non_migration() -> None:
+    """Non-migration scenario leaves deploys unchanged."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.fakes import FakeDeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    base = FakeDeployHistory(
+        deploys=[
+            DeployRef(
+                commit_sha="c1",
+                image_digests={"data-service": "tag1"},
+                deployed_at=now,
+                pr_number=1,
+                contains_migration=False,
+            )
+        ]
+    )
+    history = ScenarioDeployHistory(base=base, scenario_id="bad_deploy_data_service")
+    deploys = await history.recent_deploys(limit=5)
+    assert len(deploys) == 1
+    assert deploys[0].commit_sha == "c1"
+    assert deploys[0].contains_migration is False
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_non_migration_three_deploys() -> None:
+    """Non-migration scenario with >= 3 deploys marks oldest commit as migration baseline."""
+    from datetime import UTC, datetime, timedelta
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.fakes import FakeDeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    base = FakeDeployHistory(
+        deploys=[
+            DeployRef(
+                commit_sha="c3",
+                image_digests={"s": "t3"},
+                deployed_at=now,
+                contains_migration=False,
+            ),
+            DeployRef(
+                commit_sha="c2",
+                image_digests={"s": "t2"},
+                deployed_at=now - timedelta(hours=1),
+                contains_migration=False,
+            ),
+            DeployRef(
+                commit_sha="c1",
+                image_digests={"s": "t1"},
+                deployed_at=now - timedelta(hours=2),
+                contains_migration=False,
+            ),
+        ]
+    )
+    history = ScenarioDeployHistory(base=base, scenario_id="bad_deploy_data_service")
+    deploys = await history.recent_deploys(limit=5)
+    assert len(deploys) == 3
+    assert deploys[0].commit_sha == "c3"
+    assert deploys[0].contains_migration is False
+    assert deploys[1].commit_sha == "c2"
+    assert deploys[1].contains_migration is False
+    assert deploys[2].commit_sha == "c1"
+    assert deploys[2].contains_migration is True
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_migration_two_deploys() -> None:
+    """Migration scenario injects migration commit between head and target."""
+    from datetime import UTC, datetime, timedelta
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.fakes import FakeDeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    t0 = now
+    t1 = now - timedelta(minutes=10)
+    base = FakeDeployHistory(
+        deploys=[
+            DeployRef(
+                commit_sha="head",
+                image_digests={"data-service": "reg"},
+                deployed_at=t0,
+                pr_number=1,
+                contains_migration=False,
+            ),
+            DeployRef(
+                commit_sha="target",
+                image_digests={"data-service": "good"},
+                deployed_at=t1,
+                pr_number=2,
+                contains_migration=False,
+            ),
+        ]
+    )
+    history = ScenarioDeployHistory(base=base, scenario_id="bad_deploy_with_migration")
+    deploys = await history.recent_deploys(limit=5)
+    assert len(deploys) == 3
+    assert deploys[0].commit_sha == "head"
+    assert deploys[1].commit_sha == "mig_boundary_commit"
+    assert deploys[1].contains_migration is True
+    assert t1 < deploys[1].deployed_at < t0
+    assert deploys[2].commit_sha == "target"
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_migration_head_older_than_target() -> None:
+    """Migration scenario where head_time <= target_time offsets by 60s."""
+    from datetime import UTC, datetime, timedelta
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.fakes import FakeDeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    base = FakeDeployHistory(
+        deploys=[
+            DeployRef(
+                commit_sha="c1",
+                image_digests={"data-service": "reg"},
+                deployed_at=now,
+                pr_number=1,
+                contains_migration=False,
+            ),
+            DeployRef(
+                commit_sha="c2",
+                image_digests={"data-service": "good"},
+                deployed_at=now + timedelta(minutes=5),
+                pr_number=2,
+                contains_migration=False,
+            ),
+        ]
+    )
+    history = ScenarioDeployHistory(base=base, scenario_id="bad_deploy_with_migration")
+    deploys = await history.recent_deploys(limit=5)
+    assert len(deploys) == 3
+    assert deploys[1].contains_migration is True
+    assert deploys[1].deployed_at == deploys[2].deployed_at + timedelta(seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_migration_single_deploy() -> None:
+    """Migration scenario with 1 base deploy prepends migration deploy."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.fakes import FakeDeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    base = FakeDeployHistory(
+        deploys=[
+            DeployRef(
+                commit_sha="c1",
+                image_digests={"data-service": "reg"},
+                deployed_at=now,
+                pr_number=1,
+                contains_migration=False,
+            )
+        ]
+    )
+    history = ScenarioDeployHistory(base=base, scenario_id="seed/bad_deploy_with_migration.yaml")
+    deploys = await history.recent_deploys(limit=5)
+    assert len(deploys) == 2
+    assert deploys[0].commit_sha == "mig_boundary_commit"
+    assert deploys[0].contains_migration is True
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_migration_empty_deploys() -> None:
+    """Migration scenario with empty base deploys generates fallback sequence."""
+    from unittest.mock import AsyncMock
+
+    from understudy.signals.api import DeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    base = AsyncMock(spec=DeployHistory)
+    base.recent_deploys.return_value = []
+    history = ScenarioDeployHistory(
+        base=base,
+        scenario_id="bad_deploy",
+        force_migration=True,
+    )
+    deploys = await history.recent_deploys(limit=5)
+    assert len(deploys) == 3
+    assert any(d.contains_migration for d in deploys)
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_already_has_migration() -> None:
+    """If base deploys already have a migration, leaves them unchanged."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.fakes import FakeDeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    base = FakeDeployHistory(
+        deploys=[
+            DeployRef(
+                commit_sha="c1",
+                image_digests={},
+                deployed_at=now,
+                pr_number=1,
+                contains_migration=True,
+            )
+        ]
+    )
+    history = ScenarioDeployHistory(base=base, scenario_id="bad_deploy_with_migration")
+    deploys = await history.recent_deploys(limit=5)
+    assert len(deploys) == 1
+    assert deploys[0].commit_sha == "c1"
+
+
+@pytest.mark.asyncio
+async def test_scenario_deploy_history_context_manager() -> None:
+    """ScenarioDeployHistory supports async context manager and close."""
+    from understudy.contracts.incident import DeployRef
+    from understudy.signals.api import DeployHistory
+    from understudy.signals.scenarios import ScenarioDeployHistory
+
+    class DummyContextDeployHistory(DeployHistory):
+        def __init__(self) -> None:
+            self.entered = False
+            self.exited = False
+            self.closed = False
+
+        async def recent_deploys(self, _limit: int = 5) -> list[DeployRef]:
+            return []
+
+        async def close(self) -> None:
+            self.closed = True
+
+        async def __aenter__(self) -> "DummyContextDeployHistory":
+            self.entered = True
+            return self
+
+        async def __aexit__(self, *args: object) -> None:
+            self.exited = True
+
+    base = DummyContextDeployHistory()
+    history = ScenarioDeployHistory(base=base, scenario_id="test")
+    async with history as h:
+        assert h is history
+    assert base.entered is True
+    assert base.exited is True
+
+    # Close directly
+    await history.close()
+    assert base.closed is True
+
+    # Base with close only (falls back in __aexit__)
+    class DummyCloseOnly(DeployHistory):
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def recent_deploys(self, _limit: int = 5) -> list[DeployRef]:
+            return []
+
+        async def close(self) -> None:
+            self.closed = True
+
+    close_base = DummyCloseOnly()
+    close_history = ScenarioDeployHistory(base=close_base, scenario_id="test")
+    async with close_history as h_close:
+        assert h_close is close_history
+    assert close_base.closed is True
+
+    # Base without close or context manager
+    class DummyPlain(DeployHistory):
+        async def recent_deploys(self, _limit: int = 5) -> list[DeployRef]:
+            return []
+
+    plain_base = DummyPlain()
+    plain_history = ScenarioDeployHistory(base=plain_base, scenario_id="test")
+    await plain_history.close()
+    async with plain_history as h_plain:
+        assert h_plain is plain_history

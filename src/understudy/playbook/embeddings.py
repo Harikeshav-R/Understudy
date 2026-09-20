@@ -62,8 +62,9 @@ class OpenRouterEmbeddingClient:
         payload: dict[str, Any] = {
             "model": self.settings.embedding_model,
             "input": text,
-            "dimensions": self.target_dim,
         }
+        if "text-embedding-3" in self.settings.embedding_model:
+            payload["dimensions"] = self.target_dim
         timeout = float(self.settings.timeouts.incident_seconds)
 
         if self._client is not None:

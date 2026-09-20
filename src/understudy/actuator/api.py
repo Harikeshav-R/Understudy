@@ -21,3 +21,6 @@ class Actuator(Protocol):
     async def revert(self, plan: RemediationPlan, namespace: str) -> bool:
         """Revert an applied remediation plan by executing its inverse."""
         raise NotImplementedError
+
+
+__all__ = ["Actuator"]

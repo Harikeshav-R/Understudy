@@ -401,8 +401,26 @@ class PagerDutyNotifier(Notifier):
             urgency=urgency,
         )
 
-        note_resp = await self.add_incident_note(target_pd_id, note_content)
-        urgency_resp = await self.set_incident_urgency(target_pd_id, urgency=urgency)
+        try:
+            note_resp = await self.add_incident_note(target_pd_id, note_content)
+        except PagerDutyNotificationError as exc:
+            if "404" in str(exc):
+                logger.warning(
+                    "pagerduty_incident_not_found",
+                    pd_incident_id=target_pd_id,
+                    incident_id=incident_id,
+                )
+                note_resp = {"status": "incident_not_found", "pd_incident_id": target_pd_id}
+            else:
+                raise
+
+        try:
+            urgency_resp = await self.set_incident_urgency(target_pd_id, urgency=urgency)
+        except PagerDutyNotificationError as exc:
+            if "404" in str(exc):
+                urgency_resp = {"status": "incident_not_found", "pd_incident_id": target_pd_id}
+            else:
+                raise
 
         return {
             "pd_incident_id": target_pd_id,

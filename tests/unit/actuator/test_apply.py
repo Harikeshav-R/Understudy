@@ -3,6 +3,7 @@
 Enforces 100% statement and branch test coverage.
 """
 
+import hashlib
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
@@ -211,7 +212,62 @@ async def test_rollback_deploy_direct_image_success() -> None:
         patch_body["spec"]["template"]["spec"]["containers"][0]["image"]
         == "localhost:5001/data-service:good"
     )
+    assert patch_body["spec"]["template"]["spec"]["containers"][0]["env"] == [
+        {"name": "DATA_SERVICE_VARIANT", "value": "good"}
+    ]
     assert patch_body["metadata"]["annotations"][ANNOTATION_PLAN_ID] == "plan_1"
+
+
+@pytest.mark.asyncio
+async def test_rollback_deploy_data_service_regression_variant() -> None:
+    apps_api = MagicMock(spec=client.AppsV1Api)
+    dep = _make_deployment(image="localhost:5001/data-service:good")
+    apps_api.read_namespaced_deployment.return_value = dep
+
+    applier = K8sPlanApplier(apps_api=apps_api)
+    plan = RemediationPlan(
+        plan_id="plan_reg",
+        candidate_index=0,
+        action=ActionType.ROLLBACK_DEPLOY,
+        params=ActionParams(
+            workload="data-service",
+            target_commit="localhost:5001/data-service:regression",
+        ),
+        rationale="Roll back to regression tag",
+        origin="planner",
+    )
+
+    success = await applier.apply(plan, "ust-prod")
+    assert success is True
+    patch_body = apps_api.patch_namespaced_deployment.call_args.kwargs["body"]
+    assert patch_body["spec"]["template"]["spec"]["containers"][0]["env"] == [
+        {"name": "DATA_SERVICE_VARIANT", "value": "regression"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_rollback_deploy_non_data_service_no_env() -> None:
+    apps_api = MagicMock(spec=client.AppsV1Api)
+    dep = _make_deployment(workload="auth-service", image="localhost:5001/auth-service:v2")
+    apps_api.read_namespaced_deployment.return_value = dep
+
+    applier = K8sPlanApplier(apps_api=apps_api)
+    plan = RemediationPlan(
+        plan_id="plan_auth",
+        candidate_index=0,
+        action=ActionType.ROLLBACK_DEPLOY,
+        params=ActionParams(
+            workload="auth-service",
+            target_commit="localhost:5001/auth-service:v1",
+        ),
+        rationale="Roll back auth-service",
+        origin="planner",
+    )
+
+    success = await applier.apply(plan, "ust-prod")
+    assert success is True
+    patch_body = apps_api.patch_namespaced_deployment.call_args.kwargs["body"]
+    assert "env" not in patch_body["spec"]["template"]["spec"]["containers"][0]
 
 
 @pytest.mark.asyncio
@@ -276,6 +332,49 @@ async def test_rollback_deploy_with_deploy_history() -> None:
     assert (
         patch_body["spec"]["template"]["spec"]["containers"][0]["image"]
         == "localhost:5001/data-service@sha256:abcd000011112222"
+    )
+
+
+@pytest.mark.asyncio
+async def test_rollback_deploy_with_deploy_history_synthetic_tag_sha256() -> None:
+    apps_api = MagicMock(spec=client.AppsV1Api)
+    dep = _make_deployment(image="localhost:5001/data-service:regression")
+    apps_api.read_namespaced_deployment.return_value = dep
+
+    good_tag = "localhost:5001/data-service:good"
+    synthetic_hex = hashlib.sha256(good_tag.encode("utf-8")).hexdigest()
+
+    deploy_history = FakeDeployHistory(
+        deploys=[
+            DeployRef(
+                commit_sha="c0ffee1234567890abcdef",
+                image_digests={"data-service": f"sha256:{synthetic_hex}"},
+                deployed_at=FIXED_TIME,
+                pr_number=1,
+                contains_migration=False,
+            )
+        ]
+    )
+
+    applier = K8sPlanApplier(apps_api=apps_api, deploy_history=deploy_history)
+    plan = RemediationPlan(
+        plan_id="plan_1",
+        candidate_index=0,
+        action=ActionType.ROLLBACK_DEPLOY,
+        params=ActionParams(
+            workload="data-service",
+            target_commit="c0ffee1234",
+        ),
+        rationale="Rollback via git commit with synthetic sha256 of tag",
+        origin="planner",
+    )
+
+    success = await applier.apply(plan, "ust-prod")
+    assert success is True
+    patch_body = apps_api.patch_namespaced_deployment.call_args.kwargs["body"]
+    assert (
+        patch_body["spec"]["template"]["spec"]["containers"][0]["image"]
+        == "localhost:5001/data-service:good"
     )
 
 

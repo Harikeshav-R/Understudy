@@ -108,6 +108,93 @@ def demo(
         typer.echo(f"outcome={record.outcome.value}")
 
 
+@app.command("run")
+def run_cmd(
+    scenario: Annotated[
+        str,
+        typer.Option(
+            "--scenario",
+            "-s",
+            help="Scenario identifier or YAML file path (e.g. seed/bad_deploy_data_service).",
+        ),
+    ],
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live",
+            help="Execute against real live cluster, telemetry, and external integrations.",
+        ),
+    ] = False,
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Execute with deterministic in-memory component fakes.",
+        ),
+    ] = False,
+    seed: Annotated[
+        int,
+        typer.Option(
+            "--seed",
+            help="Random seed for reproducible execution.",
+        ),
+    ] = 42,
+    force_veto: Annotated[
+        bool,
+        typer.Option(
+            "--force-veto",
+            help="Force safety kernel to issue a VETO verdict on invariant K3.",
+        ),
+    ] = False,
+    inject: Annotated[
+        bool,
+        typer.Option(
+            "--inject/--no-inject",
+            help="Perform pre-incident fault injection on the cluster (default True).",
+        ),
+    ] = True,
+) -> None:
+    """Run an incident scenario through the full control loop to resolution or escalation."""
+    if not live and not fake:
+        typer.echo("Error: Either --live or --fake must be specified.", err=True)
+        raise typer.Exit(code=1)
+    if live and fake:
+        typer.echo("Error: Cannot specify both --live and --fake.", err=True)
+        raise typer.Exit(code=1)
+
+    import asyncio
+    import sys
+
+    from understudy.common.logging import configure_logging
+    from understudy.runner import format_run_summary, format_scoreboard_table, run_scenario
+    from understudy.tournament.scorer import score_candidates
+
+    try:
+        configure_logging(log_level="INFO", file=sys.stderr)
+        transitions, record = asyncio.run(
+            run_scenario(
+                scenario_id_or_path=scenario,
+                live=live,
+                fake=fake,
+                seed=seed,
+                force_veto=force_veto,
+                inject=inject,
+            )
+        )
+    finally:
+        configure_logging(log_level="INFO")
+
+    typer.echo(" -> ".join(transitions))
+
+    if record.evidence:
+        scores = score_candidates(record.evidence)
+        scoreboard_text = format_scoreboard_table(record.evidence, scores)
+        typer.echo(scoreboard_text)
+
+    summary_text = format_run_summary(record)
+    typer.echo(summary_text)
+
+
 graph_app = typer.Typer(
     name="graph",
     help="Control loop graph rendering and service dependency DAG inspection.",

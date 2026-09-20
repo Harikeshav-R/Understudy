@@ -43,9 +43,32 @@ async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
         else None
     )
 
+    # Ensure plan destined for production targets ust-prod for safety verification
+    prod_target_resources = [
+        r.model_copy(update={"namespace": "ust-prod"})
+        if (not r.namespace or "twin" in r.namespace)
+        else r
+        for r in winner_plan.target_resources
+    ]
+    verified_plan = winner_plan.model_copy(update={"target_resources": prod_target_resources})
+    if verified_plan.inverse is not None:
+        inv_resources = [
+            r.model_copy(update={"namespace": "ust-prod"})
+            if (not r.namespace or "twin" in r.namespace)
+            else r
+            for r in verified_plan.inverse.target_resources
+        ]
+        verified_plan = verified_plan.model_copy(
+            update={
+                "inverse": verified_plan.inverse.model_copy(
+                    update={"target_resources": inv_resources}
+                )
+            }
+        )
+
     # Extract complete timestamped facts across K8s, GitHub, store, graph, and evidence
     facts = await extract_facts(
-        winner_plan,
+        verified_plan,
         evidence=winner_evidence,
         context=state.context,
         k8s_source=k8s_source,
@@ -69,6 +92,8 @@ async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
         ]
 
     verdict = await deps.safety_kernel.verify(winner_plan, facts)
+    if state.incident_id and verdict.incident_id != state.incident_id:
+        verdict = verdict.model_copy(update={"incident_id": state.incident_id})
     logger.info(
         "kernel_evaluated",
         verdict=verdict.verdict.value,

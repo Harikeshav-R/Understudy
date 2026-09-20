@@ -585,8 +585,9 @@ async def generate_candidates_with_retry(
     last_error: Exception | None = None
 
     for attempt in range(max_retries + 1):
-        raw_text = await llm_caller(messages)
+        raw_text: str | None = None
         try:
+            raw_text = await llm_caller(messages)
             unnormalised_plans = validate_and_parse_plans(raw_text, require_inverse=False)
             logger.info(
                 "planner_schema_validated",
@@ -611,7 +612,7 @@ async def generate_candidates_with_retry(
                 max_retries=max_retries,
                 error=str(exc),
             )
-            if attempt < max_retries:
+            if attempt < max_retries and raw_text is not None:
                 messages = list(messages)
                 messages.append({"role": "assistant", "content": raw_text})
                 messages.append(

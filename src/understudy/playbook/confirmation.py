@@ -131,10 +131,19 @@ def parse_confirmation_response(
 ) -> ConfirmationResult:
     """Parse JSON response from confirmation LLM and validate retained ID."""
     cleaned = raw_response.strip()
+    # Strip reasoning / think tags if present
+    cleaned = re.sub(r"<(think|thought)>.*?</\1>", "", cleaned, flags=re.DOTALL).strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\n", "", cleaned)
         cleaned = re.sub(r"\n```$", "", cleaned)
         cleaned = cleaned.strip()
+
+    # If raw JSON is wrapped in other text, extract substring between first { and last }
+    if not (cleaned.startswith("{") and cleaned.endswith("}")):
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and start < end:
+            cleaned = cleaned[start : end + 1]
 
     try:
         data = json.loads(cleaned)
@@ -220,7 +229,6 @@ class PlaybookConfirmer:
             "model": self.settings.llm_model,
             "messages": messages,
             "temperature": 0.0,
-            "response_format": {"type": "json_object"},
         }
         timeout = float(self.settings.timeouts.incident_seconds)
 
