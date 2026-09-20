@@ -20,7 +20,7 @@ from understudy.actuator.production import (
 )
 from understudy.common.clock import FrozenClock
 from understudy.common.config import Settings
-from understudy.common.errors import ActuationError
+from understudy.common.errors import ActuationError, ObservabilityError
 from understudy.contracts.enums import ActionType, InvariantTier, KernelVerdictType, RunOutcome
 from understudy.contracts.evidence import ProbeSample
 from understudy.contracts.incident import (
@@ -164,10 +164,11 @@ def test_assert_k10_authorisation_success() -> None:
     assert_k10_authorisation(plan, verdict, now=FIXED_NOW)
 
 
-def test_assert_k10_authorisation_none_timestamp_success() -> None:
+def test_assert_k10_authorisation_none_timestamp_raises() -> None:
     plan = _make_plan("plan_1")
     verdict = _make_verdict("plan_1", evaluated_at=None)
-    assert_k10_authorisation(plan, verdict, now=FIXED_NOW)
+    with pytest.raises(ActuationError, match="evaluated_at is required"):
+        assert_k10_authorisation(plan, verdict, now=FIXED_NOW)
 
 
 def test_assert_k10_authorisation_veto_raises() -> None:
@@ -422,12 +423,20 @@ async def test_production_actuator_pre_record_and_probe_resolved() -> None:
     success = await actuator.apply_to_production(plan, verdict, context=ctx)
     assert success is True
     assert actuator.last_prod_outcome == "resolved"
+    mock_probe.sample_once.assert_called_with(
+        namespace="ust-prod",
+        target_service="edge-gateway",
+    )
 
-    # Verify pre-actuation record was persisted
+    # Verify pre-actuation and post-actuation records were persisted (ADR-028)
     pre_run = await run_store.get_run(f"run_{verdict.incident_id}_pre_actuation")
     assert pre_run is not None
     assert pre_run.prod_applied_plan_id == "plan_1"
     assert pre_run.context == ctx
+
+    post_run = await run_store.get_run(f"run_{verdict.incident_id}_post_actuation")
+    assert post_run is not None
+    assert post_run.prod_outcome == "resolved"
 
 
 @pytest.mark.asyncio
@@ -437,7 +446,7 @@ async def test_production_actuator_baseline_probe_failure_continues() -> None:
     mock_applier.apply.return_value = True
 
     mock_probe = AsyncMock(spec=EnvironmentProbe)
-    mock_probe.sample_once.side_effect = RuntimeError("Prometheus scrape timeout")
+    mock_probe.sample_once.side_effect = ObservabilityError("Prometheus scrape timeout")
     mock_probe.probe_environment.return_value = ProbeResult(
         namespace="ust-prod",
         target_service="data-service",

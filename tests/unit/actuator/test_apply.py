@@ -24,7 +24,7 @@ from understudy.actuator.apply import (
 )
 from understudy.common.clock import FrozenClock
 from understudy.common.config import Settings
-from understudy.common.errors import ActuationError
+from understudy.common.errors import ActuationError, GitHubError
 from understudy.contracts.enums import ActionType
 from understudy.contracts.incident import DeployRef
 from understudy.contracts.plan import ActionParams, RemediationPlan, ResourceRef
@@ -42,7 +42,7 @@ class FakeDeployHistory(DeployHistory):
 
     async def recent_deploys(self, limit: int = 5) -> list[DeployRef]:
         if self.raise_error:
-            raise RuntimeError("GitHub API connection error")
+            raise GitHubError("GitHub API connection error")
         return self.deploys[:limit]
 
 

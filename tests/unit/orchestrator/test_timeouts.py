@@ -420,7 +420,7 @@ async def test_incident_watchdog_context_manager_no_task_raises() -> None:
 
     with (
         patch("asyncio.current_task", return_value=None),
-        pytest.raises(RuntimeError, match="must be called from an async task"),
+        pytest.raises(OrchestratorTimeoutError, match="must be called from an async task"),
     ):
         async with watchdog:
             pass

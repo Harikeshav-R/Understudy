@@ -18,11 +18,13 @@ from __future__ import annotations
 import inspect
 from typing import TYPE_CHECKING, Literal
 
+import httpx
+
 from understudy.actuator.api import Actuator
 from understudy.actuator.apply import K8sPlanApplier, resolve_service_account
 from understudy.common.clock import Clock, resolve_clock
 from understudy.common.config import Settings, get_settings
-from understudy.common.errors import ActuationError
+from understudy.common.errors import ActuationError, ObservabilityError
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import KernelVerdictType, RunOutcome
 from understudy.contracts.incident import (
@@ -123,26 +125,34 @@ def assert_k10_authorisation(
             },
         )
 
-    if verdict.evaluated_at is not None:
-        age_seconds = (now - verdict.evaluated_at).total_seconds()
-        if age_seconds >= max_age_seconds:
-            raise ActuationError(
-                f"K10 violation: verdict is stale ({age_seconds:.1f}s >= {max_age_seconds}s)",
-                details={
-                    "invariant": "K10",
-                    "plan_id": plan.plan_id,
-                    "age_seconds": age_seconds,
-                },
-            )
-        if age_seconds < -5.0:
-            raise ActuationError(
-                f"K10 violation: verdict timestamp is in the future ({age_seconds:.1f}s skew)",
-                details={
-                    "invariant": "K10",
-                    "plan_id": plan.plan_id,
-                    "age_seconds": age_seconds,
-                },
-            )
+    if verdict.evaluated_at is None:
+        raise ActuationError(
+            "K10 violation: verdict has no evaluation timestamp (evaluated_at is required)",
+            details={
+                "invariant": "K10",
+                "plan_id": plan.plan_id,
+            },
+        )
+
+    age_seconds = (now - verdict.evaluated_at).total_seconds()
+    if age_seconds >= max_age_seconds:
+        raise ActuationError(
+            f"K10 violation: verdict is stale ({age_seconds:.1f}s >= {max_age_seconds}s)",
+            details={
+                "invariant": "K10",
+                "plan_id": plan.plan_id,
+                "age_seconds": age_seconds,
+            },
+        )
+    if age_seconds < -5.0:
+        raise ActuationError(
+            f"K10 violation: verdict timestamp is in the future ({age_seconds:.1f}s skew)",
+            details={
+                "invariant": "K10",
+                "plan_id": plan.plan_id,
+                "age_seconds": age_seconds,
+            },
+        )
 
 
 def build_pre_actuation_run_record(
@@ -193,6 +203,57 @@ def build_pre_actuation_run_record(
         prod_applied_plan_id=plan.plan_id,
         prod_outcome=None,
         escalation_reason=None,
+    )
+
+
+def build_post_actuation_run_record(
+    plan: RemediationPlan,
+    verdict: KernelVerdict,
+    now: datetime,
+    prod_outcome: Literal["resolved", "not_resolved", "worsened"],
+    context: IncidentContext | None = None,
+) -> RunRecord:
+    """Construct an immutable post-actuation RunRecord for audit persistence (ADR-028)."""
+    inc_id = (
+        context.incident_id
+        if (context and context.incident_id and verdict.incident_id == "inc_kernel_verify")
+        else verdict.incident_id
+    )
+    outcome = RunOutcome.EXECUTED if prod_outcome == "resolved" else RunOutcome.FAILED
+    ctx = context or IncidentContext(
+        incident_id=inc_id,
+        alert=Alert(
+            alert_id=f"alt_{inc_id}",
+            source="synthetic",
+            title=f"Incident {inc_id}",
+            service=DEFAULT_TARGET_SERVICE,
+            severity="critical",
+            fired_at=now,
+        ),
+        metrics_window=MetricWindow(
+            service=DEFAULT_TARGET_SERVICE,
+            start_time=now,
+            end_time=now,
+        ),
+        dependency_graph=DependencyGraphSnapshot(observed_at=now),
+        gathered_at=now,
+    )
+    return RunRecord(
+        run_id=f"run_{inc_id}_post_actuation",
+        incident_id=inc_id,
+        started_at=now,
+        finished_at=now,
+        outcome=outcome,
+        context=ctx,
+        plans=[plan],
+        evidence=[],
+        tournament=None,
+        verdict=verdict,
+        prod_applied_plan_id=plan.plan_id,
+        prod_outcome=prod_outcome,
+        escalation_reason=None
+        if prod_outcome == "resolved"
+        else f"Production outcome: {prod_outcome}",
     )
 
 
@@ -307,14 +368,14 @@ class ProductionActuator(Actuator):
 
         # 3. Capture pre-apply baseline sample if probe is available
         baseline_sample: ProbeSample | None = None
-        target_service = plan.params.workload or DEFAULT_TARGET_SERVICE
+        target_service = DEFAULT_TARGET_SERVICE
         if self.probe is not None:
             try:
                 baseline_sample = await self.probe.sample_once(
                     namespace=self.prod_namespace,
                     target_service=target_service,
                 )
-            except Exception as exc:
+            except (ObservabilityError, httpx.HTTPError) as exc:
                 logger.warning(
                     "pre_apply_baseline_probe_failed",
                     error=str(exc),
@@ -370,6 +431,23 @@ class ProductionActuator(Actuator):
 
         self.last_prod_outcome = outcome
 
+        # 7. Write immutable post-actuation RunRecord to RunStore (ADR-028)
+        if self.run_store is not None:
+            post_record = build_post_actuation_run_record(
+                plan=plan,
+                verdict=verdict,
+                now=self.clock.now(),
+                prod_outcome=outcome,
+                context=context,
+            )
+            await self.run_store.record_run(post_record)
+            logger.info(
+                "post_actuation_record_persisted",
+                run_id=post_record.run_id,
+                incident_id=verdict.incident_id,
+                prod_outcome=outcome,
+            )
+
         logger.info(
             "production_actuation_completed",
             plan_id=plan.plan_id,
@@ -410,6 +488,7 @@ __all__ = [
     "apply_to_production",
     "assert_caller_authorised",
     "assert_k10_authorisation",
+    "build_post_actuation_run_record",
     "build_pre_actuation_run_record",
     "determine_prod_outcome",
 ]

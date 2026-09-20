@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from understudy.actuator.api import Actuator
-from understudy.common.errors import ActuationError, OrchestratorError
+from understudy.common.errors import ActuationError, OrchestratorError, PlaybookError
 from understudy.contracts.enums import (
     ActionType,
     KernelVerdictType,
@@ -284,7 +284,7 @@ async def test_plan_candidates_node() -> None:
     class ErrorPlaybookLibrary(FakePlaybookLibrary):
         async def retrieve_candidate(self, incident: IncidentContext) -> RemediationPlan | None:
             _ = incident
-            raise RuntimeError("Database connection lost during vector search")
+            raise PlaybookError("Database connection lost during vector search")
 
     deps_err_pb = Deps(
         **{

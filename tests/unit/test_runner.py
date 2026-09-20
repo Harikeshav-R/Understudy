@@ -1,12 +1,13 @@
-"""Unit tests for orchestrator scenario runner and scoreboard formatter."""
-
+import dataclasses
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from understudy.common.clock import FrozenClock
+from understudy.common.config import TimeoutSettings
 from understudy.common.errors import OrchestratorError
 from understudy.contracts.enums import (
     InvariantTier,
@@ -525,3 +526,63 @@ ground_truth_note: "none"
     assert len(visited_nodes) > 0
     assert visited_nodes == transitions
     assert "record_run" in transitions
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_watchdog_timeout_with_existing_record() -> None:
+    """Watchdog timeout during scenario returns existing persisted record if present."""
+    fake_deps = create_fake_deps()
+    fake_deps = dataclasses.replace(fake_deps, timeouts=TimeoutSettings(incident_seconds=0.01))
+
+    with patch("understudy.runner.build_graph") as mock_build_graph:
+        mock_graph = MagicMock()
+
+        async def _slow_astream(*_: Any, **__: Any):  # type: ignore[no-untyped-def]
+            import asyncio
+
+            await asyncio.sleep(0.5)
+            yield {"slow_node": {}}
+
+        mock_graph.astream = _slow_astream
+        mock_build_graph.return_value = mock_graph
+
+        with patch.object(fake_deps.run_store, "get_run", new_callable=AsyncMock) as mock_get_run:
+            fake_record = MagicMock(spec=RunRecord)
+            fake_record.outcome = RunOutcome.ESCALATED
+            mock_get_run.return_value = fake_record
+
+            _transitions, record = await run_scenario(
+                scenario_id_or_path="seed/bad_deploy_data_service",
+                fake=True,
+                deps=fake_deps,
+            )
+            assert record is not None
+            assert record.outcome == RunOutcome.ESCALATED
+
+
+@pytest.mark.asyncio
+async def test_run_scenario_watchdog_timeout_missing_record_raises() -> None:
+    """Watchdog timeout without persisted run record raises OrchestratorError."""
+    fake_deps = create_fake_deps()
+    fake_deps = dataclasses.replace(fake_deps, timeouts=TimeoutSettings(incident_seconds=0.01))
+
+    with patch("understudy.runner.build_graph") as mock_build_graph:
+        mock_graph = MagicMock()
+
+        async def _slow_astream(*_: Any, **__: Any):  # type: ignore[no-untyped-def]
+            import asyncio
+
+            await asyncio.sleep(0.5)
+            yield {"slow_node": {}}
+
+        mock_graph.astream = _slow_astream
+        mock_build_graph.return_value = mock_graph
+
+        with patch.object(fake_deps.run_store, "get_run", new_callable=AsyncMock) as mock_get_run:
+            mock_get_run.return_value = None
+            with pytest.raises(OrchestratorError, match="Incident watchdog timed out"):
+                await run_scenario(
+                    scenario_id_or_path="seed/bad_deploy_data_service",
+                    fake=True,
+                    deps=fake_deps,
+                )

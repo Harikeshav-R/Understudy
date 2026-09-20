@@ -5,30 +5,8 @@ from typing import Any
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import RunOutcome
 from understudy.orchestrator.api import Deps
+from understudy.orchestrator.cleanup import cleanup_incident_twins
 from understudy.orchestrator.state import State
-
-
-async def _cleanup(state: State, deps: Deps) -> list[str]:
-    """Unregister mirrors and tear down twins best-effort, returning cleanup failures."""
-    cleanup_errors: list[str] = []
-
-    for twin in state.twins:
-        try:
-            await deps.mirror_registry.unregister_twin(twin.twin_id)
-        except Exception as exc:
-            # Catching Exception: cleanup is best-effort; one leaked twin must not stop
-            # the remaining teardown or the run record write (architecture §2.9).
-            cleanup_errors.append(f"unregister_twin({twin.twin_id}) failed: {exc}")
-
-    if state.incident_id:
-        try:
-            await deps.fleet_controller.teardown_all(state.incident_id)
-        except Exception as exc:
-            # Catching Exception: see above; teardown_all is idempotent and retried by
-            # `ust fleet gc`, so a failure here is recorded rather than raised.
-            cleanup_errors.append(f"teardown_all({state.incident_id}) failed: {exc}")
-
-    return cleanup_errors
 
 
 async def handle_failure(state: State, deps: Deps) -> dict[str, Any]:
@@ -36,7 +14,7 @@ async def handle_failure(state: State, deps: Deps) -> dict[str, Any]:
     logger = get_logger(incident_id=state.incident_id)
     now = deps.clock.now()
 
-    cleanup_errors = await _cleanup(state, deps)
+    cleanup_errors = await cleanup_incident_twins(state.twins, state.incident_id, deps)
 
     reasons = [
         part

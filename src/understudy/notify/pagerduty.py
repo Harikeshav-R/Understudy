@@ -27,7 +27,7 @@ from understudy.contracts.incident import IncidentContext
 from understudy.contracts.kernel import KernelVerdict
 from understudy.contracts.plan import RemediationPlan
 from understudy.notify.api import Notifier
-from understudy.notify.slack import build_candidate_table, build_decision_analysis
+from understudy.notify.formatting import build_candidate_table, build_decision_analysis
 
 logger = get_logger(__name__)
 
@@ -282,7 +282,7 @@ class PagerDutyNotifier(Notifier):
             else:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.post(url, json=payload, headers=headers)
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             logger.error("pagerduty_add_note_failed", pd_incident_id=pd_incident_id, error=str(exc))
             raise PagerDutyNotificationError(
                 f"Network failure adding PagerDuty note: {exc}"
@@ -334,7 +334,7 @@ class PagerDutyNotifier(Notifier):
             else:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.put(url, json=payload, headers=headers)
-        except Exception as exc:
+        except httpx.HTTPError as exc:
             logger.error(
                 "pagerduty_set_urgency_failed", pd_incident_id=pd_incident_id, error=str(exc)
             )

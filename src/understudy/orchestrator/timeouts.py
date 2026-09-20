@@ -28,6 +28,7 @@ from understudy.common.errors import (
 )
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import RunOutcome
+from understudy.orchestrator.cleanup import cleanup_incident_twins
 from understudy.orchestrator.state import State
 
 if TYPE_CHECKING:
@@ -143,25 +144,10 @@ async def execute_emergency_escalation(
     logger = get_logger(incident_id=state.incident_id or "unknown")
     now = deps.clock.now()
 
-    # 1. Best-effort mirror unregistration
-    for twin in state.twins:
-        try:
-            await deps.mirror_registry.unregister_twin(twin.twin_id)
-        except Exception as exc:
-            # Best-effort: cleanup failure must not halt remaining teardown or escalation
-            logger.warning("watchdog_unregister_twin_failed", twin_id=twin.twin_id, error=str(exc))
+    # 1. Best-effort mirror unregistration and fleet teardown
+    await cleanup_incident_twins(state.twins, state.incident_id, deps)
 
-    # 2. Best-effort fleet teardown
-    if state.incident_id:
-        try:
-            await deps.fleet_controller.teardown_all(state.incident_id)
-        except Exception as exc:
-            # Best-effort: teardown is idempotent and reaped by ust fleet gc
-            logger.warning(
-                "watchdog_teardown_all_failed", incident_id=state.incident_id, error=str(exc)
-            )
-
-    # 3. Escalate to PagerDuty
+    # 2. Escalate to PagerDuty
     try:
         await deps.notifier.escalate_pagerduty(
             incident_id=state.incident_id or "unknown",
@@ -287,7 +273,9 @@ class IncidentWatchdog:
     async def __aenter__(self) -> IncidentWatchdog:
         current_task = asyncio.current_task()
         if current_task is None:
-            raise RuntimeError("IncidentWatchdog context manager must be called from an async task")
+            raise OrchestratorTimeoutError(
+                "IncidentWatchdog context manager must be called from an async task"
+            )
         self._target_task = current_task
         if self.timeout_seconds > 0:
             self._watchdog_task = asyncio.create_task(self._watchdog_loop())

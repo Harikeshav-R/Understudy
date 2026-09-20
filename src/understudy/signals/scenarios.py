@@ -190,6 +190,8 @@ def create_synthetic_alert(
     )
 
 
+# MOCKED: ScenarioDeployHistory overlays synthetic migration commits for live scenario evaluation.
+# Real path: signals/github.py::GitHubDeployHistory. Tracked in #52.
 class ScenarioDeployHistory:
     """DeployHistory adapter that overlays scenario-specific migration/deploy events."""
 

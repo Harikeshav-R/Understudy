@@ -18,10 +18,10 @@ import yaml
 
 from understudy.actuator.injection import inject_scenario_fault
 from understudy.common.clock import Clock, resolve_clock
-from understudy.common.errors import OrchestratorError
+from understudy.common.errors import IncidentTimeoutError, OrchestratorError
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import KernelVerdictType, RunOutcome, TournamentOutcome
-from understudy.orchestrator.api import build_graph
+from understudy.orchestrator.api import IncidentWatchdog, StateTracker, build_graph
 from understudy.orchestrator.fakes import create_fake_deps
 from understudy.orchestrator.state import State
 from understudy.signals.scenarios import (
@@ -412,17 +412,33 @@ async def run_scenario(
 
     # 4. StateGraph control loop execution
     incident_id = f"inc_{alert.alert_id}"
-    initial_state = State(alert=alert, incident_id=incident_id)
+    initial_state = State(incident_id=incident_id)
     config: RunnableConfig = {"configurable": {"thread_id": incident_id}}
 
-    graph = build_graph(active_deps)
+    tracker = StateTracker(initial_state)
+    graph = build_graph(active_deps, on_node_enter=tracker.on_node_enter)
+    watchdog = IncidentWatchdog(
+        incident_id=incident_id,
+        timeout_seconds=float(active_deps.timeouts.incident_seconds),
+        deps=active_deps,
+        get_current_state=lambda: tracker.current_state,
+        raise_on_timeout=True,
+    )
+
     transitions: list[str] = []
 
-    async for chunk in graph.astream(initial_state, config=config, stream_mode="updates"):
-        for node_name in chunk:
-            transitions.append(node_name)
-            if on_transition is not None:
-                on_transition(node_name)
+    try:
+        async with watchdog:
+            async for chunk in graph.astream(initial_state, config=config, stream_mode="updates"):
+                for node_name in chunk:
+                    transitions.append(node_name)
+                    if on_transition is not None:
+                        on_transition(node_name)
+    except IncidentTimeoutError as exc:
+        existing = await active_deps.run_store.get_run(f"run_{incident_id}")
+        if existing is not None:
+            return transitions, existing
+        raise OrchestratorError(f"Incident watchdog timed out during scenario run: {exc}") from exc
 
     # 5. Fetch final persisted RunRecord
     record = await active_deps.run_store.get_run(f"run_{incident_id}")

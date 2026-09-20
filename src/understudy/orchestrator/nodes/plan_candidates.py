@@ -2,7 +2,7 @@
 
 from typing import TYPE_CHECKING, Any
 
-from understudy.common.errors import OrchestratorError
+from understudy.common.errors import OrchestratorError, PlaybookError
 from understudy.common.logging import get_logger
 from understudy.orchestrator.api import Deps
 from understudy.orchestrator.state import State
@@ -20,7 +20,8 @@ async def plan_candidates(state: State, deps: Deps) -> dict[str, Any]:
     playbook_candidate = None
     try:
         playbook_candidate = await deps.playbook_library.retrieve_candidate(state.context)
-    except Exception as exc:
+    except PlaybookError as exc:
+        # Playbook retrieval is a heuristic accelerator; failure falls back to LLM planning
         logger.warning("playbook_retrieval_failed", error=str(exc))
         playbook_candidate = None
 

@@ -1,6 +1,7 @@
 """Unit tests for cluster fault injection utility."""
 
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -168,12 +169,17 @@ async def test_inject_scenario_fault_rollout_timeout() -> None:
 
     dep_initial = _make_deployment()
     dep_not_ready = _make_deployment(available_replicas=0, updated_replicas=0)
-    apps_api.read_namespaced_deployment.side_effect = [
-        dep_initial,
-        dep_not_ready,
-        ApiException(status=500),
-        dep_not_ready,
-    ]
+    calls: list[Any] = [dep_initial, dep_not_ready, ApiException(status=500)]
+
+    def _read_dep(*_: Any, **__: Any) -> Any:
+        if calls:
+            item = calls.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+        return dep_not_ready
+
+    apps_api.read_namespaced_deployment.side_effect = _read_dep
 
     res = await inject_scenario_fault(
         target="data-service",

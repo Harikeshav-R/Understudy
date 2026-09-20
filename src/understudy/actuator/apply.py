@@ -24,7 +24,7 @@ from kubernetes.client.exceptions import ApiException
 
 from understudy.common.clock import Clock, resolve_clock
 from understudy.common.config import Settings, get_settings
-from understudy.common.errors import ActuationError
+from understudy.common.errors import ActuationError, SignalsError, UnderstudyError
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import ActionType
 from understudy.contracts.plan import RemediationPlan
@@ -262,7 +262,8 @@ class K8sPlanApplier:
                                 return candidate_tag_spec
                         return f"{base}@{resolved}"
                     return resolved
-            except Exception as exc:
+            except (SignalsError, ApiException, UnderstudyError) as exc:
+                # Deploy history resolution is optional; fallback is raised below if unresolved
                 logger.warning("deploy_history_resolution_failed", error=str(exc))
 
         raise ActuationError(

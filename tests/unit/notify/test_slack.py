@@ -27,6 +27,7 @@ from understudy.contracts.kernel import InvariantResult, KernelVerdict
 from understudy.contracts.plan import ActionParams, RemediationPlan
 from understudy.contracts.twin import MirrorStats
 from understudy.notify.api import Notifier
+from understudy.notify.formatting import format_action_summary
 from understudy.notify.slack import (
     SlackNotifier,
     _format_action_params,
@@ -186,6 +187,58 @@ def test_format_action_params() -> None:
     # Empty params
     p3 = ActionParams(workload="data-service")
     assert _format_action_params(p3) == "default"
+
+
+def test_format_action_summary() -> None:
+    # 1. Full params with long commit and positive delta
+    plan1 = _make_sample_plan(
+        "p1",
+        1,
+        workload="order-service",
+        target_commit="1234567890abcdef",
+        replica_delta=3,
+        flag_name="canary_v2",
+        config_key="TIMEOUT",
+        config_value="60s",
+    )
+    summary1 = format_action_summary(plan1)
+    assert "workload=order-service" in summary1
+    assert "commit=1234567" in summary1
+    assert "delta=+3" in summary1
+    assert "flag=canary_v2" in summary1
+    assert "config=TIMEOUT:60s" in summary1
+
+    # 2. Short commit, negative/zero delta, None config_value (revert), no workload, no flag
+    plan2 = _make_sample_plan(
+        "p2",
+        2,
+        workload="",
+        target_commit="abcdef",
+        replica_delta=-2,
+        flag_name=None,
+        config_key="MAX_CONN",
+        config_value=None,
+    )
+    summary2 = format_action_summary(plan2)
+    assert "workload" not in summary2
+    assert "commit=abcdef" in summary2
+    assert "delta=-2" in summary2
+    assert "flag" not in summary2
+    assert "config=MAX_CONN:revert" in summary2
+
+    # 3. Empty params (workload="") -> "default", covering all False branches
+    plan3 = RemediationPlan(
+        plan_id="p3",
+        candidate_index=3,
+        action=ActionType.NO_ACTION,
+        params=ActionParams(workload=""),
+        target_resources=[],
+        declared_blast_set=[],
+        inverse=None,
+        rationale="noop",
+        origin="planner",
+    )
+    assert format_action_summary(plan3) == "default"
 
 
 def test_build_candidate_table_empty() -> None:

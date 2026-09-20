@@ -144,3 +144,14 @@ async def test_actuator_requires_pass_verdict() -> None:
         evaluated_at=fresh_evaluated_at,
     )
     assert await actuator.apply_to_production(plan, fresh_verdict) is True
+
+    # 7. Negative case: Missing evaluated_at timestamp raises ActuationError asserting K10
+    missing_time_verdict = _make_verdict(
+        "plan_k10_test",
+        KernelVerdictType.PASS,
+        evaluated_at=None,
+    )
+    with pytest.raises(ActuationError) as exc_info:
+        await actuator.apply_to_production(plan, missing_time_verdict)
+    assert "K10" in str(exc_info.value)
+    assert "evaluated_at is required" in str(exc_info.value)

@@ -139,8 +139,10 @@ async def inject_scenario_fault(
             if available >= spec_replicas and updated >= spec_replicas:
                 rollout_ready = True
                 break
-        except Exception:
-            pass
+        except ApiException as exc:
+            # During rollout transitions, deployment status queries may transiently fail
+            # while pods cycle
+            logger.debug("rollout_status_query_transient_error", target=target, error=str(exc))
         await resolved_clock.sleep(poll_interval)
 
     if not rollout_ready:

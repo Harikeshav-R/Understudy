@@ -121,6 +121,7 @@ from understudy.orchestrator.timeouts import (  # noqa: E402
     IncidentWatchdog,
     NodeTimeoutError,
     OrchestratorTimeoutError,
+    StateTracker,
     resolve_node_timeout,
     with_node_timeout,
 )
@@ -135,6 +136,7 @@ __all__ = [
     "OrchestratorTimeoutError",
     "PostgresCheckpointSaver",
     "State",
+    "StateTracker",
     "StoreCheckpointSaver",
     "build_graph",
     "create_checkpointer",
