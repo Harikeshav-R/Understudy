@@ -121,7 +121,8 @@ def create_real_deps(
                 edges=[
                     ("edge-gateway", "auth-service"),
                     ("edge-gateway", "data-service"),
-                    ("data-service", "worker"),
+                    ("auth-service", "data-service"),
+                    ("worker", "data-service"),
                 ],
                 clock=active_clock,
             )
@@ -204,6 +205,7 @@ def create_real_deps(
         clock=active_clock,
         checkpoint_store=checkpoint_store,
         timeouts=res_timeouts,
+        workload_reader=getattr(res_fleet, "workload_reader", None),
     )
 
 
