@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 
 from understudy.common.logging import get_logger
+from understudy.contracts.enums import ActionType
 
 if TYPE_CHECKING:
     from understudy.planner.api import Planner
@@ -649,6 +650,47 @@ def store_migrate(
     typer.echo("Database migrations applied successfully.")
 
 
+@store_app.command("get")
+def store_get(
+    run_id: str = typer.Argument(..., help="Run identifier to inspect."),
+    json_output: bool = typer.Option(False, "--json", help="Output raw JSON record."),
+    dsn: str | None = typer.Option(None, "--dsn", help="Optional PostgreSQL DSN override."),
+) -> None:
+    """Retrieve and display an immutable run record from the store."""
+    import asyncio
+    import json
+
+    from understudy.store.database import StoreDatabase
+    from understudy.store.postgres import PostgresRunStore
+
+    db = StoreDatabase(dsn=dsn)
+    store = PostgresRunStore(db=db)
+
+    async def _get() -> None:
+        record = await store.get_run(run_id)
+        if record is None:
+            typer.echo(f"Error: Run record '{run_id}' not found in store", err=True)
+            raise typer.Exit(code=1)
+
+        if json_output:
+            typer.echo(json.dumps(record.model_dump(mode="json"), indent=2))
+        else:
+            typer.echo(f"Run ID: {record.run_id}")
+            typer.echo(f"Incident ID: {record.incident_id}")
+            typer.echo(f"Outcome: {record.outcome.value}")
+            typer.echo(f"Started At: {record.started_at.isoformat()}")
+            if record.finished_at:
+                typer.echo(f"Finished At: {record.finished_at.isoformat()}")
+            if record.prod_applied_plan_id:
+                typer.echo(f"Applied Plan: {record.prod_applied_plan_id}")
+            if record.prod_outcome:
+                typer.echo(f"Production Outcome: {record.prod_outcome}")
+            if record.escalation_reason:
+                typer.echo(f"Escalation Reason: {record.escalation_reason}")
+
+    asyncio.run(_get())
+
+
 @store_app.command("verify")
 def store_verify(
     last: int = typer.Option(2, "--last", help="Number of most recent run records to verify."),
@@ -667,7 +709,9 @@ def store_verify(
 
     async def _verify() -> None:
         runs = await store.list_runs()
-        target_runs = runs[:last]
+        # Filter for authoritative incident runs, excluding intermediate pre-actuation audit records
+        incident_runs = [r for r in runs if not r.run_id.endswith("_pre_actuation")]
+        target_runs = incident_runs[:last]
         if len(target_runs) < last:
             typer.echo(f"Warning: found {len(target_runs)} runs (requested {last})")
 
@@ -2012,6 +2056,16 @@ notify_app = typer.Typer(
 app.add_typer(notify_app, name="notify")
 
 
+def _sample_action_for_candidate(idx: int) -> ActionType:
+    """Return default candidate action type for sample notification rendering."""
+    actions = [
+        ActionType.ROLLBACK_DEPLOY,
+        ActionType.RESTART_WORKLOAD,
+        ActionType.SCALE_WORKLOAD,
+    ]
+    return actions[idx] if idx < len(actions) else ActionType.NO_ACTION
+
+
 @notify_app.command("slack")
 def notify_slack_cmd(
     incident_id: Annotated[
@@ -2056,7 +2110,6 @@ def notify_slack_cmd(
 
     from pydantic import ValidationError
 
-    from understudy.contracts.enums import ActionType
     from understudy.contracts.evidence import CandidateEvidence
     from understudy.contracts.incident import IncidentContext
     from understudy.contracts.plan import ActionParams, RemediationPlan
@@ -2088,8 +2141,8 @@ def notify_slack_cmd(
             typer.echo(f"Error: context file not found: {context_file}", err=True)
             raise typer.Exit(code=1)
         try:
-            with context_file.open(encoding="utf-8") as f:
-                context = IncidentContext.model_validate_json(f.read())
+            with context_file.open(encoding="utf-8") as ctx_fp:
+                context = IncidentContext.model_validate_json(ctx_fp.read())
         except (json.JSONDecodeError, OSError, ValidationError) as exc:
             typer.echo(f"Error loading context file {context_file}: {exc}", err=True)
             raise typer.Exit(code=1) from exc
@@ -2097,15 +2150,7 @@ def notify_slack_cmd(
     plans: list[RemediationPlan] = []
     if evidences:
         for idx, ev in enumerate(evidences):
-            act = (
-                ActionType.ROLLBACK_DEPLOY
-                if idx == 0
-                else (
-                    ActionType.RESTART_WORKLOAD
-                    if idx == 1
-                    else (ActionType.SCALE_WORKLOAD if idx == 2 else ActionType.NO_ACTION)
-                )
-            )
+            act = _sample_action_for_candidate(idx)
             workload = "data-service"
             if context and context.alert:
                 workload = context.alert.service
@@ -2146,7 +2191,7 @@ def notify_slack_cmd(
                 f"Successfully posted Slack reasoning message to channel {resp.get('channel')} "
                 f"(ts: {resp.get('ts')})"
             )
-        except Exception as exc:
+        except Exception as exc:  # CLI top-level exception handler (AGENTS.md §5.4; #47)
             typer.echo(f"Error posting to Slack: {exc}", err=True)
             raise typer.Exit(code=1) from exc
         return
@@ -2254,7 +2299,6 @@ def notify_pagerduty_cmd(
 
     from pydantic import ValidationError
 
-    from understudy.contracts.enums import ActionType
     from understudy.contracts.evidence import CandidateEvidence
     from understudy.contracts.incident import IncidentContext
     from understudy.contracts.kernel import KernelVerdict
@@ -2308,15 +2352,7 @@ def notify_pagerduty_cmd(
     plans: list[RemediationPlan] = []
     if evidences:
         for idx, ev in enumerate(evidences):
-            act = (
-                ActionType.ROLLBACK_DEPLOY
-                if idx == 0
-                else (
-                    ActionType.RESTART_WORKLOAD
-                    if idx == 1
-                    else (ActionType.SCALE_WORKLOAD if idx == 2 else ActionType.NO_ACTION)
-                )
-            )
+            act = _sample_action_for_candidate(idx)
             workload = "data-service"
             if context and context.alert:
                 workload = context.alert.service
@@ -2366,7 +2402,7 @@ def notify_pagerduty_cmd(
                 f"Successfully escalated to PagerDuty incident {resp.get('pd_incident_id')} "
                 f"(urgency: {urgency})"
             )
-        except Exception as exc:
+        except Exception as exc:  # CLI top-level exception handler (AGENTS.md §5.4; #47)
             typer.echo(f"Error escalating to PagerDuty: {exc}", err=True)
             raise typer.Exit(code=1) from exc
         return

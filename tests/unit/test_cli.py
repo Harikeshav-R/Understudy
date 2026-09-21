@@ -337,6 +337,193 @@ def test_cli_store_verify_missing_rules(monkeypatch: "pytest.MonkeyPatch") -> No
     assert "Error: append-only rules missing on runs table" in result.output
 
 
+def test_cli_store_get_text_format(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get outputs formatted run summary."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    started = datetime(2026, 9, 21, 10, 0, 0, tzinfo=UTC)
+    finished = datetime(2026, 9, 21, 10, 5, 0, tzinfo=UTC)
+
+    mock_run = MagicMock()
+    mock_run.run_id = "run_test_get"
+    mock_run.incident_id = "inc_test_get"
+    mock_run.outcome = RunOutcome.EXECUTED
+    mock_run.started_at = started
+    mock_run.finished_at = finished
+    mock_run.prod_applied_plan_id = "plan_test_winner"
+    mock_run.prod_outcome = "resolved"
+    mock_run.escalation_reason = "No escalation needed"
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=mock_run)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "run_test_get"])
+    assert result.exit_code == 0
+    assert "Run ID: run_test_get" in result.stdout
+    assert "Incident ID: inc_test_get" in result.stdout
+    assert "Outcome: executed" in result.stdout
+    assert "Started At: 2026-09-21T10:00:00+00:00" in result.stdout
+    assert "Finished At: 2026-09-21T10:05:00+00:00" in result.stdout
+    assert "Applied Plan: plan_test_winner" in result.stdout
+    assert "Production Outcome: resolved" in result.stdout
+    assert "Escalation Reason: No escalation needed" in result.stdout
+
+
+def test_cli_store_get_minimal_record(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get outputs summary when optional fields are None."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    started = datetime(2026, 9, 21, 10, 0, 0, tzinfo=UTC)
+
+    mock_run = MagicMock()
+    mock_run.run_id = "run_test_min"
+    mock_run.incident_id = "inc_test_min"
+    mock_run.outcome = RunOutcome.EXECUTED
+    mock_run.started_at = started
+    mock_run.finished_at = None
+    mock_run.prod_applied_plan_id = None
+    mock_run.prod_outcome = None
+    mock_run.escalation_reason = None
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=mock_run)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "run_test_min"])
+    assert result.exit_code == 0
+    assert "Run ID: run_test_min" in result.stdout
+    assert "Finished At:" not in result.stdout
+    assert "Applied Plan:" not in result.stdout
+    assert "Production Outcome:" not in result.stdout
+    assert "Escalation Reason:" not in result.stdout
+
+
+def test_cli_store_get_json_format(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get --json outputs raw JSON."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_run = MagicMock()
+    mock_run.model_dump.return_value = {
+        "run_id": "run_test_json",
+        "incident_id": "inc_test_json",
+        "outcome": "executed",
+    }
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=mock_run)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "run_test_json", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["run_id"] == "run_test_json"
+    assert data["outcome"] == "executed"
+
+
+def test_cli_store_get_not_found(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get exits with error when record is missing."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=None)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "nonexistent_run"])
+    assert result.exit_code == 1
+    assert "Error: Run record 'nonexistent_run' not found in store" in result.output
+
+
+def test_cli_store_verify_filters_pre_actuation(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store verify filters intermediate pre-actuation records and handles warning."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    mock_pre_run = MagicMock()
+    mock_pre_run.run_id = "run_inc_1_pre_actuation"
+    mock_pre_run.incident_id = "inc_1"
+    mock_pre_run.outcome = RunOutcome.EXECUTED
+
+    mock_real_run = MagicMock()
+    mock_real_run.run_id = "run_inc_1"
+    mock_real_run.incident_id = "inc_1"
+    mock_real_run.outcome = RunOutcome.EXECUTED
+
+    mock_store = MagicMock()
+    mock_store.list_runs = AsyncMock(return_value=[mock_pre_run, mock_real_run])
+
+    mock_session = AsyncMock()
+    rule_res = MagicMock()
+    rule_res.fetchall.return_value = [("runs_no_update",), ("runs_no_delete",)]
+    mock_session.execute = AsyncMock(return_value=rule_res)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        @asynccontextmanager
+        async def session(self) -> Any:
+            yield mock_session
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    # Request last 2, but only 1 authoritative run exists after filtering
+    result = runner.invoke(app, ["store", "verify", "--last", "2"])
+    assert result.exit_code == 0
+    assert "Warning: found 1 runs (requested 2)" in result.stdout
+    assert "run_id=run_inc_1" in result.stdout
+    assert "run_inc_1_pre_actuation" not in result.stdout
+    assert "Verified 1 run records: complete and append-only OK" in result.stdout
+
+
 def test_cli_tunnel_fake(monkeypatch: "pytest.MonkeyPatch") -> None:
     """Verify ust tunnel --fake starts fake session and outputs tunnel URLs."""
     from unittest.mock import AsyncMock
