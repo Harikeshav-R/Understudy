@@ -977,3 +977,98 @@ async def test_k8s_workload_reader_replica_set_resolution_edge_cases() -> None:
 def test_current_pod_template_hash_without_metadata() -> None:
     """A Deployment with no metadata yields no revision to match ReplicaSets against."""
     assert _current_pod_template_hash(client.V1Deployment(metadata=None), []) is None
+
+
+@pytest.mark.asyncio
+async def test_list_custom_config_maps_filtering() -> None:
+    """Test discovering custom ConfigMaps and filtering out system or invalid ConfigMaps."""
+    core_mock = MagicMock()
+    core_mock.list_namespaced_config_map.return_value = client.V1ConfigMapList(
+        items=[
+            client.V1ConfigMap(metadata=client.V1ObjectMeta(name="feature-flags")),
+            client.V1ConfigMap(metadata=client.V1ObjectMeta(name="kube-root-ca.crt")),
+            client.V1ConfigMap(metadata=client.V1ObjectMeta(name="kube-system-token")),
+            client.V1ConfigMap(metadata=client.V1ObjectMeta(name="")),
+            client.V1ConfigMap(metadata=None),
+        ]
+    )
+    reader = K8sWorkloadReader(core_api=core_mock)
+    names = await reader.list_custom_config_maps("ust-prod")
+    assert names == {"feature-flags"}
+
+
+@pytest.mark.asyncio
+async def test_list_custom_config_maps_api_exception() -> None:
+    """Test that ApiException while listing ConfigMaps logs warning and returns empty set."""
+    core_mock = MagicMock()
+    core_mock.list_namespaced_config_map.side_effect = ApiException(status=500, reason="Failed")
+    reader = K8sWorkloadReader(core_api=core_mock)
+    names = await reader.list_custom_config_maps("ust-prod")
+    assert names == set()
+
+
+@pytest.mark.asyncio
+async def test_read_workloads_includes_custom_unreferenced_config_maps() -> None:
+    """Test that read_workloads includes unreferenced custom ConfigMaps like feature-flags."""
+    clock = FrozenClock()
+    apps_mock = MagicMock()
+    core_mock = MagicMock()
+
+    dep = client.V1Deployment(
+        metadata=client.V1ObjectMeta(name="data-service", labels={"app": "data-service"}),
+        spec=client.V1DeploymentSpec(
+            replicas=1,
+            selector=client.V1LabelSelector(match_labels={"app": "data-service"}),
+            template=client.V1PodTemplateSpec(
+                spec=client.V1PodSpec(
+                    containers=[
+                        client.V1Container(
+                            name="data-service",
+                            image="localhost:5001/data-service:good",
+                        )
+                    ]
+                )
+            ),
+        ),
+    )
+    pod = client.V1Pod(
+        metadata=client.V1ObjectMeta(name="data-service-abc", labels={"app": "data-service"}),
+        status=client.V1PodStatus(
+            phase="Running",
+            container_statuses=[
+                client.V1ContainerStatus(
+                    name="data-service",
+                    image="localhost:5001/data-service:good",
+                    image_id="localhost:5001/data-service@sha256:1ead9b47c5fe97d3551cc5001844061122dcc49388dcf77ebda51a3b6301f6b7",
+                    ready=True,
+                    restart_count=0,
+                )
+            ],
+        ),
+    )
+    apps_mock.list_namespaced_deployment.return_value = client.V1DeploymentList(items=[dep])
+    core_mock.list_namespaced_pod.return_value = client.V1PodList(items=[pod])
+    apps_mock.list_namespaced_replica_set.return_value = client.V1ReplicaSetList(items=[])
+
+    core_mock.list_namespaced_config_map.return_value = client.V1ConfigMapList(
+        items=[
+            client.V1ConfigMap(metadata=client.V1ObjectMeta(name="feature-flags")),
+        ]
+    )
+
+    def fake_read_cm(name: str, namespace: str = "", **_kwargs: Any) -> client.V1ConfigMap:
+        _ = namespace
+        if name == "feature-flags":
+            return client.V1ConfigMap(
+                metadata=client.V1ObjectMeta(name="feature-flags"),
+                data={"enable_recommendations": "true"},
+            )
+        raise ApiException(status=404, reason="Not Found")
+
+    core_mock.read_namespaced_config_map.side_effect = fake_read_cm
+
+    reader = K8sWorkloadReader(apps_api=apps_mock, core_api=core_mock, clock=clock)
+    snapshot = await reader.read_workloads("ust-prod")
+
+    assert "feature-flags" in snapshot.config_maps
+    assert snapshot.config_maps["feature-flags"] == {"enable_recommendations": "true"}

@@ -10,6 +10,7 @@ Implements build-plan step A4.4, ADR-017, and architecture §2.8:
 """
 
 import json
+import re
 from collections.abc import Sequence
 from typing import Any
 
@@ -228,6 +229,9 @@ def parse_judge_response(
     valid_candidates = set(candidate_plan_ids)
     cleaned = raw_text.strip()
 
+    # Strip reasoning / think tags if present
+    cleaned = re.sub(r"<(think|thought)>.*?</\1>", "", cleaned, flags=re.DOTALL).strip()
+
     # Extract JSON if embedded in markdown code blocks
     if "```" in cleaned:
         parts = cleaned.split("```")
@@ -235,9 +239,16 @@ def parse_judge_response(
             block = parts[i].strip()
             if block.startswith("json"):
                 block = block[4:].strip()
-            if block.startswith("{") and block.endswith("}"):
-                cleaned = block
+            start_idx = block.find("{")
+            end_idx = block.rfind("}")
+            if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                cleaned = block[start_idx : end_idx + 1]
                 break
+    else:
+        start_idx = cleaned.find("{")
+        end_idx = cleaned.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            cleaned = cleaned[start_idx : end_idx + 1]
 
     try:
         data = json.loads(cleaned)

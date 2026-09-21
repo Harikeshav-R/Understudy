@@ -34,11 +34,14 @@ class TimeoutSettings(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    fork_seconds: int = 120
-    candidate_apply_seconds: int = 60
-    observation_seconds: int = 200
-    kernel_seconds: int = 5
-    incident_seconds: int = 600
+    fork_seconds: float = 120.0
+    candidate_apply_seconds: float = 60.0
+    observation_seconds: float = 200.0
+    kernel_seconds: float = 5.0
+    incident_seconds: float = 600.0
+    slack_timeout_seconds: float = 10.0
+    pagerduty_timeout_seconds: float = 10.0
+    k10_max_age_seconds: float = 60.0
 
 
 class ClusterSettings(BaseModel):
@@ -79,6 +82,7 @@ class SecretSettings(BaseModel):
     pagerduty_service_id: str | None = None
     pagerduty_webhook_secret: str | None = None
     pagerduty_routing_key: str | None = None
+    pagerduty_from_email: str | None = None
     datadog_api_key: str | None = None
     datadog_app_key: str | None = None
 
@@ -284,6 +288,7 @@ def load_settings(
         "PAGERDUTY_SERVICE_ID": "pagerduty_service_id",
         "PAGERDUTY_WEBHOOK_SECRET": "pagerduty_webhook_secret",
         "PAGERDUTY_ROUTING_KEY": "pagerduty_routing_key",
+        "PAGERDUTY_FROM_EMAIL": "pagerduty_from_email",
         "DATADOG_API_KEY": "datadog_api_key",
         "DATADOG_APP_KEY": "datadog_app_key",
     }

@@ -3,14 +3,45 @@
 from typing import Any
 
 from understudy.common.logging import get_logger
-from understudy.contracts.enums import ActionType, KernelVerdictType, RunOutcome
+from understudy.contracts.enums import KernelVerdictType, RunOutcome
 from understudy.contracts.kernel import Fact
+from understudy.contracts.plan import RemediationPlan
+from understudy.kernel.api import WorkloadReaderFactAdapter, extract_facts
 from understudy.orchestrator.api import Deps
 from understudy.orchestrator.state import State
 
 
+def prepare_plan_for_verification(
+    plan: RemediationPlan,
+    target_namespace: str = "ust-prod",
+) -> RemediationPlan:
+    """Adapt candidate remediation plan to target prod namespace for safety verification."""
+    prod_target_resources = [
+        r.model_copy(update={"namespace": target_namespace})
+        if (not r.namespace or "twin" in r.namespace)
+        else r
+        for r in plan.target_resources
+    ]
+    verified_plan = plan.model_copy(update={"target_resources": prod_target_resources})
+    if verified_plan.inverse is not None:
+        inv_resources = [
+            r.model_copy(update={"namespace": target_namespace})
+            if (not r.namespace or "twin" in r.namespace)
+            else r
+            for r in verified_plan.inverse.target_resources
+        ]
+        verified_plan = verified_plan.model_copy(
+            update={
+                "inverse": verified_plan.inverse.model_copy(
+                    update={"target_resources": inv_resources}
+                )
+            }
+        )
+    return verified_plan
+
+
 async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
-    """Formally verify safety invariants for the tournament winner."""
+    """Extract facts and verify invariant satisfaction for the winning candidate plan."""
     logger = get_logger(incident_id=state.incident_id)
 
     winner_id = state.tournament.winner_plan_id if state.tournament else None
@@ -25,31 +56,54 @@ async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
         }
 
     now = deps.clock.now()
-    target_namespaces = {r.namespace for r in winner_plan.target_resources} or {"ust-prod"}
-    has_inverse = winner_plan.inverse is not None or winner_plan.action == ActionType.NO_ACTION
 
-    facts: list[Fact] = [
-        Fact(
-            name="plan_target_namespaces",
-            value=target_namespaces,
-            source="config",
-            observed_at=now,
-        ),
-        Fact(
-            name="plan_has_inverse",
-            value=has_inverse,
-            source="config",
-            observed_at=now,
-        ),
-        Fact(
-            name="declared_blast_set",
-            value=set(winner_plan.declared_blast_set),
-            source="graph",
-            observed_at=now,
-        ),
-    ]
+    # Find candidate evidence for the winning plan if tournament ran
+    winner_evidence = None
+    if state.evidence:
+        winner_evidence = next(
+            (e for e in state.evidence if e.plan_id == winner_plan.plan_id),
+            None,
+        )
+
+    # Resolve K8s fact source from deps if available (AGENTS.md §5.3 protocol conformance)
+    workload_reader = deps.workload_reader
+    k8s_source = (
+        WorkloadReaderFactAdapter(workload_reader=workload_reader)
+        if workload_reader is not None
+        else None
+    )
+
+    # Ensure plan destined for production targets ust-prod for safety verification
+    verified_plan = prepare_plan_for_verification(winner_plan, target_namespace="ust-prod")
+
+    # Extract complete timestamped facts across K8s, GitHub, store, graph, and evidence
+    facts = await extract_facts(
+        verified_plan,
+        evidence=winner_evidence,
+        context=state.context,
+        k8s_source=k8s_source,
+        deploy_history=deps.deploy_history,
+        run_store=deps.run_store,
+        dependency_graph=deps.dependency_graph,
+        clock=deps.clock,
+    )
+
+    # Ensure plan_target_namespaces has fallback to {"ust-prod"} if empty
+    ns_fact = next((f for f in facts if f.name == "plan_target_namespaces"), None)
+    if ns_fact is None or not ns_fact.value:
+        facts = [f for f in facts if f.name != "plan_target_namespaces"] + [
+            Fact(
+                name="plan_target_namespaces",
+                value={r.namespace for r in winner_plan.target_resources if r.namespace}
+                or {"ust-prod"},
+                source="config",
+                observed_at=now,
+            )
+        ]
 
     verdict = await deps.safety_kernel.verify(winner_plan, facts)
+    if state.incident_id and verdict.incident_id != state.incident_id:
+        verdict = verdict.model_copy(update={"incident_id": state.incident_id})
     logger.info(
         "kernel_evaluated",
         verdict=verdict.verdict.value,

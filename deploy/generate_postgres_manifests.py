@@ -62,6 +62,7 @@ def build_manifest(
     service_port: int,
     service_port_name: str,
     init_configmap: dict[str, Any] | None = None,
+    args: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """Build the [ConfigMap?, Deployment, Service] document list for one postgres
     instance. init_configmap (system-postgres only) is prepended and wired into the
@@ -77,6 +78,8 @@ def build_manifest(
             {"name": "POSTGRES_DB", "value": db_name},
         ],
     }
+    if args is not None:
+        container["args"] = args
     if init_configmap is not None:
         container["volumeMounts"] = [
             {
@@ -170,6 +173,7 @@ INSTANCES: dict[str, dict[str, Any]] = {
         "name": "prod-postgres",
         "namespace": "ust-prod",
         "image": "postgres:16-alpine",
+        "args": ["-c", "max_connections=200"],
         "db_name": "ust_prod",
         "resources": {
             "requests": {"cpu": "100m", "memory": "128Mi"},
@@ -182,6 +186,7 @@ INSTANCES: dict[str, dict[str, Any]] = {
         "name": "twin-postgres",
         "namespace": "ust-system",
         "image": "postgres:16-alpine",
+        "args": ["-c", "max_connections=300"],
         "db_name": "postgres",
         "resources": {
             "requests": {"cpu": "100m", "memory": "256Mi"},

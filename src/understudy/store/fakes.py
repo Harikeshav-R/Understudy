@@ -38,7 +38,16 @@ class FakeRunStore(RunStore):
 
     async def claim_run(self, record: RunRecord) -> None:
         """Atomically verify no other active run exists and persist `record`."""
-        if any(run.finished_at is None for run in self._runs.values()):
+        finished_incident_ids = {
+            run.incident_id for run in self._runs.values() if run.finished_at is not None
+        }
+        if any(
+            run.finished_at is None
+            and not (
+                run.run_id.endswith("_pre_actuation") and run.incident_id in finished_incident_ids
+            )
+            for run in self._runs.values()
+        ):
             raise StoreError(
                 "Another active run already exists; cannot claim a new run",
                 details={"run_id": record.run_id},
@@ -63,8 +72,18 @@ class FakeRunStore(RunStore):
         return results
 
     async def get_active_runs(self) -> list[RunRecord]:
-        """List runs with no finished_at timestamp yet."""
-        return [run for run in self._runs.values() if run.finished_at is None]
+        """List runs with no finished_at timestamp yet whose incident has not finished."""
+        finished_incident_ids = {
+            run.incident_id for run in self._runs.values() if run.finished_at is not None
+        }
+        return [
+            run
+            for run in self._runs.values()
+            if run.finished_at is None
+            and not (
+                run.run_id.endswith("_pre_actuation") and run.incident_id in finished_incident_ids
+            )
+        ]
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:

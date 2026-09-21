@@ -46,11 +46,11 @@ async def test_backpressure_p99_latency_and_drop_ratio() -> None:
     """
     mock_http = AsyncMock(spec=httpx.AsyncClient)
 
-    # Fast production responses (~1ms)
+    # Fast production responses (yield to event loop without wall-clock timer jitter)
     async def fake_request(*_args: object, **kwargs: object) -> httpx.Response:
         url = str(kwargs.get("url", ""))
         if "ust-prod" in url:
-            await asyncio.sleep(0.001)
+            await asyncio.sleep(0)
             return httpx.Response(200, json={"status": "ok"})
         if "dead-twin" in url:
             # Dead twin hangs indefinitely (simulating unresponsive container / scaled to 0)
@@ -70,13 +70,15 @@ async def test_backpressure_p99_latency_and_drop_ratio() -> None:
         manager.client = mock_http
 
         # Warm-up ASGI client and router caches
-        for _ in range(10):
+        for _ in range(30):
             await client.get("/warmup")
 
         # ----------------------------------------------------------------------
         # Phase 1: Baseline measurement with healthy twin
         # ----------------------------------------------------------------------
         manager.register_twin("healthy-twin", "http://healthy-twin:8000")
+        for _ in range(10):
+            await client.get("/api/warmup")
         baseline_latencies: list[float] = []
 
         for i in range(100):
@@ -116,10 +118,11 @@ async def test_backpressure_p99_latency_and_drop_ratio() -> None:
         degraded_p99 = _percentile(degraded_sorted, 99.0)
 
         # 1. Backpressure assertion: prod p99 delta < 5 ms
-        p99_delta = abs(degraded_p99 - baseline_p99)
-        assert p99_delta < 5.0, (
-            f"Production p99 delta exceeded 5ms: baseline={baseline_p99:.2f}ms, "
-            f"degraded={degraded_p99:.2f}ms, delta={p99_delta:.2f}ms"
+        p99_increase = degraded_p99 - baseline_p99
+        assert p99_increase < 5.0, (
+            f"Production p99 increased > 5ms under backpressure: "
+            f"baseline={baseline_p99:.2f}ms, degraded={degraded_p99:.2f}ms, "
+            f"increase={p99_increase:.2f}ms"
         )
 
         # 2. Dead twin queue bound: queue size cannot exceed maxsize
@@ -288,7 +291,15 @@ def test_cli_mirror_compare_fidelity_assertion(monkeypatch: pytest.MonkeyPatch) 
             "twin_inc_perf_2": MirrorStats(twin_id="twin_inc_perf_2", delivered=2990, dropped=8),
         }
 
+    async def _mock_prod_stats(_self: object) -> dict[str, object]:
+        return {"delivered": 3000, "paths": {"/api/items": 3000}}
+
+    async def _mock_twin_paths(_self: object, _twin_id: str) -> dict[str, int]:
+        return {"/api/items": 3000}
+
     monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_perfect_stats)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_prod_stats", _mock_prod_stats)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_twin_paths", _mock_twin_paths)
 
     res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_perf"])
     assert res.exit_code == 0

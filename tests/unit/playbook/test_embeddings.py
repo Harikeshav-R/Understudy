@@ -149,3 +149,25 @@ async def test_openrouter_embedding_client_default_context_manager() -> None:
         mock_post.return_value = mock_resp
         res = await client.embed("test context manager")
         assert len(res) == 1024
+
+
+@pytest.mark.asyncio
+async def test_openrouter_embedding_client_omits_dimensions_for_non_openai_models() -> None:
+    """Verify models without text-embedding-3 omit dimensions parameter."""
+    settings = Settings(
+        secrets=SecretSettings(openrouter_api_key="sk-or-test-key"),
+        embedding_model="nvidia/nemotron-3-embed-1b:free",
+        timeouts=TimeoutSettings(incident_seconds=30),
+    )
+    mock_client = AsyncMock(spec=httpx.AsyncClient)
+    mock_resp_data = {"data": [{"embedding": [0.5] * 2048}]}
+    mock_client.post = AsyncMock(return_value=httpx.Response(200, json=mock_resp_data))
+
+    client = OpenRouterEmbeddingClient(settings=settings, client=mock_client)
+    res = await client.embed("test non-openai model")
+
+    assert len(res) == 1024
+    mock_client.post.assert_awaited_once()
+    _, kwargs = mock_client.post.call_args
+    assert kwargs["json"]["model"] == "nvidia/nemotron-3-embed-1b:free"
+    assert "dimensions" not in kwargs["json"]

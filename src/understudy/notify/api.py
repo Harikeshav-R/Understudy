@@ -3,6 +3,7 @@
 from typing import Protocol, runtime_checkable
 
 from understudy.contracts.evidence import CandidateEvidence, TournamentResult
+from understudy.contracts.incident import IncidentContext
 from understudy.contracts.kernel import KernelVerdict
 from understudy.contracts.plan import RemediationPlan
 
@@ -18,6 +19,12 @@ class Notifier(Protocol):
         plan: RemediationPlan | None = None,
         result: TournamentResult | None = None,
         verdict: KernelVerdict | None = None,
+        *,
+        context: IncidentContext | None = None,
+        plans: list[RemediationPlan] | None = None,
+        evidence: list[CandidateEvidence] | None = None,
+        prod_outcome: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Post a structured incident update to Slack."""
         raise NotImplementedError
@@ -27,6 +34,25 @@ class Notifier(Protocol):
         incident_id: str,
         reason: str,
         partial_evidence: list[CandidateEvidence] | None = None,
+        *,
+        context: IncidentContext | None = None,
+        plans: list[RemediationPlan] | None = None,
+        verdict: KernelVerdict | None = None,
+        tournament: TournamentResult | None = None,
+        urgency: str = "high",
+        pd_incident_id: str | None = None,
     ) -> None:
         """Escalate an unresolvable or vetoed incident to PagerDuty on-call."""
         raise NotImplementedError
+
+
+from understudy.notify.composite import CompositeNotifier  # noqa: E402
+from understudy.notify.pagerduty import PagerDutyNotifier  # noqa: E402
+from understudy.notify.slack import SlackNotifier  # noqa: E402
+
+__all__ = [
+    "CompositeNotifier",
+    "Notifier",
+    "PagerDutyNotifier",
+    "SlackNotifier",
+]

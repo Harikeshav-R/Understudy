@@ -27,6 +27,11 @@ async def notify_slack(state: State, deps: Deps) -> dict[str, Any]:
         plan=applied_plan,
         result=state.tournament,
         verdict=state.verdict,
+        context=state.context,
+        plans=state.plans,
+        evidence=state.evidence,
+        prod_outcome=state.prod_outcome,
+        run_id=f"run_{state.incident_id}" if state.incident_id else None,
     )
 
     logger.info("slack_notified", incident_id=state.incident_id)

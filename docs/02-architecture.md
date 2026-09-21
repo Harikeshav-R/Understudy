@@ -337,6 +337,7 @@ class KernelVerdict(BaseModel):
     missing_facts: list[str]
     solver_ms: float
     human_reason: str                     # rendered for Slack/PagerDuty
+    evaluated_at: datetime | None         # evaluated timestamp for K10 freshness check
 ```
 
 ```python

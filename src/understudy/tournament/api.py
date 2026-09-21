@@ -109,25 +109,40 @@ class LLMJudge(Protocol):
 
 
 # Re-exports for consumers adhering to sibling import boundaries (AGENTS.md §5.2)
-from understudy.tournament.arbiter import ArbiterConfig, arbitrate  # noqa: E402
+from understudy.tournament.arbiter import (  # noqa: E402
+    ArbiterConfig,
+    RehearsalTournament,
+    TournamentArbiter,
+    arbitrate,
+)
+from understudy.tournament.blast import BlastCoordinator  # noqa: E402
+from understudy.tournament.judge import AdvisoryLLMJudge  # noqa: E402
+from understudy.tournament.probe import ProbeSampler  # noqa: E402
 from understudy.tournament.scorer import (  # noqa: E402
+    DeterministicCandidateScorer,
     ScoringConfig,
     score_candidate,
     score_candidates,
 )
 
 __all__ = [
+    "AdvisoryLLMJudge",
     "ArbiterConfig",
+    "BlastCoordinator",
     "BlastEvaluation",
     "BlastTracker",
     "CandidateScorer",
+    "DeterministicCandidateScorer",
     "EnvironmentBaseline",
     "EnvironmentProbe",
     "JudgeEvaluation",
     "LLMJudge",
     "ProbeResult",
+    "ProbeSampler",
+    "RehearsalTournament",
     "ScoringConfig",
     "Tournament",
+    "TournamentArbiter",
     "arbitrate",
     "score_candidate",
     "score_candidates",

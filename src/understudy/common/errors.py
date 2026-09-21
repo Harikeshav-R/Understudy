@@ -57,6 +57,44 @@ class OrchestratorError(UnderstudyError):
     """Raised on orchestrator state transition or control loop failure."""
 
 
+class OrchestratorTimeoutError(OrchestratorError):
+    """Base exception for orchestrator timeout failures."""
+
+
+class NodeTimeoutError(OrchestratorTimeoutError):
+    """Raised when an individual graph node exceeds its allocated timeout."""
+
+    def __init__(
+        self,
+        node_name: str,
+        timeout_seconds: float,
+        message: str | None = None,
+    ) -> None:
+        self.node_name = node_name
+        self.timeout_seconds = timeout_seconds
+        msg = message or f"Node '{node_name}' timed out after {timeout_seconds}s"
+        super().__init__(
+            msg,
+            details={"node_name": node_name, "timeout_seconds": timeout_seconds},
+        )
+
+
+class IncidentTimeoutError(OrchestratorTimeoutError):
+    """Raised when incident execution exceeds the whole-incident watchdog timeout."""
+
+    def __init__(
+        self,
+        timeout_seconds: float,
+        message: str | None = None,
+    ) -> None:
+        self.timeout_seconds = timeout_seconds
+        msg = message or f"Incident execution timed out after {timeout_seconds}s watchdog limit"
+        super().__init__(
+            msg,
+            details={"timeout_seconds": timeout_seconds},
+        )
+
+
 class StoreError(UnderstudyError):
     """Raised on persistence, query, or constraint failures in the store."""
 
@@ -107,3 +145,19 @@ class MirrorError(UnderstudyError):
 
 class TwinNotFoundError(MirrorError):
     """Raised when a requested twin is not registered with the mirror gateway."""
+
+
+class NotificationError(UnderstudyError):
+    """Raised on failure to post notifications or escalations."""
+
+
+class SlackNotificationError(NotificationError):
+    """Raised on failure to deliver a Slack notification."""
+
+
+class PagerDutyNotificationError(NotificationError):
+    """Raised on failure to escalate, post notes, or update urgency in PagerDuty."""
+
+
+class ScenarioError(UnderstudyError):
+    """Raised on failure to load, parse, or execute incident scenarios."""

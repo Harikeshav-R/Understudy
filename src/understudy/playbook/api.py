@@ -27,3 +27,11 @@ class PlaybookLibrary(Protocol):
     ) -> str:
         """Upsert a playbook on successful run resolution, keyed by incident signature."""
         raise NotImplementedError
+
+
+from understudy.playbook.retriever import PlaybookRetriever  # noqa: E402
+
+__all__ = [
+    "PlaybookLibrary",
+    "PlaybookRetriever",
+]

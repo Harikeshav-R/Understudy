@@ -430,7 +430,12 @@ class FactExtractor:
 
         return facts
 
-    async def extract_store_facts(self, plan: RemediationPlan, now: datetime) -> list[Fact]:
+    async def extract_store_facts(
+        self,
+        plan: RemediationPlan,
+        now: datetime,
+        context: IncidentContext | None = None,
+    ) -> list[Fact]:
         """Extract active run targets (K5) and mutation count in rolling window (K7)."""
         _ = plan
         facts: list[Fact] = []
@@ -441,6 +446,12 @@ class FactExtractor:
         active_runs = await self._run_store.get_active_runs()
         in_flight_targets: set[ResourceRef] = set()
         for run in active_runs:
+            if (
+                context is not None
+                and context.incident_id
+                and run.incident_id == context.incident_id
+            ):
+                continue
             for p in run.plans:
                 in_flight_targets.update(p.target_resources)
 
@@ -541,7 +552,7 @@ class FactExtractor:
         facts.extend(self.extract_graph_facts(plan, now, graph_snapshot=graph_snap))
 
         # 6. Store facts
-        facts.extend(await self.extract_store_facts(plan, now))
+        facts.extend(await self.extract_store_facts(plan, now, context=context))
 
         # 7. Tournament evidence facts
         facts.extend(self.extract_evidence_facts(plan, evidence, now))

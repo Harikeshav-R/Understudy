@@ -99,7 +99,7 @@ def prompt_candidate_to_remediation_plan(
     plan_id: str | None = None,
     origin: Literal["planner", "playbook", "shadow"] = "planner",
     playbook_id: str | None = None,
-    default_namespace: str = "ust-twin",
+    default_namespace: str = "ust-prod",
 ) -> RemediationPlan:
     """Convert a PromptCandidatePlan into a frozen RemediationPlan contract."""
     assigned_plan_id = plan_id or f"plan_cand_{candidate_index}"
@@ -296,8 +296,8 @@ You must ONLY select actions from the following closed enum. Unlisted actions ar
 1. "rollback_deploy":
    - Description: Roll back a service Deployment to a prior commit SHA and image digest.
    - Parameters: workload (service name), target_commit (the Git commit SHA to roll back to).
-   - Rules: target_commit MUST be chosen from recent deployments. Do NOT roll back across
-     a commit where contains_migration is true.
+   - Rules: target_commit MUST be chosen from recent deployments. Target the service that was
+     deployed.
    - Inverse: Roll forward to the current pre-incident commit.
 2. "restart_workload":
    - Description: Trigger a rolling restart of all pods for the specified workload Deployment.
@@ -323,14 +323,24 @@ You must ONLY select actions from the following closed enum. Unlisted actions ar
 
 SAFETY AND FORMAL INVARIANT REQUIREMENTS:
 - Target Workload: Must be an existing service named in the Dependency Graph or Alert.
-- Declared Blast Set: You must declare all services expected to experience metric or traffic
-  impact. This MUST be a subset of services present in the dependency graph topology.
+  If an entrypoint service (like edge-gateway) is alerting due to failure or latency in a
+  recently deployed downstream service (e.g. data-service), candidate plans (especially
+  rollback_deploy) should target the recently deployed downstream service.
+- Declared Blast Set: For a target workload T, declared_blast_set MUST be a subset of {{T}} and
+  the upstream services that depend on T (callers of T) in the dependency graph. Do NOT include
+  downstream services that T calls. For example, for 'data-service', callers include
+  'edge-gateway' and 'auth-service', so ['data-service', 'edge-gateway'] is valid. For
+  'edge-gateway' (which has no callers), declared_blast_set must be ONLY ['edge-gateway'].
 - Reversibility: Every plan except "no_action" is reversible. Understudy synthesizes
   all inverse plans deterministically per ADR-016. For "no_action", the inverse field is null.
 - Diversity: When asked for N candidates, generate diverse, distinct hypotheses (e.g. rollback
   vs scale vs restart vs config revert) rather than minor variations of the same action.
 - Playbook Match: If a playbook match candidate is provided, evaluate whether it fits the
   observed error signatures and incorporate or adapt it as one candidate if viable.
+- Deployments: If recent deployments are present in the incident diagnostics, at least one
+  candidate MUST be a "rollback_deploy" targeting "data-service" (or the specific downstream
+  service whose deployment caused the regression) to a preceding commit from recent deployments,
+  with declared_blast_set including ["data-service", "edge-gateway"].
 
 OUTPUT FORMAT:
 You must respond with valid JSON conforming exactly to the following JSON schema:

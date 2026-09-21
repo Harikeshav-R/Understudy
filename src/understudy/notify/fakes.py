@@ -3,6 +3,7 @@
 from typing import Any
 
 from understudy.contracts.evidence import CandidateEvidence, TournamentResult
+from understudy.contracts.incident import IncidentContext
 from understudy.contracts.kernel import KernelVerdict
 from understudy.contracts.plan import RemediationPlan
 from understudy.notify.api import Notifier
@@ -22,6 +23,12 @@ class FakeNotifier(Notifier):
         plan: RemediationPlan | None = None,
         result: TournamentResult | None = None,
         verdict: KernelVerdict | None = None,
+        *,
+        context: IncidentContext | None = None,
+        plans: list[RemediationPlan] | None = None,
+        evidence: list[CandidateEvidence] | None = None,
+        prod_outcome: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         """Record Slack post."""
         self.slack_posts.append(
@@ -31,6 +38,11 @@ class FakeNotifier(Notifier):
                 "plan": plan,
                 "result": result,
                 "verdict": verdict,
+                "context": context,
+                "plans": plans,
+                "evidence": evidence,
+                "prod_outcome": prod_outcome,
+                "run_id": run_id,
             }
         )
 
@@ -39,6 +51,13 @@ class FakeNotifier(Notifier):
         incident_id: str,
         reason: str,
         partial_evidence: list[CandidateEvidence] | None = None,
+        *,
+        context: IncidentContext | None = None,
+        plans: list[RemediationPlan] | None = None,
+        verdict: KernelVerdict | None = None,
+        tournament: TournamentResult | None = None,
+        urgency: str = "high",
+        pd_incident_id: str | None = None,
     ) -> None:
         """Record PagerDuty escalation."""
         self.pagerduty_escalations.append(
@@ -46,5 +65,11 @@ class FakeNotifier(Notifier):
                 "incident_id": incident_id,
                 "reason": reason,
                 "partial_evidence": partial_evidence or [],
+                "context": context,
+                "plans": plans,
+                "verdict": verdict,
+                "tournament": tournament,
+                "urgency": urgency,
+                "pd_incident_id": pd_incident_id,
             }
         )

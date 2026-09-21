@@ -1,5 +1,7 @@
 """Scenario alert templates and synthetic alert generation."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -186,3 +188,116 @@ def create_synthetic_alert(
             "source": "synthetic_fallback",
         },
     )
+
+
+# MOCKED: ScenarioDeployHistory overlays synthetic migration commits for live scenario evaluation.
+# Real path: signals/github.py::GitHubDeployHistory. Tracked in #52.
+class ScenarioDeployHistory:
+    """DeployHistory adapter that overlays scenario-specific migration/deploy events."""
+
+    def __init__(
+        self,
+        base: Any,
+        scenario_id: str,
+        clock: Clock | None = None,
+        force_migration: bool = False,
+    ) -> None:
+        from understudy.signals.api import DeployHistory
+
+        if not isinstance(base, DeployHistory):
+            raise TypeError("base must implement DeployHistory protocol")
+        self.base = base
+        self.scenario_id = _normalize_scenario_id(scenario_id)
+        self.clock = resolve_clock(clock)
+        self.force_migration = force_migration
+
+    async def recent_deploys(self, limit: int = 5) -> list[Any]:
+        """Return recent deploys, injecting a migration commit if required by scenario."""
+        from datetime import timedelta
+
+        from understudy.contracts.incident import DeployRef
+
+        deploys: list[DeployRef] = list(await self.base.recent_deploys(limit=limit))
+        is_migration_scenario = self.force_migration or "migration" in self.scenario_id
+        if is_migration_scenario and not any(d.contains_migration for d in deploys):
+            if len(deploys) >= 2:
+                head_time = deploys[0].deployed_at
+                target_time = deploys[1].deployed_at
+                if head_time > target_time:
+                    mig_time = target_time + (head_time - target_time) / 2
+                else:
+                    mig_time = target_time + timedelta(seconds=60)
+                mig_deploy = DeployRef(
+                    commit_sha="mig_boundary_commit",
+                    image_digests=dict(deploys[0].image_digests),
+                    deployed_at=mig_time,
+                    pr_number=999,
+                    contains_migration=True,
+                )
+                deploys = [deploys[0], mig_deploy, *deploys[1:]]
+            elif len(deploys) == 1:
+                mig_time = deploys[0].deployed_at + timedelta(seconds=1)
+                mig_deploy = DeployRef(
+                    commit_sha="mig_boundary_commit",
+                    image_digests=dict(deploys[0].image_digests),
+                    deployed_at=mig_time,
+                    pr_number=999,
+                    contains_migration=True,
+                )
+                deploys = [mig_deploy, *deploys]
+            else:
+                now = self.clock.now()
+                deploys = [
+                    DeployRef(
+                        commit_sha="c0ffee1",
+                        image_digests={"data-service": "localhost:5001/data-service:regression"},
+                        deployed_at=now,
+                        pr_number=101,
+                        contains_migration=False,
+                    ),
+                    DeployRef(
+                        commit_sha="mig_boundary_commit",
+                        image_digests={"data-service": "localhost:5001/data-service:good"},
+                        deployed_at=now - timedelta(minutes=5),
+                        pr_number=100,
+                        contains_migration=True,
+                    ),
+                    DeployRef(
+                        commit_sha="c0ffee0",
+                        image_digests={"data-service": "localhost:5001/data-service:good"},
+                        deployed_at=now - timedelta(minutes=10),
+                        pr_number=99,
+                        contains_migration=False,
+                    ),
+                ]
+        elif (
+            not is_migration_scenario
+            and not any(d.contains_migration for d in deploys)
+            and len(deploys) >= 3
+        ):
+            oldest = deploys[-1]
+            mig_deploy = DeployRef(
+                commit_sha=oldest.commit_sha,
+                image_digests=dict(oldest.image_digests),
+                deployed_at=oldest.deployed_at - timedelta(seconds=1),
+                pr_number=oldest.pr_number,
+                contains_migration=True,
+            )
+            deploys = [*deploys[:-1], mig_deploy]
+        return deploys[:limit]
+
+    async def close(self) -> None:
+        """Close underlying deploy history adapter if close method exists."""
+        if hasattr(self.base, "close"):
+            await self.base.close()
+
+    async def __aenter__(self) -> ScenarioDeployHistory:
+        if hasattr(self.base, "__aenter__"):
+            await self.base.__aenter__()
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        if hasattr(self.base, "__aexit__"):
+            await self.base.__aexit__(*args)
+        elif hasattr(self.base, "close"):
+            await self.base.close()

@@ -651,6 +651,11 @@ async def test_extract_store_facts() -> None:
     # Only recent_applied_run is within 15 min window with prod_applied_plan_id
     assert fact_map["prod_mutations_in_window"] == 1
 
+    # When context matches the active run's incident, it is excluded from in_flight_plan_targets
+    facts_with_ctx = await extractor.extract_store_facts(plan, now, context=active_run.context)
+    fact_map_ctx = {f.name: f.value for f in facts_with_ctx}
+    assert fact_map_ctx["in_flight_plan_targets"] == set()
+
 
 def test_extract_evidence_facts() -> None:
     """Test tournament evidence fact extraction."""

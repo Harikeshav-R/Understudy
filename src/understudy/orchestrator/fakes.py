@@ -2,6 +2,7 @@
 
 from understudy.actuator.fakes import FakeActuator
 from understudy.common.clock import Clock, resolve_clock
+from understudy.common.config import TimeoutSettings
 from understudy.contracts.enums import KernelVerdictType, RunOutcome
 from understudy.contracts.incident import (
     Alert,
@@ -35,6 +36,7 @@ def create_fake_deps(
     seed: int = 42,
     clock: Clock | None = None,
     force_veto: bool = False,
+    timeouts: TimeoutSettings | None = None,
 ) -> Deps:
     """Construct and return a Deps container wired entirely with deterministic fakes."""
     active_clock = resolve_clock(clock)
@@ -58,6 +60,7 @@ def create_fake_deps(
         notifier=FakeNotifier(),
         clock=active_clock,
         checkpoint_store=FakeCheckpointStore(),
+        timeouts=timeouts or TimeoutSettings(),
     )
 
 

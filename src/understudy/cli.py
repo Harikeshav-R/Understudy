@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Annotated, Any
 import typer
 
 from understudy.common.logging import get_logger
+from understudy.contracts.enums import ActionType
 
 if TYPE_CHECKING:
     from understudy.planner.api import Planner
@@ -106,6 +107,93 @@ def demo(
         typer.echo(f"outcome=escalated reason={reason}")
     else:
         typer.echo(f"outcome={record.outcome.value}")
+
+
+@app.command("run")
+def run_cmd(
+    scenario: Annotated[
+        str,
+        typer.Option(
+            "--scenario",
+            "-s",
+            help="Scenario identifier or YAML file path (e.g. seed/bad_deploy_data_service).",
+        ),
+    ],
+    live: Annotated[
+        bool,
+        typer.Option(
+            "--live",
+            help="Execute against real live cluster, telemetry, and external integrations.",
+        ),
+    ] = False,
+    fake: Annotated[
+        bool,
+        typer.Option(
+            "--fake",
+            help="Execute with deterministic in-memory component fakes.",
+        ),
+    ] = False,
+    seed: Annotated[
+        int,
+        typer.Option(
+            "--seed",
+            help="Random seed for reproducible execution.",
+        ),
+    ] = 42,
+    force_veto: Annotated[
+        bool,
+        typer.Option(
+            "--force-veto",
+            help="Force safety kernel to issue a VETO verdict on invariant K3.",
+        ),
+    ] = False,
+    inject: Annotated[
+        bool,
+        typer.Option(
+            "--inject/--no-inject",
+            help="Perform pre-incident fault injection on the cluster (default True).",
+        ),
+    ] = True,
+) -> None:
+    """Run an incident scenario through the full control loop to resolution or escalation."""
+    if not live and not fake:
+        typer.echo("Error: Either --live or --fake must be specified.", err=True)
+        raise typer.Exit(code=1)
+    if live and fake:
+        typer.echo("Error: Cannot specify both --live and --fake.", err=True)
+        raise typer.Exit(code=1)
+
+    import asyncio
+    import sys
+
+    from understudy.common.logging import configure_logging
+    from understudy.runner import format_run_summary, format_scoreboard_table, run_scenario
+    from understudy.tournament.scorer import score_candidates
+
+    try:
+        configure_logging(log_level="INFO", file=sys.stderr)
+        transitions, record = asyncio.run(
+            run_scenario(
+                scenario_id_or_path=scenario,
+                live=live,
+                fake=fake,
+                seed=seed,
+                force_veto=force_veto,
+                inject=inject,
+            )
+        )
+    finally:
+        configure_logging(log_level="INFO")
+
+    typer.echo(" -> ".join(transitions))
+
+    if record.evidence:
+        scores = score_candidates(record.evidence)
+        scoreboard_text = format_scoreboard_table(record.evidence, scores)
+        typer.echo(scoreboard_text)
+
+    summary_text = format_run_summary(record)
+    typer.echo(summary_text)
 
 
 graph_app = typer.Typer(
@@ -562,6 +650,47 @@ def store_migrate(
     typer.echo("Database migrations applied successfully.")
 
 
+@store_app.command("get")
+def store_get(
+    run_id: str = typer.Argument(..., help="Run identifier to inspect."),
+    json_output: bool = typer.Option(False, "--json", help="Output raw JSON record."),
+    dsn: str | None = typer.Option(None, "--dsn", help="Optional PostgreSQL DSN override."),
+) -> None:
+    """Retrieve and display an immutable run record from the store."""
+    import asyncio
+    import json
+
+    from understudy.store.database import StoreDatabase
+    from understudy.store.postgres import PostgresRunStore
+
+    db = StoreDatabase(dsn=dsn)
+    store = PostgresRunStore(db=db)
+
+    async def _get() -> None:
+        record = await store.get_run(run_id)
+        if record is None:
+            typer.echo(f"Error: Run record '{run_id}' not found in store", err=True)
+            raise typer.Exit(code=1)
+
+        if json_output:
+            typer.echo(json.dumps(record.model_dump(mode="json"), indent=2))
+        else:
+            typer.echo(f"Run ID: {record.run_id}")
+            typer.echo(f"Incident ID: {record.incident_id}")
+            typer.echo(f"Outcome: {record.outcome.value}")
+            typer.echo(f"Started At: {record.started_at.isoformat()}")
+            if record.finished_at:
+                typer.echo(f"Finished At: {record.finished_at.isoformat()}")
+            if record.prod_applied_plan_id:
+                typer.echo(f"Applied Plan: {record.prod_applied_plan_id}")
+            if record.prod_outcome:
+                typer.echo(f"Production Outcome: {record.prod_outcome}")
+            if record.escalation_reason:
+                typer.echo(f"Escalation Reason: {record.escalation_reason}")
+
+    asyncio.run(_get())
+
+
 @store_app.command("verify")
 def store_verify(
     last: int = typer.Option(2, "--last", help="Number of most recent run records to verify."),
@@ -580,7 +709,9 @@ def store_verify(
 
     async def _verify() -> None:
         runs = await store.list_runs()
-        target_runs = runs[:last]
+        # Filter for authoritative incident runs, excluding intermediate pre-actuation audit records
+        incident_runs = [r for r in runs if not r.run_id.endswith("_pre_actuation")]
+        target_runs = incident_runs[:last]
         if len(target_runs) < last:
             typer.echo(f"Warning: found {len(target_runs)} runs (requested {last})")
 
@@ -1916,6 +2047,392 @@ def kernel_catalogue(
 
     # Flush exact markdown content matching §3.4
     sys.stdout.write(content)
+
+
+notify_app = typer.Typer(
+    name="notify",
+    help="Notification channels (Slack reasoning posts and PagerDuty escalations).",
+)
+app.add_typer(notify_app, name="notify")
+
+
+def _sample_action_for_candidate(idx: int) -> ActionType:
+    """Return default candidate action type for sample notification rendering."""
+    actions = [
+        ActionType.ROLLBACK_DEPLOY,
+        ActionType.RESTART_WORKLOAD,
+        ActionType.SCALE_WORKLOAD,
+    ]
+    return actions[idx] if idx < len(actions) else ActionType.NO_ACTION
+
+
+@notify_app.command("slack")
+def notify_slack_cmd(
+    incident_id: Annotated[
+        str,
+        typer.Option("--incident-id", "-i", help="Incident identifier."),
+    ] = "inc_demo_001",
+    preview: Annotated[
+        bool,
+        typer.Option("--preview/--no-preview", help="Preview mode (default True unless --post)."),
+    ] = True,
+    post: Annotated[
+        bool,
+        typer.Option("--post", help="Deliver reasoning post to live Slack channel."),
+    ] = False,
+    fixture: Annotated[
+        Path | None,
+        typer.Option(
+            "--fixture",
+            help="Path to CandidateEvidence list JSON fixture.",
+        ),
+    ] = None,
+    context_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON file.",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output raw Block Kit JSON blocks in preview mode.",
+        ),
+    ] = False,
+) -> None:
+    """Preview or post an Understudy 7-block reasoning message to Slack."""
+    _ = preview
+    import asyncio
+    import json
+
+    from pydantic import ValidationError
+
+    from understudy.contracts.evidence import CandidateEvidence
+    from understudy.contracts.incident import IncidentContext
+    from understudy.contracts.plan import ActionParams, RemediationPlan
+    from understudy.notify.slack import (
+        SlackNotifier,
+        build_slack_reasoning_blocks,
+        build_slack_reasoning_text,
+    )
+    from understudy.tournament.arbiter import arbitrate
+    from understudy.tournament.scorer import score_candidates
+
+    evidences: list[CandidateEvidence] = []
+    if fixture is not None:
+        if not fixture.is_file():
+            typer.echo(f"Error: fixture file not found: {fixture}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            with fixture.open(encoding="utf-8") as f:
+                raw = json.load(f)
+            raw_list = raw if isinstance(raw, list) else raw.get("evidence", [])
+            evidences = [CandidateEvidence.model_validate(item) for item in raw_list]
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            typer.echo(f"Error loading fixture {fixture}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    context: IncidentContext | None = None
+    if context_file is not None:
+        if not context_file.is_file():
+            typer.echo(f"Error: context file not found: {context_file}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            with context_file.open(encoding="utf-8") as ctx_fp:
+                context = IncidentContext.model_validate_json(ctx_fp.read())
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            typer.echo(f"Error loading context file {context_file}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    plans: list[RemediationPlan] = []
+    if evidences:
+        for idx, ev in enumerate(evidences):
+            act = _sample_action_for_candidate(idx)
+            workload = "data-service"
+            if context and context.alert:
+                workload = context.alert.service
+            plans.append(
+                RemediationPlan(
+                    plan_id=ev.plan_id,
+                    candidate_index=idx,
+                    action=act,
+                    params=ActionParams(workload=workload),
+                    target_resources=[],
+                    declared_blast_set=[],
+                    inverse=None,
+                    rationale=f"Candidate {idx} intervention",
+                    origin="planner",
+                )
+            )
+
+    result = None
+    if evidences:
+        scores = score_candidates(evidences)
+        result = arbitrate(scores=scores, evidence=evidences)
+
+    if post:
+        notifier = SlackNotifier()
+        try:
+            resp = asyncio.run(
+                notifier.post_reasoning(
+                    incident_id=incident_id,
+                    context=context,
+                    plans=plans,
+                    evidence=evidences,
+                    result=result,
+                    prod_outcome="resolved" if result and result.winner_plan_id else "executed",
+                    run_id=f"run_{incident_id}",
+                )
+            )
+            typer.echo(
+                f"Successfully posted Slack reasoning message to channel {resp.get('channel')} "
+                f"(ts: {resp.get('ts')})"
+            )
+        except Exception as exc:  # CLI top-level exception handler (AGENTS.md §5.4; #47)
+            typer.echo(f"Error posting to Slack: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        return
+
+    # Preview mode
+    blocks = build_slack_reasoning_blocks(
+        incident_id=incident_id,
+        context=context,
+        plans=plans,
+        evidence=evidences,
+        result=result,
+        prod_outcome="resolved" if result and result.winner_plan_id else "executed",
+        run_id=f"run_{incident_id}",
+    )
+    fallback_text = build_slack_reasoning_text(
+        incident_id=incident_id,
+        context=context,
+        plans=plans,
+        result=result,
+        prod_outcome="resolved" if result and result.winner_plan_id else "executed",
+    )
+
+    if json_output:
+        typer.echo(json.dumps(blocks, indent=2))
+    else:
+        typer.echo(f"=== Slack Message Preview ({len(blocks)} blocks) ===")
+        typer.echo(f"Fallback Text: {fallback_text}\n")
+        for b in blocks:
+            b_type = b.get("type")
+            if b_type == "header":
+                typer.echo(f"[HEADER] {b['text']['text']}")
+            elif b_type == "section" and "fields" in b:
+                for f_item in b["fields"]:
+                    typer.echo(f"  • {f_item['text'].replace(chr(10), ' ')}")
+            elif b_type == "section":
+                typer.echo(f"\n{b['text']['text']}")
+            elif b_type == "context":
+                for elem in b.get("elements", []):
+                    typer.echo(f"\n{elem['text']}")
+            else:
+                typer.echo("-" * 60)
+
+
+@notify_app.command("pagerduty")
+def notify_pagerduty_cmd(
+    incident_id: Annotated[
+        str,
+        typer.Option("--incident-id", "-i", help="Incident identifier."),
+    ] = "inc_demo_001",
+    reason: Annotated[
+        str,
+        typer.Option("--reason", "-r", help="Escalation reason."),
+    ] = "Incident escalated to human operator",
+    preview: Annotated[
+        bool,
+        typer.Option("--preview/--no-preview", help="Preview mode (default True unless --post)."),
+    ] = True,
+    post: Annotated[
+        bool,
+        typer.Option("--post", help="Deliver escalation note and urgency to live PagerDuty."),
+    ] = False,
+    urgency: Annotated[
+        str,
+        typer.Option("--urgency", help="Incident urgency (high or low)."),
+    ] = "high",
+    pd_incident_id: Annotated[
+        str | None,
+        typer.Option("--pd-incident-id", help="Explicit PagerDuty incident identifier."),
+    ] = None,
+    fixture: Annotated[
+        Path | None,
+        typer.Option(
+            "--fixture",
+            help="Path to CandidateEvidence list JSON fixture.",
+        ),
+    ] = None,
+    context_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--context",
+            "-c",
+            help="Path to IncidentContext JSON file.",
+        ),
+    ] = None,
+    verdict_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--verdict",
+            "-v",
+            help="Path to KernelVerdict JSON file.",
+        ),
+    ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json/--no-json",
+            help="Output raw escalation note details as JSON in preview mode.",
+        ),
+    ] = False,
+) -> None:
+    """Preview or deliver an Understudy incident escalation note to PagerDuty."""
+    _ = preview
+    import asyncio
+    import json
+
+    from pydantic import ValidationError
+
+    from understudy.contracts.evidence import CandidateEvidence
+    from understudy.contracts.incident import IncidentContext
+    from understudy.contracts.kernel import KernelVerdict
+    from understudy.contracts.plan import ActionParams, RemediationPlan
+    from understudy.notify.pagerduty import (
+        PagerDutyNotifier,
+        build_pagerduty_escalation_note,
+        resolve_pagerduty_incident_id,
+    )
+    from understudy.tournament.arbiter import arbitrate
+    from understudy.tournament.scorer import score_candidates
+
+    evidences: list[CandidateEvidence] = []
+    if fixture is not None:
+        if not fixture.is_file():
+            typer.echo(f"Error: fixture file not found: {fixture}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            with fixture.open(encoding="utf-8") as f:
+                raw = json.load(f)
+            raw_list = raw if isinstance(raw, list) else raw.get("evidence", [])
+            evidences = [CandidateEvidence.model_validate(item) for item in raw_list]
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            typer.echo(f"Error loading fixture {fixture}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    context: IncidentContext | None = None
+    if context_file is not None:
+        if not context_file.is_file():
+            typer.echo(f"Error: context file not found: {context_file}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            with context_file.open(encoding="utf-8") as f:
+                context = IncidentContext.model_validate_json(f.read())
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            typer.echo(f"Error loading context file {context_file}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    verdict: KernelVerdict | None = None
+    if verdict_file is not None:
+        if not verdict_file.is_file():
+            typer.echo(f"Error: verdict file not found: {verdict_file}", err=True)
+            raise typer.Exit(code=1)
+        try:
+            with verdict_file.open(encoding="utf-8") as f:
+                verdict = KernelVerdict.model_validate_json(f.read())
+        except (json.JSONDecodeError, OSError, ValidationError) as exc:
+            typer.echo(f"Error loading verdict file {verdict_file}: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+
+    plans: list[RemediationPlan] = []
+    if evidences:
+        for idx, ev in enumerate(evidences):
+            act = _sample_action_for_candidate(idx)
+            workload = "data-service"
+            if context and context.alert:
+                workload = context.alert.service
+            plans.append(
+                RemediationPlan(
+                    plan_id=ev.plan_id,
+                    candidate_index=idx,
+                    action=act,
+                    params=ActionParams(workload=workload),
+                    target_resources=[],
+                    declared_blast_set=[],
+                    inverse=None,
+                    rationale=f"Candidate {idx} intervention",
+                    origin="planner",
+                )
+            )
+
+    result = None
+    if evidences:
+        scores = score_candidates(evidences)
+        result = arbitrate(scores=scores, evidence=evidences)
+
+    target_pd_id = resolve_pagerduty_incident_id(
+        incident_id=incident_id,
+        context=context,
+        pd_incident_id=pd_incident_id,
+    )
+
+    if post:
+        notifier = PagerDutyNotifier()
+        try:
+            resp = asyncio.run(
+                notifier.escalate(
+                    incident_id=incident_id,
+                    reason=reason,
+                    verdict=verdict,
+                    plans=plans,
+                    result=result,
+                    evidence=evidences,
+                    context=context,
+                    urgency=urgency,
+                    pd_incident_id=target_pd_id,
+                    run_id=f"run_{incident_id}",
+                )
+            )
+            typer.echo(
+                f"Successfully escalated to PagerDuty incident {resp.get('pd_incident_id')} "
+                f"(urgency: {urgency})"
+            )
+        except Exception as exc:  # CLI top-level exception handler (AGENTS.md §5.4; #47)
+            typer.echo(f"Error escalating to PagerDuty: {exc}", err=True)
+            raise typer.Exit(code=1) from exc
+        return
+
+    # Preview mode
+    note_content = build_pagerduty_escalation_note(
+        incident_id=incident_id,
+        reason=reason,
+        verdict=verdict,
+        plans=plans,
+        result=result,
+        evidence=evidences,
+        context=context,
+        run_id=f"run_{incident_id}",
+    )
+
+    if json_output:
+        preview_data = {
+            "incident_id": incident_id,
+            "pd_incident_id": target_pd_id,
+            "urgency": urgency,
+            "note_content": note_content,
+        }
+        typer.echo(json.dumps(preview_data, indent=2))
+    else:
+        typer.echo(
+            f"=== PagerDuty Escalation Note Preview "
+            f"(target: {target_pd_id}, urgency: {urgency}) ==="
+        )
+        typer.echo(note_content)
 
 
 if __name__ == "__main__":

@@ -1,7 +1,9 @@
 """Unit tests for Understudy CLI entrypoint and package metadata."""
 
+import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from unittest.mock import AsyncMock, patch
 
 from typer.testing import CliRunner
 
@@ -333,6 +335,193 @@ def test_cli_store_verify_missing_rules(monkeypatch: "pytest.MonkeyPatch") -> No
     result = runner.invoke(app, ["store", "verify", "--last", "2"])
     assert result.exit_code == 1
     assert "Error: append-only rules missing on runs table" in result.output
+
+
+def test_cli_store_get_text_format(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get outputs formatted run summary."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    started = datetime(2026, 9, 21, 10, 0, 0, tzinfo=UTC)
+    finished = datetime(2026, 9, 21, 10, 5, 0, tzinfo=UTC)
+
+    mock_run = MagicMock()
+    mock_run.run_id = "run_test_get"
+    mock_run.incident_id = "inc_test_get"
+    mock_run.outcome = RunOutcome.EXECUTED
+    mock_run.started_at = started
+    mock_run.finished_at = finished
+    mock_run.prod_applied_plan_id = "plan_test_winner"
+    mock_run.prod_outcome = "resolved"
+    mock_run.escalation_reason = "No escalation needed"
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=mock_run)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "run_test_get"])
+    assert result.exit_code == 0
+    assert "Run ID: run_test_get" in result.stdout
+    assert "Incident ID: inc_test_get" in result.stdout
+    assert "Outcome: executed" in result.stdout
+    assert "Started At: 2026-09-21T10:00:00+00:00" in result.stdout
+    assert "Finished At: 2026-09-21T10:05:00+00:00" in result.stdout
+    assert "Applied Plan: plan_test_winner" in result.stdout
+    assert "Production Outcome: resolved" in result.stdout
+    assert "Escalation Reason: No escalation needed" in result.stdout
+
+
+def test_cli_store_get_minimal_record(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get outputs summary when optional fields are None."""
+    from datetime import UTC, datetime
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    started = datetime(2026, 9, 21, 10, 0, 0, tzinfo=UTC)
+
+    mock_run = MagicMock()
+    mock_run.run_id = "run_test_min"
+    mock_run.incident_id = "inc_test_min"
+    mock_run.outcome = RunOutcome.EXECUTED
+    mock_run.started_at = started
+    mock_run.finished_at = None
+    mock_run.prod_applied_plan_id = None
+    mock_run.prod_outcome = None
+    mock_run.escalation_reason = None
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=mock_run)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "run_test_min"])
+    assert result.exit_code == 0
+    assert "Run ID: run_test_min" in result.stdout
+    assert "Finished At:" not in result.stdout
+    assert "Applied Plan:" not in result.stdout
+    assert "Production Outcome:" not in result.stdout
+    assert "Escalation Reason:" not in result.stdout
+
+
+def test_cli_store_get_json_format(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get --json outputs raw JSON."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_run = MagicMock()
+    mock_run.model_dump.return_value = {
+        "run_id": "run_test_json",
+        "incident_id": "inc_test_json",
+        "outcome": "executed",
+    }
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=mock_run)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "run_test_json", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["run_id"] == "run_test_json"
+    assert data["outcome"] == "executed"
+
+
+def test_cli_store_get_not_found(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store get exits with error when record is missing."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    mock_store = MagicMock()
+    mock_store.get_run = AsyncMock(return_value=None)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    result = runner.invoke(app, ["store", "get", "nonexistent_run"])
+    assert result.exit_code == 1
+    assert "Error: Run record 'nonexistent_run' not found in store" in result.output
+
+
+def test_cli_store_verify_filters_pre_actuation(monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Verify ust store verify filters intermediate pre-actuation records and handles warning."""
+    from contextlib import asynccontextmanager
+    from unittest.mock import AsyncMock, MagicMock
+
+    from understudy.contracts.enums import RunOutcome
+
+    mock_pre_run = MagicMock()
+    mock_pre_run.run_id = "run_inc_1_pre_actuation"
+    mock_pre_run.incident_id = "inc_1"
+    mock_pre_run.outcome = RunOutcome.EXECUTED
+
+    mock_real_run = MagicMock()
+    mock_real_run.run_id = "run_inc_1"
+    mock_real_run.incident_id = "inc_1"
+    mock_real_run.outcome = RunOutcome.EXECUTED
+
+    mock_store = MagicMock()
+    mock_store.list_runs = AsyncMock(return_value=[mock_pre_run, mock_real_run])
+
+    mock_session = AsyncMock()
+    rule_res = MagicMock()
+    rule_res.fetchall.return_value = [("runs_no_update",), ("runs_no_delete",)]
+    mock_session.execute = AsyncMock(return_value=rule_res)
+
+    class MockDb:
+        def __init__(self, **_kw: Any) -> None:
+            pass
+
+        @asynccontextmanager
+        async def session(self) -> Any:
+            yield mock_session
+
+    import understudy.store.database
+    import understudy.store.postgres
+
+    monkeypatch.setattr(understudy.store.database, "StoreDatabase", MockDb)
+    monkeypatch.setattr(understudy.store.postgres, "PostgresRunStore", lambda **_kw: mock_store)
+
+    # Request last 2, but only 1 authoritative run exists after filtering
+    result = runner.invoke(app, ["store", "verify", "--last", "2"])
+    assert result.exit_code == 0
+    assert "Warning: found 1 runs (requested 2)" in result.stdout
+    assert "run_id=run_inc_1" in result.stdout
+    assert "run_inc_1_pre_actuation" not in result.stdout
+    assert "Verified 1 run records: complete and append-only OK" in result.stdout
 
 
 def test_cli_tunnel_fake(monkeypatch: "pytest.MonkeyPatch") -> None:
@@ -1291,7 +1480,15 @@ def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
             "twin_inc_comp_2": MirrorStats(twin_id="twin_inc_comp_2", delivered=800, dropped=200),
         }
 
+    async def _mock_prod_stats(_self: Any) -> dict[str, Any]:
+        return {"delivered": 1000, "paths": {"/api/items": 1000}}
+
+    async def _mock_twin_paths(_self: Any, _twin_id: str) -> dict[str, int]:
+        return {"/api/items": 1000}
+
     monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_prod_stats", _mock_prod_stats)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_twin_paths", _mock_twin_paths)
 
     res = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
     assert res.exit_code == 0
@@ -1299,14 +1496,22 @@ def test_cli_mirror_compare(monkeypatch: "pytest.MonkeyPatch") -> None:
     assert "OK" in res.stdout
     assert "DEGRADED" in res.stdout
 
-    # All twins passing fidelity check
+    # All twins passing fidelity check (with empty paths to test branch without path histogram)
     async def _mock_stats_all_ok(_self: Any) -> dict[str, MirrorStats]:
         return {
             "twin_inc_comp_0": MirrorStats(twin_id="twin_inc_comp_0", delivered=1000, dropped=0),
             "twin_inc_comp_1": MirrorStats(twin_id="twin_inc_comp_1", delivered=995, dropped=5),
         }
 
+    async def _mock_prod_stats_empty(_self: Any) -> dict[str, Any]:
+        return {"delivered": 1000, "paths": {}}
+
+    async def _mock_twin_paths_empty(_self: Any, _twin_id: str) -> dict[str, int]:
+        return {}
+
     monkeypatch.setattr(HttpMirrorRegistry, "get_all_stats", _mock_stats_all_ok)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_prod_stats", _mock_prod_stats_empty)
+    monkeypatch.setattr(HttpMirrorRegistry, "get_twin_paths", _mock_twin_paths_empty)
     res_all_ok = runner.invoke(app, ["mirror", "compare", "--incident", "inc_comp"])
     assert res_all_ok.exit_code == 0
     assert (
@@ -1494,3 +1699,367 @@ def test_cli_tournament_replay_errors(tmp_path: Path) -> None:
     res_invalid = runner.invoke(app, ["tournament", "replay", "--fixture", str(invalid_schema)])
     assert res_invalid.exit_code == 1
     assert "Error validating CandidateEvidence" in (res_invalid.stderr or res_invalid.stdout)
+
+
+def test_cli_notify_slack_preview() -> None:
+    """Verify ust notify slack in preview mode with fixtures."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    context_path = Path("fixtures/context_bad_deploy.json")
+
+    res = runner.invoke(
+        app,
+        [
+            "notify",
+            "slack",
+            "--incident-id",
+            "inc_test_001",
+            "--fixture",
+            str(fixture_path),
+            "--context",
+            str(context_path),
+        ],
+    )
+    assert res.exit_code == 0
+    assert "=== Slack Message Preview" in res.stdout
+    assert "Candidate Scoreboard:" in res.stdout
+    assert "Decision Analysis:" in res.stdout
+    assert "Mirror Traffic Fidelity:" in res.stdout
+
+
+def test_cli_notify_slack_json() -> None:
+    """Verify ust notify slack --json outputs valid JSON blocks."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    res = runner.invoke(
+        app,
+        ["notify", "slack", "--fixture", str(fixture_path), "--json"],
+    )
+    assert res.exit_code == 0
+    json_start = res.stdout.find("[\n")
+    assert json_start != -1
+    blocks = json.loads(res.stdout[json_start:])
+    assert isinstance(blocks, list)
+    assert any(b.get("type") == "header" for b in blocks)
+
+
+def test_cli_notify_slack_post_success() -> None:
+    """Verify ust notify slack --post delivers message."""
+    mock_resp = {"ok": True, "channel": "C12345", "ts": "1726500000.0001"}
+    with patch(
+        "understudy.notify.slack.SlackNotifier.post_reasoning",
+        new_callable=AsyncMock,
+        return_value=mock_resp,
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "slack", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 0
+        assert "Successfully posted Slack reasoning message to channel C12345" in res.stdout
+
+
+def test_cli_notify_slack_post_error() -> None:
+    """Verify ust notify slack --post handles delivery failure."""
+    with patch(
+        "understudy.notify.slack.SlackNotifier.post_reasoning",
+        new_callable=AsyncMock,
+        side_effect=Exception("Slack API token rejected"),
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "slack", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 1
+        assert "Error posting to Slack: Slack API token rejected" in (res.stderr or res.stdout)
+
+
+def test_cli_notify_slack_file_errors(tmp_path: Path) -> None:
+    """Verify file error handling in ust notify slack."""
+    # 1. Nonexistent fixture
+    res1 = runner.invoke(app, ["notify", "slack", "--fixture", "nonexistent.json"])
+    assert res1.exit_code == 1
+    assert "Error: fixture file not found" in (res1.stderr or res1.stdout)
+
+    # 2. Bad JSON in fixture
+    bad_fix = tmp_path / "bad_fixture.json"
+    bad_fix.write_text("not json", encoding="utf-8")
+    res2 = runner.invoke(app, ["notify", "slack", "--fixture", str(bad_fix)])
+    assert res2.exit_code == 1
+    assert "Error loading fixture" in (res2.stderr or res2.stdout)
+
+    # 3. Nonexistent context
+    res3 = runner.invoke(app, ["notify", "slack", "--context", "nonexistent_context.json"])
+    assert res3.exit_code == 1
+    assert "Error: context file not found" in (res3.stderr or res3.stdout)
+
+    # 4. Bad JSON in context
+    bad_ctx = tmp_path / "bad_context.json"
+    bad_ctx.write_text("not json", encoding="utf-8")
+    res4 = runner.invoke(app, ["notify", "slack", "--context", str(bad_ctx)])
+    assert res4.exit_code == 1
+    assert "Error loading context file" in (res4.stderr or res4.stdout)
+
+
+def test_cli_notify_pagerduty_preview() -> None:
+    """Verify ust notify pagerduty in preview mode with fixtures."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    context_path = Path("fixtures/context_bad_deploy.json")
+
+    res = runner.invoke(
+        app,
+        [
+            "notify",
+            "pagerduty",
+            "--incident-id",
+            "inc_pd_test_001",
+            "--fixture",
+            str(fixture_path),
+            "--context",
+            str(context_path),
+        ],
+    )
+    assert res.exit_code == 0
+    assert "=== PagerDuty Escalation Note Preview" in res.stdout
+    assert "🚨 UNDERSTUDY AUTOMATED INCIDENT ESCALATION" in res.stdout
+    assert "CANDIDATE REMEDIATION SCOREBOARD" in res.stdout
+    assert "TOURNAMENT ARBITRATION & SAFETY REASONING" in res.stdout
+
+
+def test_cli_notify_pagerduty_preview_with_verdict(tmp_path: Path) -> None:
+    """Verify ust notify pagerduty with verdict file."""
+    verdict_file = tmp_path / "verdict.json"
+    verdict_data = {
+        "incident_id": "inc_veto_01",
+        "plan_id": "plan_0",
+        "verdict": "veto",
+        "results": [
+            {
+                "invariant_id": "K3",
+                "tier": "proof",
+                "satisfied": False,
+                "reason": "Migration boundary violation",
+            }
+        ],
+        "missing_facts": [],
+        "solver_ms": 12.5,
+        "human_reason": "Vetoed: migration violation",
+    }
+    verdict_file.write_text(json.dumps(verdict_data), encoding="utf-8")
+
+    res = runner.invoke(
+        app,
+        [
+            "notify",
+            "pagerduty",
+            "--incident-id",
+            "inc_veto_01",
+            "--verdict",
+            str(verdict_file),
+            "--reason",
+            "Custom veto reason",
+        ],
+    )
+    assert res.exit_code == 0
+    assert "Verdict:      VETO" in res.stdout
+    assert "Primary Reason: Custom veto reason" in res.stdout
+
+
+def test_cli_notify_pagerduty_json() -> None:
+    """Verify ust notify pagerduty --json outputs valid JSON."""
+    fixture_path = Path("fixtures/evidence_three_candidates.json")
+    res = runner.invoke(
+        app,
+        ["notify", "pagerduty", "--fixture", str(fixture_path), "--json"],
+    )
+    assert res.exit_code == 0
+    json_start = res.stdout.find("{\n")
+    assert json_start != -1
+    data = json.loads(res.stdout[json_start:])
+    assert isinstance(data, dict)
+    assert "note_content" in data
+    assert "pd_incident_id" in data
+    assert data["urgency"] == "high"
+
+
+def test_cli_notify_pagerduty_post_success() -> None:
+    """Verify ust notify pagerduty --post delivers escalation."""
+    mock_resp = {"pd_incident_id": "P9999", "note": {"note": {"id": "N123"}}}
+    with patch(
+        "understudy.notify.pagerduty.PagerDutyNotifier.escalate",
+        new_callable=AsyncMock,
+        return_value=mock_resp,
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "pagerduty", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 0
+        assert "Successfully escalated to PagerDuty incident P9999" in res.stdout
+
+
+def test_cli_notify_pagerduty_post_error() -> None:
+    """Verify ust notify pagerduty --post handles delivery failure."""
+    with patch(
+        "understudy.notify.pagerduty.PagerDutyNotifier.escalate",
+        new_callable=AsyncMock,
+        side_effect=Exception("PagerDuty API token rejected"),
+    ):
+        res = runner.invoke(
+            app,
+            ["notify", "pagerduty", "--incident-id", "inc_live", "--post"],
+        )
+        assert res.exit_code == 1
+        assert "Error escalating to PagerDuty: PagerDuty API token rejected" in (
+            res.stderr or res.stdout
+        )
+
+
+def test_cli_notify_pagerduty_file_errors(tmp_path: Path) -> None:
+    """Verify file error handling in ust notify pagerduty."""
+    # 1. Nonexistent fixture
+    res1 = runner.invoke(app, ["notify", "pagerduty", "--fixture", "nonexistent.json"])
+    assert res1.exit_code == 1
+    assert "Error: fixture file not found" in (res1.stderr or res1.stdout)
+
+    # 2. Bad JSON in fixture
+    bad_fix = tmp_path / "bad_fixture.json"
+    bad_fix.write_text("not json", encoding="utf-8")
+    res2 = runner.invoke(app, ["notify", "pagerduty", "--fixture", str(bad_fix)])
+    assert res2.exit_code == 1
+    assert "Error loading fixture" in (res2.stderr or res2.stdout)
+
+    # 3. Nonexistent context
+    res3 = runner.invoke(app, ["notify", "pagerduty", "--context", "nonexistent_context.json"])
+    assert res3.exit_code == 1
+    assert "Error: context file not found" in (res3.stderr or res3.stdout)
+
+    # 4. Bad JSON in context
+    bad_ctx = tmp_path / "bad_context.json"
+    bad_ctx.write_text("not json", encoding="utf-8")
+    res4 = runner.invoke(app, ["notify", "pagerduty", "--context", str(bad_ctx)])
+    assert res4.exit_code == 1
+    assert "Error loading context file" in (res4.stderr or res4.stdout)
+
+    # 5. Nonexistent verdict
+    res5 = runner.invoke(app, ["notify", "pagerduty", "--verdict", "nonexistent_verdict.json"])
+    assert res5.exit_code == 1
+    assert "Error: verdict file not found" in (res5.stderr or res5.stdout)
+
+    # 6. Bad JSON in verdict
+    bad_v = tmp_path / "bad_verdict.json"
+    bad_v.write_text("not json", encoding="utf-8")
+    res6 = runner.invoke(app, ["notify", "pagerduty", "--verdict", str(bad_v)])
+    assert res6.exit_code == 1
+    assert "Error loading verdict file" in (res6.stderr or res6.stdout)
+
+
+def test_cli_run_validation_errors() -> None:
+    """Verify ust run validates mutual exclusivity and necessity of --live and --fake."""
+    res_neither = runner.invoke(app, ["run", "--scenario", "seed/bad_deploy_data_service"])
+    assert res_neither.exit_code == 1
+    assert "Either --live or --fake must be specified" in (res_neither.stderr or res_neither.stdout)
+
+    res_both = runner.invoke(
+        app,
+        ["run", "--scenario", "seed/bad_deploy_data_service", "--live", "--fake"],
+    )
+    assert res_both.exit_code == 1
+    assert "Cannot specify both --live and --fake" in (res_both.stderr or res_both.stdout)
+
+
+def test_cli_run_fake_happy_path() -> None:
+    """Verify ust run --fake executes scenario to resolution and prints scoreboard."""
+    res = runner.invoke(
+        app,
+        ["run", "--scenario", "seed/bad_deploy_data_service", "--fake", "--seed", "42"],
+    )
+    assert res.exit_code == 0
+    assert "ingest ->" in res.stdout
+    assert "record_run" in res.stdout
+    assert "Scoreboard" in res.stdout
+    assert "outcome=executed plan=plan_cand_0" in res.stdout
+
+
+def test_cli_run_fake_escalation_migration() -> None:
+    """Verify ust run --fake with migration scenario escalates to PagerDuty due to K3."""
+    res = runner.invoke(
+        app,
+        ["run", "--scenario", "seed/bad_deploy_with_migration", "--fake", "--seed", "42"],
+    )
+    assert res.exit_code == 0
+    assert "escalate_pagerduty" in res.stdout
+    assert "outcome=escalated" in res.stdout
+    assert "K3" in res.stdout
+
+
+def test_cli_run_fake_force_veto() -> None:
+    """Verify ust run --fake with --force-veto escalates to PagerDuty."""
+    res = runner.invoke(
+        app,
+        [
+            "run",
+            "--scenario",
+            "seed/bad_deploy_data_service",
+            "--fake",
+            "--seed",
+            "42",
+            "--force-veto",
+        ],
+    )
+    assert res.exit_code == 0
+    assert "escalate_pagerduty" in res.stdout
+    assert "outcome=escalated" in res.stdout
+
+
+def test_cli_run_without_evidence() -> None:
+    """Verify ust run handles runs that yield no candidate evidence gracefully."""
+    from datetime import UTC, datetime
+
+    from understudy.contracts.enums import RunOutcome
+    from understudy.contracts.incident import (
+        Alert,
+        DependencyGraphSnapshot,
+        IncidentContext,
+        MetricWindow,
+    )
+    from understudy.contracts.run import RunRecord
+
+    now = datetime(2026, 9, 17, 12, 0, 0, tzinfo=UTC)
+    ctx = IncidentContext(
+        incident_id="inc_empty",
+        alert=Alert(
+            alert_id="alt_empty",
+            source="synthetic",
+            service="edge-gateway",
+            title="SLO breach",
+            severity="critical",
+            fired_at=now,
+        ),
+        signatures=[],
+        metrics_window=MetricWindow(service="edge-gateway", start_time=now, end_time=now),
+        recent_deploys=[],
+        dependency_graph=DependencyGraphSnapshot(observed_at=now),
+        gathered_at=now,
+    )
+    rec = RunRecord(
+        run_id="run_empty",
+        incident_id="inc_empty",
+        started_at=now,
+        finished_at=now,
+        outcome=RunOutcome.FAILED,
+        context=ctx,
+        plans=[],
+        evidence=[],
+    )
+    with patch(
+        "understudy.runner.run_scenario",
+        new_callable=AsyncMock,
+        return_value=(["ingest", "fail"], rec),
+    ):
+        res = runner.invoke(
+            app,
+            ["run", "--scenario", "seed/bad_deploy_data_service", "--fake"],
+        )
+        assert res.exit_code == 0
+        assert "ingest -> fail" in res.stdout
+        assert "outcome=failed" in res.stdout
+        assert "Scoreboard" not in res.stdout

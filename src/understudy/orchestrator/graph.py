@@ -30,6 +30,13 @@ from understudy.orchestrator.api import Deps
 from understudy.orchestrator.checkpoint import create_checkpointer
 from understudy.orchestrator.nodes import ALL_NODES, NodeFunc
 from understudy.orchestrator.state import State
+from understudy.orchestrator.timeouts import (
+    IncidentTimeoutError,
+    IncidentWatchdog,
+    StateTracker,
+    resolve_node_timeout,
+    with_node_timeout,
+)
 
 
 class NodeRunner(Protocol):
@@ -38,10 +45,17 @@ class NodeRunner(Protocol):
     def __call__(self, state: State) -> Any: ...
 
 
-def _make_node_runner(name: str, fn: NodeFunc, deps: Deps) -> NodeRunner:
+def _make_node_runner(
+    name: str,
+    fn: NodeFunc,
+    deps: Deps,
+    on_node_enter: Callable[[str, State], None] | None = None,
+) -> NodeRunner:
     """Wrap a node function with an exception barrier for orchestrator error edge."""
 
     async def _runner(state: State) -> dict[str, Any]:
+        if on_node_enter is not None:
+            on_node_enter(name, state)
         try:
             return await fn(state, deps)
         except Exception as exc:
@@ -108,6 +122,8 @@ _DEFAULT_CHECKPOINTER = object()
 def build_graph(
     deps: Deps,
     checkpointer: BaseCheckpointSaver[Any] | object | None = _DEFAULT_CHECKPOINTER,
+    on_node_enter: Callable[[str, State], None] | None = None,
+    custom_node_timeouts: dict[str, float] | None = None,
 ) -> CompiledGraph:
     """Compile and return the executable LangGraph state graph using provided dependencies."""
     resolved_checkpointer: BaseCheckpointSaver[Any] | None
@@ -125,7 +141,14 @@ def build_graph(
     builder: StateGraph[State, None, State, State] = StateGraph(State)
 
     for name, fn in ALL_NODES.items():
-        builder.add_node(name, _make_node_runner(name, fn, deps))
+        node_timeout = resolve_node_timeout(
+            name, deps.timeouts, custom_timeouts=custom_node_timeouts
+        )
+        wrapped_fn = with_node_timeout(fn, name, node_timeout)
+        builder.add_node(
+            name,
+            _make_node_runner(name, wrapped_fn, deps, on_node_enter=on_node_enter),
+        )
 
     builder.add_edge(START, "ingest")
 
@@ -206,11 +229,31 @@ def build_graph(
 
 async def run_incident(alert: Alert, deps: Deps) -> RunRecord:
     """Execute the full incident control loop given an alert and dependencies."""
-    graph = build_graph(deps)
     incident_id = f"inc_{alert.alert_id}" if alert.alert_id else new_incident_id()
     initial_state = State(alert=alert, incident_id=incident_id)
     config: RunnableConfig = {"configurable": {"thread_id": incident_id}}
-    final_output = await graph.ainvoke(initial_state, config=config)
+
+    tracker = StateTracker(initial_state)
+    graph = build_graph(deps, on_node_enter=tracker.on_node_enter)
+
+    watchdog = IncidentWatchdog(
+        incident_id=incident_id,
+        timeout_seconds=float(deps.timeouts.incident_seconds),
+        deps=deps,
+        get_current_state=lambda: tracker.current_state,
+        raise_on_timeout=True,
+    )
+
+    try:
+        final_output = await watchdog.run(graph.ainvoke(initial_state, config=config))
+    except IncidentTimeoutError as exc:
+        # Whole-incident watchdog timeout exceeded (§2.9).
+        # Exceeding the incident timeout is an escalation, never a best-effort action.
+        existing = await deps.run_store.get_run(f"run_{incident_id}")
+        if existing is not None:
+            return existing
+        raise OrchestratorError(f"Incident watchdog timed out: {exc}") from exc
+
     final_state = (
         final_output if isinstance(final_output, State) else State.model_validate(final_output)
     )

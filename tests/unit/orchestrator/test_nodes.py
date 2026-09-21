@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 import pytest
 
 from understudy.actuator.api import Actuator
-from understudy.common.errors import ActuationError, OrchestratorError
+from understudy.common.errors import ActuationError, OrchestratorError, PlaybookError
 from understudy.contracts.enums import (
     ActionType,
     KernelVerdictType,
@@ -280,6 +280,21 @@ async def test_plan_candidates_node() -> None:
     res_dup = await plan_candidates(state, deps_dup_pb)
     assert len(res_dup["plans"]) == 4
 
+    # Case 5: Playbook retrieval raises an exception (falls back to planner)
+    class ErrorPlaybookLibrary(FakePlaybookLibrary):
+        async def retrieve_candidate(self, incident: IncidentContext) -> RemediationPlan | None:
+            _ = incident
+            raise PlaybookError("Database connection lost during vector search")
+
+    deps_err_pb = Deps(
+        **{
+            **deps.__dict__,
+            "playbook_library": ErrorPlaybookLibrary(),
+        }
+    )
+    res_err = await plan_candidates(state, deps_err_pb)
+    assert len(res_err["plans"]) == 4
+
 
 @pytest.mark.asyncio
 async def test_fork_fleet_node() -> None:
@@ -472,7 +487,13 @@ async def test_safety_kernel_node() -> None:
     state_pass = State(incident_id="inc_123", plans=[p0], tournament=tour)
     res_pass = await safety_kernel(state_pass, deps)
     assert res_pass["verdict"].verdict == KernelVerdictType.PASS
+    assert res_pass["verdict"].incident_id == "inc_123"
     assert "outcome" not in res_pass
+
+    # Case 2b: PASS verdict with empty incident_id
+    state_empty_id = State(incident_id="", plans=[p0], tournament=tour)
+    res_empty_id = await safety_kernel(state_empty_id, deps)
+    assert res_empty_id["verdict"].verdict == KernelVerdictType.PASS
 
     # Case 3: VETO verdict triggers escalation
     deps_veto = Deps(
@@ -497,6 +518,45 @@ async def test_safety_kernel_node() -> None:
     state_no_act = State(incident_id="inc_123", plans=[p_no_act], tournament=tour_no_act)
     res_no_act = await safety_kernel(state_no_act, deps)
     assert res_no_act["verdict"].verdict == KernelVerdictType.PASS
+
+    # Case 6: UNCERTAIN verdict triggers escalation
+    deps_uncertain = Deps(
+        **{
+            **deps.__dict__,
+            "safety_kernel": FakeSafetyKernel(force_verdict=KernelVerdictType.UNCERTAIN),
+        }
+    )
+    res_uncertain = await safety_kernel(state_pass, deps_uncertain)
+    assert res_uncertain["verdict"].verdict == KernelVerdictType.UNCERTAIN
+    assert res_uncertain["outcome"] == RunOutcome.ESCALATED
+
+    # Case 7: Winner plan with candidate evidence in state
+    ev = CandidateEvidence(
+        plan_id="plan_0",
+        twin_id="twin_0",
+        applied_at=now,
+        recovered=True,
+        evidence_complete=True,
+        observed_blast_set=["edge-gateway"],
+        probes=[],
+        mirror_stats=MirrorStats(twin_id="twin_0", delivered=100, dropped=1),
+    )
+    state_with_ev = state_pass.model_copy(update={"evidence": [ev]})
+    res_with_ev = await safety_kernel(state_with_ev, deps)
+    assert res_with_ev["verdict"].verdict == KernelVerdictType.PASS
+
+    # Case 8: Fleet controller with workload_reader attribute
+    class _FleetWithReader(FakeFleetController):
+        workload_reader = None
+
+    deps_with_reader = Deps(
+        **{
+            **deps.__dict__,
+            "fleet_controller": _FleetWithReader(),
+        }
+    )
+    res_reader = await safety_kernel(state_pass, deps_with_reader)
+    assert res_reader["verdict"].verdict == KernelVerdictType.PASS
 
 
 @pytest.mark.asyncio
@@ -566,12 +626,22 @@ async def test_actuate_node() -> None:
 
     # Case 5: Actuator returns False (not resolved)
     class FailingActuator(Actuator):
-        async def apply(self, plan: RemediationPlan, namespace: str) -> bool:
-            _ = (plan, namespace)
+        async def apply(
+            self,
+            plan: RemediationPlan,
+            namespace: str,
+            service_account: str | None = None,
+        ) -> bool:
+            _ = (plan, namespace, service_account)
             return False
 
-        async def apply_to_production(self, plan: RemediationPlan, verdict: KernelVerdict) -> bool:
-            _ = (plan, verdict)
+        async def apply_to_production(
+            self,
+            plan: RemediationPlan,
+            verdict: KernelVerdict,
+            context: IncidentContext | None = None,
+        ) -> bool:
+            _ = (plan, verdict, context)
             return False
 
         async def revert(self, plan: RemediationPlan, namespace: str) -> bool:
@@ -592,6 +662,23 @@ async def test_actuate_node() -> None:
     assert "outcome" not in res_fail
     assert "did not resolve incident" in res_fail["escalation_reason"]
 
+    # Case 6: Actuator returns False with worsened outcome
+    class WorseningActuator(FailingActuator):
+        def __init__(self) -> None:
+            self.last_prod_outcome = "worsened"
+
+    deps_worse = Deps(
+        **{
+            **deps.__dict__,
+            "actuator": WorseningActuator(),
+        }
+    )
+    res_worse = await actuate(state_ok, deps_worse)
+    assert res_worse["prod_outcome"] == "worsened"
+    assert res_worse["prod_applied_plan_id"] == "plan_0"
+    assert "outcome" not in res_worse
+    assert "did not resolve incident" in res_worse["escalation_reason"]
+
 
 @pytest.mark.asyncio
 async def test_notify_slack_node() -> None:
@@ -607,11 +694,17 @@ async def test_notify_slack_node() -> None:
     )
     res1 = await notify_slack_node(state1, deps)
     assert res1 == {}
+    assert len(deps.notifier.slack_posts) == 1  # type: ignore[attr-defined]
+    post1 = deps.notifier.slack_posts[0]  # type: ignore[attr-defined]
+    assert post1["incident_id"] == "inc_123"
+    assert post1["prod_outcome"] == "resolved"
+    assert post1["run_id"] == "run_inc_123"
 
     # Case 2: Without applied plan and prod_outcome is None
     state2 = State(incident_id="inc_123")
     res2 = await notify_slack(state2, deps)
     assert res2 == {}
+    assert len(deps.notifier.slack_posts) == 2  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -647,6 +740,12 @@ async def test_escalate_pagerduty_node() -> None:
     state4 = State(incident_id="inc_123")
     res4 = await escalate_pagerduty(state4, deps)
     assert res4["escalation_reason"] == "Incident escalated to human operator"
+
+    # Verify FakeNotifier recorded all 4 escalations with parameters
+    assert isinstance(deps.notifier, FakeNotifier)
+    assert len(deps.notifier.pagerduty_escalations) == 4
+    assert deps.notifier.pagerduty_escalations[1]["verdict"] == verdict
+    assert deps.notifier.pagerduty_escalations[1]["urgency"] == "high"
 
 
 @pytest.mark.asyncio

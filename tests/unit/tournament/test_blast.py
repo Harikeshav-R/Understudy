@@ -539,6 +539,121 @@ async def test_blast_coordinator_capture_baselines_twins() -> None:
 
 
 @pytest.mark.asyncio
+async def test_blast_coordinator_capture_baseline_strict_namespace() -> None:
+    """Verify capture_baseline strictly queries the target namespace without prod peeking."""
+    clock = FrozenClock(datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC))
+    graph = ServiceDependencyGraph(nodes=["svc-a", "svc-b"], edges=[])
+    adapter = Mock()
+
+    now = clock.now()
+
+    async def _mock_metric_window(
+        service: str, since: datetime, namespace: str, until: datetime | None = None
+    ) -> MetricWindow:
+        _ = (since, until)
+        assert namespace == "ust-twin-0", f"Expected twin namespace query, got {namespace}"
+        return MetricWindow(
+            service=service,
+            start_time=now,
+            end_time=now,
+            p99_latency_ms=15.0 if service == "svc-a" else 20.0,
+            error_rate=0.0,
+            request_count=10,
+        )
+
+    adapter.metric_window = AsyncMock(side_effect=_mock_metric_window)
+    coordinator = BlastCoordinator(
+        observability=adapter,
+        dependency_graph=graph,
+        clock=clock,
+    )
+
+    baseline = await coordinator.capture_baseline(namespace="ust-twin-0")
+    assert baseline.baselines["svc-a"].p99_latency_ms == 15.0
+    assert baseline.baselines["svc-a"].request_count == 10
+    assert baseline.baselines["svc-b"].p99_latency_ms == 20.0
+    assert baseline.baselines["svc-b"].request_count == 10
+    assert adapter.metric_window.call_count == 2
+
+
+def test_evaluate_blast_observed_blast_set_contained_by_reachable() -> None:
+    """Verify observed_blast_set contains only reachable dependents even if others degraded."""
+    now = datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC)
+    graph = ServiceDependencyGraph(
+        nodes=["data-service", "edge-gateway", "unrelated-worker"],
+        edges=[("edge-gateway", "data-service")],
+    )
+
+    baselines = {
+        "data-service": MetricWindow(
+            service="data-service",
+            start_time=now,
+            end_time=now,
+            p99_latency_ms=10.0,
+            error_rate=0.0,
+        ),
+        "edge-gateway": MetricWindow(
+            service="edge-gateway",
+            start_time=now,
+            end_time=now,
+            p99_latency_ms=20.0,
+            error_rate=0.0,
+        ),
+        "unrelated-worker": MetricWindow(
+            service="unrelated-worker",
+            start_time=now,
+            end_time=now,
+            p99_latency_ms=5.0,
+            error_rate=0.0,
+        ),
+    }
+    # Both edge-gateway and unrelated-worker degrade by >10%
+    post_windows = {
+        "data-service": MetricWindow(
+            service="data-service",
+            start_time=now,
+            end_time=now,
+            p99_latency_ms=10.0,
+            error_rate=0.0,
+        ),
+        "edge-gateway": MetricWindow(
+            service="edge-gateway",
+            start_time=now,
+            end_time=now,
+            p99_latency_ms=50.0,
+            error_rate=0.0,
+        ),
+        "unrelated-worker": MetricWindow(
+            service="unrelated-worker",
+            start_time=now,
+            end_time=now,
+            p99_latency_ms=50.0,
+            error_rate=0.0,
+        ),
+    }
+
+    plan = RemediationPlan(
+        plan_id="plan_1",
+        candidate_index=0,
+        action=ActionType.ROLLBACK_DEPLOY,
+        params=ActionParams(workload="data-service"),
+        target_resources=[
+            ResourceRef(namespace="ust-prod", kind="Deployment", name="data-service")
+        ],
+        origin="planner",
+        rationale="Rollback",
+    )
+
+    res = evaluate_blast(plan, baselines, post_windows, graph)
+    # affected_services includes unrelated-worker
+    assert "unrelated-worker" in res.affected_services
+    assert "edge-gateway" in res.affected_services
+    # observed_blast_set is strictly intersected with reachable_set
+    assert res.observed_blast_set == ["edge-gateway"]
+    assert "unrelated-worker" not in res.observed_blast_set
+
+
+@pytest.mark.asyncio
 async def test_blast_coordinator_capture_post_apply_and_error_handling() -> None:
     """Verify capture_post_apply fetches windows and handles exceptions gracefully."""
     clock = FrozenClock(datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC))

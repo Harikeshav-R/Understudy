@@ -704,6 +704,16 @@ async def test_fake_actuator() -> None:
     ):
         await actuator.apply_to_production(plan, veto_verdict)
 
+    mismatched_verdict = KernelVerdict(
+        incident_id="inc_1",
+        plan_id="plan_mismatch",
+        verdict=KernelVerdictType.PASS,
+        solver_ms=1.0,
+        human_reason="ok",
+    )
+    with pytest.raises(ActuationError, match="verdict plan_id mismatch"):
+        await actuator.apply_to_production(plan, mismatched_verdict)
+
     assert await actuator.revert(plan, "ust-prod") is True
     assert ("plan_0", "ust-prod") in actuator.reverted_plans
 
@@ -713,9 +723,23 @@ async def test_fake_notifier() -> None:
     notifier = FakeNotifier()
     await notifier.notify_slack("inc_001", "Plan executed")
     assert len(notifier.slack_posts) == 1
+    assert notifier.slack_posts[0]["incident_id"] == "inc_001"
+    assert "context" in notifier.slack_posts[0]
+    assert "plans" in notifier.slack_posts[0]
+    assert "evidence" in notifier.slack_posts[0]
+    assert "prod_outcome" in notifier.slack_posts[0]
+    assert "run_id" in notifier.slack_posts[0]
 
     await notifier.escalate_pagerduty("inc_001", "VETO triggered")
     assert len(notifier.pagerduty_escalations) == 1
+    assert notifier.pagerduty_escalations[0]["incident_id"] == "inc_001"
+    assert notifier.pagerduty_escalations[0]["reason"] == "VETO triggered"
+    assert "context" in notifier.pagerduty_escalations[0]
+    assert "plans" in notifier.pagerduty_escalations[0]
+    assert "verdict" in notifier.pagerduty_escalations[0]
+    assert "tournament" in notifier.pagerduty_escalations[0]
+    assert "urgency" in notifier.pagerduty_escalations[0]
+    assert "pd_incident_id" in notifier.pagerduty_escalations[0]
 
 
 @pytest.mark.asyncio

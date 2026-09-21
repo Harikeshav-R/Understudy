@@ -228,7 +228,7 @@ def evaluate_blast(
         graph=graph,
     )
 
-    observed_blast_set = sorted(affected)
+    observed_blast_set = sorted(s for s in reachable if s in affected)
 
     return BlastEvaluation(
         target_service=target_service,
