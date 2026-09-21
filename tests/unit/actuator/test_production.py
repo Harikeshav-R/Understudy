@@ -356,7 +356,7 @@ async def test_production_actuator_apply_and_revert() -> None:
 
     plan = _make_plan("plan_1")
     assert await actuator.apply(plan, "ust-twin-1") is True
-    mock_applier.apply.assert_called_with(plan=plan, namespace="ust-twin-1")
+    mock_applier.apply.assert_called_with(plan=plan, namespace="ust-twin-1", service_account=None)
 
     assert await actuator.revert(plan, "ust-twin-1") is True
     mock_applier.revert.assert_called_with(plan=plan, namespace="ust-twin-1")
@@ -428,15 +428,11 @@ async def test_production_actuator_pre_record_and_probe_resolved() -> None:
         target_service="edge-gateway",
     )
 
-    # Verify pre-actuation and post-actuation records were persisted (ADR-028)
+    # Verify pre-actuation record was persisted (ADR-028)
     pre_run = await run_store.get_run(f"run_{verdict.incident_id}_pre_actuation")
     assert pre_run is not None
     assert pre_run.prod_applied_plan_id == "plan_1"
     assert pre_run.context == ctx
-
-    post_run = await run_store.get_run(f"run_{verdict.incident_id}_post_actuation")
-    assert post_run is not None
-    assert post_run.prod_outcome == "resolved"
 
 
 @pytest.mark.asyncio
@@ -494,10 +490,50 @@ async def test_production_actuator_applier_returns_false() -> None:
 
 
 @pytest.mark.asyncio
+async def test_production_actuator_probe_not_recovered() -> None:
+    """When probe reports not recovered, apply_to_production returns False."""
+    clock = FrozenClock(initial_time=FIXED_NOW)
+    mock_applier = AsyncMock(spec=K8sPlanApplier)
+    mock_applier.apply.return_value = True
+
+    mock_probe = AsyncMock(spec=EnvironmentProbe)
+    mock_probe.sample_once.return_value = None
+    mock_probe.probe_environment.return_value = ProbeResult(
+        namespace="ust-prod",
+        target_service="data-service",
+        probes=[],
+        recovered=False,
+    )
+
+    actuator = ProductionActuator(
+        applier=mock_applier,
+        probe=mock_probe,
+        clock=clock,
+        enforce_caller_guard=False,
+    )
+
+    plan = _make_plan("plan_1")
+    verdict = _make_verdict("plan_1")
+
+    success = await actuator.apply_to_production(plan, verdict)
+    assert success is False
+    assert actuator.last_prod_outcome == "not_resolved"
+
+
+@pytest.mark.asyncio
 async def test_apply_to_production_standalone_helper() -> None:
     clock = FrozenClock(initial_time=FIXED_NOW)
     mock_applier = AsyncMock(spec=K8sPlanApplier)
     mock_applier.apply.return_value = True
+
+    mock_probe = AsyncMock(spec=EnvironmentProbe)
+    mock_probe.sample_once.return_value = None
+    mock_probe.probe_environment.return_value = ProbeResult(
+        namespace="ust-prod",
+        target_service="data-service",
+        probes=[],
+        recovered=True,
+    )
 
     plan = _make_plan("plan_1")
     verdict = _make_verdict("plan_1")
@@ -506,6 +542,7 @@ async def test_apply_to_production_standalone_helper() -> None:
         plan=plan,
         verdict=verdict,
         applier=mock_applier,
+        probe=mock_probe,
         clock=clock,
         enforce_caller_guard=False,
     )
@@ -519,8 +556,18 @@ async def test_apply_to_production_caller_guard_enabled_success() -> None:
     mock_applier = AsyncMock(spec=K8sPlanApplier)
     mock_applier.apply.return_value = True
 
+    mock_probe = AsyncMock(spec=EnvironmentProbe)
+    mock_probe.sample_once.return_value = None
+    mock_probe.probe_environment.return_value = ProbeResult(
+        namespace="ust-prod",
+        target_service="data-service",
+        probes=[],
+        recovered=True,
+    )
+
     actuator = ProductionActuator(
         applier=mock_applier,
+        probe=mock_probe,
         clock=clock,
         enforce_caller_guard=True,
     )

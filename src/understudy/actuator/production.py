@@ -206,57 +206,6 @@ def build_pre_actuation_run_record(
     )
 
 
-def build_post_actuation_run_record(
-    plan: RemediationPlan,
-    verdict: KernelVerdict,
-    now: datetime,
-    prod_outcome: Literal["resolved", "not_resolved", "worsened"],
-    context: IncidentContext | None = None,
-) -> RunRecord:
-    """Construct an immutable post-actuation RunRecord for audit persistence (ADR-028)."""
-    inc_id = (
-        context.incident_id
-        if (context and context.incident_id and verdict.incident_id == "inc_kernel_verify")
-        else verdict.incident_id
-    )
-    outcome = RunOutcome.EXECUTED if prod_outcome == "resolved" else RunOutcome.FAILED
-    ctx = context or IncidentContext(
-        incident_id=inc_id,
-        alert=Alert(
-            alert_id=f"alt_{inc_id}",
-            source="synthetic",
-            title=f"Incident {inc_id}",
-            service=DEFAULT_TARGET_SERVICE,
-            severity="critical",
-            fired_at=now,
-        ),
-        metrics_window=MetricWindow(
-            service=DEFAULT_TARGET_SERVICE,
-            start_time=now,
-            end_time=now,
-        ),
-        dependency_graph=DependencyGraphSnapshot(observed_at=now),
-        gathered_at=now,
-    )
-    return RunRecord(
-        run_id=f"run_{inc_id}_post_actuation",
-        incident_id=inc_id,
-        started_at=now,
-        finished_at=now,
-        outcome=outcome,
-        context=ctx,
-        plans=[plan],
-        evidence=[],
-        tournament=None,
-        verdict=verdict,
-        prod_applied_plan_id=plan.plan_id,
-        prod_outcome=prod_outcome,
-        escalation_reason=None
-        if prod_outcome == "resolved"
-        else f"Production outcome: {prod_outcome}",
-    )
-
-
 def determine_prod_outcome(
     probe_result: ProbeResult | None,
     baseline_sample: ProbeSample | None = None,
@@ -323,9 +272,18 @@ class ProductionActuator(Actuator):
         self.prod_namespace = self.settings.cluster.prod_namespace
         self.last_prod_outcome: Literal["resolved", "not_resolved", "worsened"] | None = None
 
-    async def apply(self, plan: RemediationPlan, namespace: str) -> bool:
+    async def apply(
+        self,
+        plan: RemediationPlan,
+        namespace: str,
+        service_account: str | None = None,
+    ) -> bool:
         """Apply a remediation plan to a specific namespace."""
-        return await self.applier.apply(plan=plan, namespace=namespace)
+        return await self.applier.apply(
+            plan=plan,
+            namespace=namespace,
+            service_account=service_account,
+        )
 
     async def revert(self, plan: RemediationPlan, namespace: str) -> bool:
         """Revert an applied remediation plan by executing its declared inverse."""
@@ -348,7 +306,12 @@ class ProductionActuator(Actuator):
         now = self.clock.now()
 
         # 1. Assert Invariant K10
-        assert_k10_authorisation(plan=plan, verdict=verdict, now=now)
+        assert_k10_authorisation(
+            plan=plan,
+            verdict=verdict,
+            now=now,
+            max_age_seconds=self.settings.timeouts.k10_max_age_seconds,
+        )
 
         # 2. Assert kill switch
         if not self.settings.actuation_enabled:
@@ -427,26 +390,9 @@ class ProductionActuator(Actuator):
                 applied_successfully=True,
             )
         else:
-            outcome = "resolved"
+            outcome = "resolved" if applied_success else "not_resolved"
 
         self.last_prod_outcome = outcome
-
-        # 7. Write immutable post-actuation RunRecord to RunStore (ADR-028)
-        if self.run_store is not None:
-            post_record = build_post_actuation_run_record(
-                plan=plan,
-                verdict=verdict,
-                now=self.clock.now(),
-                prod_outcome=outcome,
-                context=context,
-            )
-            await self.run_store.record_run(post_record)
-            logger.info(
-                "post_actuation_record_persisted",
-                run_id=post_record.run_id,
-                incident_id=verdict.incident_id,
-                prod_outcome=outcome,
-            )
 
         logger.info(
             "production_actuation_completed",
@@ -488,7 +434,6 @@ __all__ = [
     "apply_to_production",
     "assert_caller_authorised",
     "assert_k10_authorisation",
-    "build_post_actuation_run_record",
     "build_pre_actuation_run_record",
     "determine_prod_outcome",
 ]
