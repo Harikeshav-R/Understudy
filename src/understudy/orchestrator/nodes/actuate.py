@@ -27,7 +27,9 @@ async def actuate(state: State, deps: Deps) -> dict[str, Any]:
     if winner_plan is None:
         raise OrchestratorError("Cannot actuate: winning plan not found in state")
 
-    success = await deps.actuator.apply_to_production(winner_plan, state.verdict)
+    success = await deps.actuator.apply_to_production(
+        winner_plan, state.verdict, context=state.context
+    )
     actuator_outcome = getattr(deps.actuator, "last_prod_outcome", None)
     if success:
         prod_outcome = "resolved"

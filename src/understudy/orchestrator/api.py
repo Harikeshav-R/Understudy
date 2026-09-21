@@ -10,7 +10,7 @@ from understudy.common.clock import Clock, SystemClock
 from understudy.common.config import TimeoutSettings
 from understudy.contracts.incident import Alert
 from understudy.contracts.run import RunRecord
-from understudy.fleet.api import FleetController
+from understudy.fleet.api import FleetController, WorkloadReader
 from understudy.graph.api import BlastRadiusCalculator, DependencyGraph
 from understudy.kernel.api import SafetyKernel
 from understudy.mirror.api import MirrorRegistry
@@ -51,6 +51,7 @@ class Deps:
     clock: Clock = field(default_factory=SystemClock)
     checkpoint_store: CheckpointStore | None = None
     timeouts: TimeoutSettings = field(default_factory=TimeoutSettings)
+    workload_reader: WorkloadReader | None = None
 
 
 @runtime_checkable

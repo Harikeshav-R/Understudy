@@ -29,7 +29,7 @@ async def cleanup_incident_twins(
     for twin in twins:
         try:
             await deps.mirror_registry.unregister_twin(twin.twin_id)
-        except Exception as exc:
+        except Exception as exc:  # Emergency cleanup resilience (AGENTS.md §5.4; #47)
             msg = f"unregister_twin({twin.twin_id}) failed: {exc}"
             cleanup_errors.append(msg)
             logger.warning("cleanup_unregister_twin_failed", twin_id=twin.twin_id, error=str(exc))
@@ -37,7 +37,7 @@ async def cleanup_incident_twins(
     if incident_id:
         try:
             await deps.fleet_controller.teardown_all(incident_id)
-        except Exception as exc:
+        except Exception as exc:  # Emergency cleanup resilience (AGENTS.md §5.4; #47)
             msg = f"teardown_all({incident_id}) failed: {exc}"
             cleanup_errors.append(msg)
             logger.warning("cleanup_teardown_all_failed", incident_id=incident_id, error=str(exc))

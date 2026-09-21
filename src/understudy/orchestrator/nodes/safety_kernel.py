@@ -5,13 +5,43 @@ from typing import Any
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import KernelVerdictType, RunOutcome
 from understudy.contracts.kernel import Fact
+from understudy.contracts.plan import RemediationPlan
 from understudy.kernel.api import WorkloadReaderFactAdapter, extract_facts
 from understudy.orchestrator.api import Deps
 from understudy.orchestrator.state import State
 
 
+def prepare_plan_for_verification(
+    plan: RemediationPlan,
+    target_namespace: str = "ust-prod",
+) -> RemediationPlan:
+    """Adapt candidate remediation plan to target prod namespace for safety verification."""
+    prod_target_resources = [
+        r.model_copy(update={"namespace": target_namespace})
+        if (not r.namespace or "twin" in r.namespace)
+        else r
+        for r in plan.target_resources
+    ]
+    verified_plan = plan.model_copy(update={"target_resources": prod_target_resources})
+    if verified_plan.inverse is not None:
+        inv_resources = [
+            r.model_copy(update={"namespace": target_namespace})
+            if (not r.namespace or "twin" in r.namespace)
+            else r
+            for r in verified_plan.inverse.target_resources
+        ]
+        verified_plan = verified_plan.model_copy(
+            update={
+                "inverse": verified_plan.inverse.model_copy(
+                    update={"target_resources": inv_resources}
+                )
+            }
+        )
+    return verified_plan
+
+
 async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
-    """Formally verify safety invariants for the tournament winner."""
+    """Extract facts and verify invariant satisfaction for the winning candidate plan."""
     logger = get_logger(incident_id=state.incident_id)
 
     winner_id = state.tournament.winner_plan_id if state.tournament else None
@@ -35,8 +65,8 @@ async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
             None,
         )
 
-    # Resolve K8s fact source from fleet controller if available
-    workload_reader = getattr(deps.fleet_controller, "workload_reader", None)
+    # Resolve K8s fact source from deps if available (AGENTS.md §5.3 protocol conformance)
+    workload_reader = deps.workload_reader
     k8s_source = (
         WorkloadReaderFactAdapter(workload_reader=workload_reader)
         if workload_reader is not None
@@ -44,27 +74,7 @@ async def safety_kernel(state: State, deps: Deps) -> dict[str, Any]:
     )
 
     # Ensure plan destined for production targets ust-prod for safety verification
-    prod_target_resources = [
-        r.model_copy(update={"namespace": "ust-prod"})
-        if (not r.namespace or "twin" in r.namespace)
-        else r
-        for r in winner_plan.target_resources
-    ]
-    verified_plan = winner_plan.model_copy(update={"target_resources": prod_target_resources})
-    if verified_plan.inverse is not None:
-        inv_resources = [
-            r.model_copy(update={"namespace": "ust-prod"})
-            if (not r.namespace or "twin" in r.namespace)
-            else r
-            for r in verified_plan.inverse.target_resources
-        ]
-        verified_plan = verified_plan.model_copy(
-            update={
-                "inverse": verified_plan.inverse.model_copy(
-                    update={"target_resources": inv_resources}
-                )
-            }
-        )
+    verified_plan = prepare_plan_for_verification(winner_plan, target_namespace="ust-prod")
 
     # Extract complete timestamped facts across K8s, GitHub, store, graph, and evidence
     facts = await extract_facts(

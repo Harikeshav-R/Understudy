@@ -23,7 +23,7 @@ from understudy.contracts.enums import (
     TournamentOutcome,
 )
 from understudy.contracts.evidence import CandidateEvidence, TournamentResult
-from understudy.contracts.incident import Alert
+from understudy.contracts.incident import Alert, IncidentContext
 from understudy.contracts.kernel import InvariantResult, KernelVerdict
 from understudy.kernel.fakes import FakeSafetyKernel
 from understudy.notify.fakes import FakeNotifier
@@ -430,8 +430,13 @@ async def test_unresolved_production_escalates() -> None:
     """A remediation that applies but does not resolve production must page a human."""
 
     class UnresolvingActuator(FakeActuator):
-        async def apply_to_production(self, plan: RemediationPlan, verdict: KernelVerdict) -> bool:
-            await super().apply_to_production(plan, verdict)
+        async def apply_to_production(
+            self,
+            plan: RemediationPlan,
+            verdict: KernelVerdict,
+            context: IncidentContext | None = None,
+        ) -> bool:
+            await super().apply_to_production(plan, verdict, context=context)
             return False
 
     deps = create_fake_deps()

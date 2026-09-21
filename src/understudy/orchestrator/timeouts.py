@@ -159,7 +159,7 @@ async def execute_emergency_escalation(
             tournament=state.tournament,
             urgency="high",
         )
-    except Exception as exc:
+    except Exception as exc:  # Emergency escalation resilience (AGENTS.md §5.4; #47)
         # Notification failure must not prevent run record persistence
         logger.error("watchdog_escalate_pagerduty_failed", error=str(exc))
 
@@ -176,7 +176,7 @@ async def execute_emergency_escalation(
         try:
             await deps.run_store.record_run(record)
             return record
-        except Exception as exc:
+        except Exception as exc:  # Emergency watchdog persistence resilience (AGENTS.md §5.4; #47)
             logger.error("watchdog_record_run_failed", error=str(exc))
             return record
 

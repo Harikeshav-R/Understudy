@@ -626,12 +626,22 @@ async def test_actuate_node() -> None:
 
     # Case 5: Actuator returns False (not resolved)
     class FailingActuator(Actuator):
-        async def apply(self, plan: RemediationPlan, namespace: str) -> bool:
-            _ = (plan, namespace)
+        async def apply(
+            self,
+            plan: RemediationPlan,
+            namespace: str,
+            service_account: str | None = None,
+        ) -> bool:
+            _ = (plan, namespace, service_account)
             return False
 
-        async def apply_to_production(self, plan: RemediationPlan, verdict: KernelVerdict) -> bool:
-            _ = (plan, verdict)
+        async def apply_to_production(
+            self,
+            plan: RemediationPlan,
+            verdict: KernelVerdict,
+            context: IncidentContext | None = None,
+        ) -> bool:
+            _ = (plan, verdict, context)
             return False
 
         async def revert(self, plan: RemediationPlan, namespace: str) -> bool:
