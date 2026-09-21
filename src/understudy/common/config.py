@@ -39,6 +39,9 @@ class TimeoutSettings(BaseModel):
     observation_seconds: float = 200.0
     kernel_seconds: float = 5.0
     incident_seconds: float = 600.0
+    slack_timeout_seconds: float = 10.0
+    pagerduty_timeout_seconds: float = 10.0
+    k10_max_age_seconds: float = 60.0
 
 
 class ClusterSettings(BaseModel):

@@ -157,3 +157,7 @@ class SlackNotificationError(NotificationError):
 
 class PagerDutyNotificationError(NotificationError):
     """Raised on failure to escalate, post notes, or update urgency in PagerDuty."""
+
+
+class ScenarioError(UnderstudyError):
+    """Raised on failure to load, parse, or execute incident scenarios."""
