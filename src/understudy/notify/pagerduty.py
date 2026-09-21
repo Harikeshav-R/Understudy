@@ -274,13 +274,15 @@ class PagerDutyNotifier(Notifier):
         headers = self._build_headers(token, email)
         payload = {"note": {"content": content}}
 
+        settings = get_settings()
+        timeout = settings.timeouts.pagerduty_timeout_seconds
         try:
             if self._http_client is not None:
                 resp = await self._http_client.post(
-                    url, json=payload, headers=headers, timeout=10.0
+                    url, json=payload, headers=headers, timeout=timeout
                 )
             else:
-                async with httpx.AsyncClient(timeout=10.0) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(url, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             logger.error("pagerduty_add_note_failed", pd_incident_id=pd_incident_id, error=str(exc))
@@ -328,11 +330,15 @@ class PagerDutyNotifier(Notifier):
             }
         }
 
+        settings = get_settings()
+        timeout = settings.timeouts.pagerduty_timeout_seconds
         try:
             if self._http_client is not None:
-                resp = await self._http_client.put(url, json=payload, headers=headers, timeout=10.0)
+                resp = await self._http_client.put(
+                    url, json=payload, headers=headers, timeout=timeout
+                )
             else:
-                async with httpx.AsyncClient(timeout=10.0) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.put(url, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             logger.error(

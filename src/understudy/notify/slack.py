@@ -406,13 +406,15 @@ class SlackNotifier(Notifier):
             "blocks": blocks,
         }
 
+        settings = get_settings()
+        timeout = settings.timeouts.slack_timeout_seconds
         try:
             if self._http_client is not None:
                 resp = await self._http_client.post(
-                    SLACK_API_URL, json=payload, headers=headers, timeout=10.0
+                    SLACK_API_URL, json=payload, headers=headers, timeout=timeout
                 )
             else:
-                async with httpx.AsyncClient(timeout=10.0) as client:
+                async with httpx.AsyncClient(timeout=timeout) as client:
                     resp = await client.post(SLACK_API_URL, json=payload, headers=headers)
         except httpx.HTTPError as exc:
             logger.error("slack_post_failed", incident_id=incident_id, error=str(exc))
