@@ -251,15 +251,12 @@ class BlastCoordinator:
         dependency_graph: DependencyGraph,
         clock: Clock | None = None,
         config: BlastConfig | None = None,
-        prod_namespace: str | None = None,
     ) -> None:
         self.observability = observability
         self.dependency_graph = dependency_graph
         self.clock: Clock = resolve_clock(clock)
         self.config: BlastConfig = config or BlastConfig()
         self.logger = get_logger(component="blast_coordinator")
-        settings = get_settings()
-        self.prod_namespace = prod_namespace or settings.cluster.prod_namespace
 
     def _get_declared_services(self) -> list[str]:
         """Resolve declared services from dependency graph snapshot."""
@@ -292,18 +289,6 @@ class BlastCoordinator:
                     namespace=namespace,
                     until=now,
                 )
-                if self.prod_namespace and namespace != self.prod_namespace:
-                    try:
-                        prod_window = await self.observability.metric_window(
-                            service=svc,
-                            since=since,
-                            namespace=self.prod_namespace,
-                            until=now,
-                        )
-                        if prod_window.request_count > window.request_count:
-                            return svc, prod_window
-                    except (ObservabilityError, httpx.HTTPError, UnderstudyError):
-                        pass
                 return svc, window
             except (ObservabilityError, httpx.HTTPError, UnderstudyError) as exc:
                 self.logger.warning(

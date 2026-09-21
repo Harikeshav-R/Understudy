@@ -539,10 +539,10 @@ async def test_blast_coordinator_capture_baselines_twins() -> None:
 
 
 @pytest.mark.asyncio
-async def test_blast_coordinator_capture_baseline_prod_fallback() -> None:
-    """Verify capture_baseline falls back to prod_namespace when twin has 0 requests."""
+async def test_blast_coordinator_capture_baseline_strict_namespace() -> None:
+    """Verify capture_baseline strictly queries the target namespace without prod peeking."""
     clock = FrozenClock(datetime(2026, 9, 13, 12, 0, 0, tzinfo=UTC))
-    graph = ServiceDependencyGraph(nodes=["svc-a", "svc-b", "svc-c", "svc-d"], edges=[])
+    graph = ServiceDependencyGraph(nodes=["svc-a", "svc-b"], edges=[])
     adapter = Mock()
 
     now = clock.now()
@@ -551,59 +551,12 @@ async def test_blast_coordinator_capture_baseline_prod_fallback() -> None:
         service: str, since: datetime, namespace: str, until: datetime | None = None
     ) -> MetricWindow:
         _ = (since, until)
-        if namespace == "ust-twin-0":
-            if service == "svc-d":
-                return MetricWindow(
-                    service=service,
-                    start_time=now,
-                    end_time=now,
-                    p99_latency_ms=4.95,
-                    error_rate=0.0,
-                    request_count=4,
-                )
-            return MetricWindow(
-                service=service,
-                start_time=now,
-                end_time=now,
-                p99_latency_ms=0.0,
-                error_rate=0.0,
-                request_count=0,
-            )
-        if namespace == "ust-prod":
-            if service == "svc-a":
-                return MetricWindow(
-                    service=service,
-                    start_time=now,
-                    end_time=now,
-                    p99_latency_ms=250.0,
-                    error_rate=0.05,
-                    request_count=50,
-                )
-            if service == "svc-b":
-                return MetricWindow(
-                    service=service,
-                    start_time=now,
-                    end_time=now,
-                    p99_latency_ms=0.0,
-                    error_rate=0.0,
-                    request_count=0,
-                )
-            if service == "svc-c":
-                raise ObservabilityError("Prod scrape failed")
-            if service == "svc-d":
-                return MetricWindow(
-                    service=service,
-                    start_time=now,
-                    end_time=now,
-                    p99_latency_ms=50.0,
-                    error_rate=0.0,
-                    request_count=100,
-                )
+        assert namespace == "ust-twin-0", f"Expected twin namespace query, got {namespace}"
         return MetricWindow(
             service=service,
             start_time=now,
             end_time=now,
-            p99_latency_ms=10.0,
+            p99_latency_ms=15.0 if service == "svc-a" else 20.0,
             error_rate=0.0,
             request_count=10,
         )
@@ -613,24 +566,14 @@ async def test_blast_coordinator_capture_baseline_prod_fallback() -> None:
         observability=adapter,
         dependency_graph=graph,
         clock=clock,
-        prod_namespace="ust-prod",
     )
 
     baseline = await coordinator.capture_baseline(namespace="ust-twin-0")
-    # svc-a: twin had 0, prod had 50 -> returns prod window
-    assert baseline.baselines["svc-a"].p99_latency_ms == 250.0
-    assert baseline.baselines["svc-a"].request_count == 50
-    # svc-b: twin had 0, prod had 0 -> returns twin window
-    assert baseline.baselines["svc-b"].request_count == 0
-    # svc-c: twin had 0, prod threw error -> returns twin window
-    assert baseline.baselines["svc-c"].request_count == 0
-    # svc-d: twin had 4 (health probes), prod had 100 -> returns prod window
-    assert baseline.baselines["svc-d"].p99_latency_ms == 50.0
-    assert baseline.baselines["svc-d"].request_count == 100
-
-    # Test prod_namespace itself (bypasses fallback branch 295->307)
-    prod_baseline = await coordinator.capture_baseline(namespace="ust-prod")
-    assert prod_baseline.baselines["svc-a"].request_count == 50
+    assert baseline.baselines["svc-a"].p99_latency_ms == 15.0
+    assert baseline.baselines["svc-a"].request_count == 10
+    assert baseline.baselines["svc-b"].p99_latency_ms == 20.0
+    assert baseline.baselines["svc-b"].request_count == 10
+    assert adapter.metric_window.call_count == 2
 
 
 def test_evaluate_blast_observed_blast_set_contained_by_reachable() -> None:
