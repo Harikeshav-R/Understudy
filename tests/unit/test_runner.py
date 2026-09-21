@@ -8,7 +8,7 @@ import pytest
 
 from understudy.common.clock import FrozenClock
 from understudy.common.config import TimeoutSettings
-from understudy.common.errors import OrchestratorError
+from understudy.common.errors import OrchestratorError, ScenarioError
 from understudy.contracts.enums import (
     InvariantTier,
     KernelVerdictType,
@@ -100,23 +100,23 @@ alert_template:
 
 
 def test_load_scenario_definition_corrupt_file(tmp_path: Path) -> None:
-    """Corrupt YAML raises ValueError."""
+    """Corrupt YAML raises ScenarioError."""
     bad_file = tmp_path / "bad.yaml"
     bad_file.write_text("invalid: [unclosed", encoding="utf-8")
-    with pytest.raises(ValueError, match="Failed to parse scenario file"):
+    with pytest.raises(ScenarioError, match="Failed to parse scenario file"):
         load_scenario_definition(str(bad_file))
 
     # Candidate file corrupt
     scen_dir = tmp_path / "scenarios" / "seed"
     scen_dir.mkdir(parents=True)
     (scen_dir / "broken.yaml").write_text("invalid: [unclosed", encoding="utf-8")
-    with pytest.raises(ValueError, match="Failed to parse scenario file"):
+    with pytest.raises(ScenarioError, match="Failed to parse scenario file"):
         load_scenario_definition("broken", base_dir=tmp_path)
 
     # Relative corrupt file
     bad_rel = tmp_path / "broken_rel.yaml"
     bad_rel.write_text("invalid: [unclosed", encoding="utf-8")
-    with pytest.raises(ValueError, match="Failed to parse scenario file"):
+    with pytest.raises(ScenarioError, match="Failed to parse scenario file"):
         load_scenario_definition("broken_rel.yaml", base_dir=tmp_path)
 
 

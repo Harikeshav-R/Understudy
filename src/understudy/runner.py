@@ -18,7 +18,7 @@ import yaml
 
 from understudy.actuator.injection import inject_scenario_fault
 from understudy.common.clock import Clock, resolve_clock
-from understudy.common.errors import IncidentTimeoutError, OrchestratorError
+from understudy.common.errors import IncidentTimeoutError, OrchestratorError, ScenarioError
 from understudy.common.logging import get_logger
 from understudy.contracts.enums import KernelVerdictType, RunOutcome, TournamentOutcome
 from understudy.orchestrator.api import IncidentWatchdog, StateTracker, build_graph
@@ -120,9 +120,9 @@ def load_scenario_definition(
         try:
             data: dict[str, Any] = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
             return _parse_scenario_data(data, fallback_id=p.stem)
-        except Exception as exc:
+        except (yaml.YAMLError, OSError, ValueError, KeyError) as exc:
             msg = f"Failed to parse scenario file at {p}: {exc}"
-            raise ValueError(msg) from exc
+            raise ScenarioError(msg) from exc
 
     # Relative to root check
     rel_p = root / p
@@ -130,9 +130,9 @@ def load_scenario_definition(
         try:
             data = yaml.safe_load(rel_p.read_text(encoding="utf-8")) or {}
             return _parse_scenario_data(data, fallback_id=rel_p.stem)
-        except Exception as exc:
+        except (yaml.YAMLError, OSError, ValueError, KeyError) as exc:
             msg = f"Failed to parse scenario file at {rel_p}: {exc}"
-            raise ValueError(msg) from exc
+            raise ScenarioError(msg) from exc
 
     # 2. Search common scenario directories by token
     token = _normalize_scenario_token(scenario_str)
@@ -146,9 +146,9 @@ def load_scenario_definition(
             try:
                 data = yaml.safe_load(cand.read_text(encoding="utf-8")) or {}
                 return _parse_scenario_data(data, fallback_id=token)
-            except Exception as exc:
+            except (yaml.YAMLError, OSError, ValueError, KeyError) as exc:
                 msg = f"Failed to parse scenario file at {cand}: {exc}"
-                raise ValueError(msg) from exc
+                raise ScenarioError(msg) from exc
 
     # 3. Fallback to canonical built-in scenario templates
     template = load_scenario_template(token, base_dir=base_dir)
